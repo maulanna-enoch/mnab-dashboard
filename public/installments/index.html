@@ -86,6 +86,19 @@
   .wide .label {
     text-align: center;
   }
+  .section-total {
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: var(--accent);
+    text-align: center;
+    margin-bottom: 4px;
+  }
+  .section-meta {
+    font-size: 0.8rem;
+    color: var(--muted);
+    text-align: center;
+    margin-bottom: 12px;
+  }
   .month-row {
     border-bottom: 1px solid #2a2e37;
   }
@@ -143,13 +156,6 @@
     color: var(--muted);
     margin-top: 8px;
   }
-  .bills-total {
-    font-size: 1.6rem;
-    font-weight: 700;
-    color: var(--accent);
-    text-align: center;
-    margin-bottom: 12px;
-  }
 </style>
 </head>
 <body>
@@ -157,20 +163,22 @@
   <h1>Installments & Bills</h1>
 
   <div class="card">
-    <div class="label">Total Installments (active)</div>
-    <div class="total" id="total">Loading…</div>
-    <div class="sub" id="meta"></div>
+    <div class="label">Total Active (Installments + Bills)</div>
+    <div class="total" id="hero-total">Loading…</div>
+    <div class="sub" id="hero-meta"></div>
   </div>
 
   <div class="card wide">
-    <div class="label">By Ending Month</div>
+    <div class="label">Active Installments</div>
+    <div class="section-total" id="installments-total">Loading…</div>
+    <div class="section-meta" id="installments-meta"></div>
     <div id="months-list">Loading…</div>
     <div class="no-end" id="no-end"></div>
   </div>
 
   <div class="card wide">
     <div class="label">Recurring Bills (active)</div>
-    <div class="bills-total" id="bills-total">Loading…</div>
+    <div class="section-total" id="bills-total">Loading…</div>
     <ul class="item-list" id="bills-list"></ul>
   </div>
 
@@ -185,86 +193,83 @@
       }).format(value);
     }
 
-    async function loadSummary() {
-      const totalEl = document.getElementById('total');
-      const metaEl = document.getElementById('meta');
-      totalEl.textContent = 'Loading…';
-      metaEl.textContent = '';
-      try {
-        const res = await fetch('/api/installments-summary');
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
-        totalEl.textContent = formatIDR(data.total);
-        metaEl.textContent = `${data.activeCount} active items · updated ${new Date(data.updatedAt).toLocaleTimeString()}`;
-      } catch (err) {
-        totalEl.textContent = '—';
-        metaEl.innerHTML = `<span class="error">${err.message}</span>`;
-      }
-    }
-
-    async function loadByEndMonth() {
-      const listEl = document.getElementById('months-list');
+    function renderMonths(monthsData) {
+      const monthsEl = document.getElementById('months-list');
       const noEndEl = document.getElementById('no-end');
-      listEl.textContent = 'Loading…';
-      noEndEl.textContent = '';
-      try {
-        const res = await fetch('/api/installments-by-end-month');
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
 
-        if (!data.months.length) {
-          listEl.innerHTML = '<div class="sub">No active installments with an end date.</div>';
-        } else {
-          listEl.innerHTML = data.months.map((m) => `
-            <details class="month-row">
-              <summary>
-                <span>
-                  <span class="month-name">${m.label}</span>
-                  <span class="month-count">(${m.count})</span>
-                </span>
-                <span class="month-amount">${formatIDR(m.amountEnding)}</span>
-              </summary>
-              <div class="month-detail">
-                <div class="remaining">Remaining after: ${formatIDR(m.remainingAfter)}</div>
-                <ul class="item-list">
-                  ${m.items.map((i) => `<li><span>${i.name}</span><span>${formatIDR(i.amount)}</span></li>`).join('')}
-                </ul>
-              </div>
-            </details>
-          `).join('');
-        }
-
-        if (data.noEndDate && data.noEndDate.count > 0) {
-          noEndEl.textContent = `+ ${data.noEndDate.count} active item(s) with no end date (${formatIDR(data.noEndDate.amount)}) not shown above.`;
-        }
-      } catch (err) {
-        listEl.innerHTML = `<span class="error">${err.message}</span>`;
+      if (!monthsData.months.length) {
+        monthsEl.innerHTML = '<div class="sub">No active installments with an end date.</div>';
+      } else {
+        monthsEl.innerHTML = monthsData.months.map((m) => `
+          <details class="month-row">
+            <summary>
+              <span>
+                <span class="month-name">${m.label}</span>
+                <span class="month-count">(${m.count})</span>
+              </span>
+              <span class="month-amount">${formatIDR(m.amountEnding)}</span>
+            </summary>
+            <div class="month-detail">
+              <div class="remaining">Remaining after: ${formatIDR(m.remainingAfter)}</div>
+              <ul class="item-list">
+                ${m.items.map((i) => `<li><span>${i.name}</span><span>${formatIDR(i.amount)}</span></li>`).join('')}
+              </ul>
+            </div>
+          </details>
+        `).join('');
       }
+
+      noEndEl.textContent = (monthsData.noEndDate && monthsData.noEndDate.count > 0)
+        ? `+ ${monthsData.noEndDate.count} active item(s) with no end date (${formatIDR(monthsData.noEndDate.amount)}) not shown above.`
+        : '';
     }
 
-    async function loadBills() {
+    function renderBills(billsData) {
       const totalEl = document.getElementById('bills-total');
       const listEl = document.getElementById('bills-list');
-      totalEl.textContent = 'Loading…';
-      listEl.innerHTML = '';
-      try {
-        const res = await fetch('/api/bills-summary');
-        const data = await res.json();
-        if (data.error) throw new Error(data.error);
-        totalEl.textContent = formatIDR(data.total);
-        listEl.innerHTML = data.count
-          ? data.items.map((i) => `<li><span>${i.name}</span><span>${formatIDR(i.amount)}</span></li>`).join('')
-          : '<li><span class="sub">No active bills.</span></li>';
-      } catch (err) {
-        totalEl.textContent = '—';
-        listEl.innerHTML = `<span class="error">${err.message}</span>`;
-      }
+      totalEl.textContent = formatIDR(billsData.total);
+      listEl.innerHTML = billsData.count
+        ? billsData.items.map((i) => `<li><span>${i.name}</span><span>${formatIDR(i.amount)}</span></li>`).join('')
+        : '<li><span class="sub">No active bills.</span></li>';
     }
 
-    function load() {
-      loadSummary();
-      loadByEndMonth();
-      loadBills();
+    async function load() {
+      const heroTotalEl = document.getElementById('hero-total');
+      const heroMetaEl = document.getElementById('hero-meta');
+      const instTotalEl = document.getElementById('installments-total');
+      const instMetaEl = document.getElementById('installments-meta');
+
+      heroTotalEl.textContent = 'Loading…';
+      heroMetaEl.textContent = '';
+      instTotalEl.textContent = 'Loading…';
+      instMetaEl.textContent = '';
+      document.getElementById('months-list').textContent = 'Loading…';
+      document.getElementById('bills-total').textContent = 'Loading…';
+      document.getElementById('bills-list').innerHTML = '';
+
+      try {
+        const [installments, bills, byMonth] = await Promise.all([
+          fetch('/api/installments-summary').then((r) => r.json()),
+          fetch('/api/bills-summary').then((r) => r.json()),
+          fetch('/api/installments-by-end-month').then((r) => r.json()),
+        ]);
+
+        const firstError = installments.error || bills.error || byMonth.error;
+        if (firstError) throw new Error(firstError);
+
+        const heroTotal = installments.total + bills.total;
+        heroTotalEl.textContent = formatIDR(heroTotal);
+        heroMetaEl.textContent = `${installments.activeCount} installments + ${bills.count} bills · updated ${new Date().toLocaleTimeString()}`;
+
+        instTotalEl.textContent = formatIDR(installments.total);
+        instMetaEl.textContent = `${installments.activeCount} active installments`;
+
+        renderMonths(byMonth);
+        renderBills(bills);
+      } catch (err) {
+        heroTotalEl.textContent = '—';
+        heroMetaEl.innerHTML = `<span class="error">${err.message}</span>`;
+      }
     }
 
     load();
