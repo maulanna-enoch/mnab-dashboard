@@ -37,10 +37,11 @@ Already done — this repo lives at https://github.com/maulanna-enoch/mnab-dashb
 
 ```
 mnab-dashboard/
-  api/installments-summary.js   Vercel serverless function, reads the sheet, sums active amounts
-  public/index.html             Mobile-friendly page, calls the function above
-  package.json                  Dependency: googleapis
-  .env.example                  Reference for the env vars above (don't commit real secrets)
+  api/installments-summary.js         Sum of active installment amounts
+  api/installments-by-end-month.js    Active amounts grouped by ending month, with running remaining total
+  public/index.html                   Mobile-friendly page, calls both functions above
+  package.json                        Dependency: googleapis
+  .env.example                        Reference for the env vars above (don't commit real secrets)
 ```
 
 ## Extending later
