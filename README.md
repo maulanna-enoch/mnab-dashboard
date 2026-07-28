@@ -1,7 +1,15 @@
-# MNAB Dashboard (v1: active installments total)
+# MNAB Dashboard
 
-A tiny mobile-friendly page that shows the sum of `Amount` in the
-`installmentsbills` tab where `is_active` is `TRUE`.
+A mobile-friendly home menu, with an "Installments & Bills" page reading from
+the `installmentsbills` tab. Rows are split into two categories:
+
+- **Installments** — have a real payoff date in `Ends`. Broken down by ending
+  month with a running "remaining after" total.
+- **Bills** — recurring items that don't really end, marked in the sheet with
+  a far-future placeholder `Ends` date (year ≥ 2099). Shown as a flat total,
+  no month breakdown.
+
+Both only count rows where `is_active` is `TRUE`.
 
 ## 1. Create a Google Cloud service account
 
@@ -37,15 +45,33 @@ Already done — this repo lives at https://github.com/maulanna-enoch/mnab-dashb
 
 ```
 mnab-dashboard/
-  api/installments-summary.js         Sum of active installment amounts
-  api/installments-by-end-month.js    Active amounts grouped by ending month, with running remaining total
-  public/index.html                   Mobile-friendly page, calls both functions above
+  api/_lib/sheets.js                  Shared: reads the sheet, classifies each row (active/Bill/Installment)
+  api/installments-summary.js         Sum of active Installment amounts (excludes Bills)
+  api/installments-by-end-month.js    Active Installments grouped by ending month, with running remaining total
+  api/bills-summary.js                Sum + list of active Bills
+  public/index.html                   Home menu page
+  public/installments/index.html      Installments & Bills page (linked from home)
+  vercel.json                         Enables clean URLs (e.g. /installments instead of /installments.html)
   package.json                        Dependency: googleapis
   .env.example                        Reference for the env vars above (don't commit real secrets)
 ```
 
+Files under `api/_lib/` are not deployed as endpoints — Vercel ignores any
+path with an underscore-prefixed segment, which is exactly what we want for
+shared helper code.
+
+## Bill vs. Installment classification
+
+This currently works off a date threshold: any row where `Ends` is in or
+after the year 2099 is treated as a Bill. If you'd rather control this
+explicitly, add a `Type` column to the sheet (`Installment` / `Bill`) and
+update `api/_lib/sheets.js` to read it instead — more robust than a magic
+date, at the cost of tagging each row yourself.
+
 ## Extending later
 
-Each new "widget" on the dashboard is just another `api/*.js` function reading
-a different range/tab, plus a card in `index.html` (or a proper frontend
-framework once this grows past a couple of widgets).
+- New "widget" on the Installments & Bills page: another `api/*.js` function
+  plus a card in `public/installments/index.html`.
+- New page entirely (e.g. net worth, budget vs. actual): a new folder under
+  `public/` with its own `index.html`, plus a link added to `public/index.html`'s
+  nav menu.

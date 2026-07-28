@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>Installments & Bills · MNAB</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0f1115;
+    --card: #1a1d24;
+    --text: #f4f4f5;
+    --muted: #9ca3af;
+    --accent: #22c55e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px;
+  }
+  .back-link {
+    align-self: flex-start;
+    max-width: 420px;
+    width: 100%;
+    margin: 0 auto 8px;
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 0.85rem;
+  }
+  h1 {
+    font-size: 1.1rem;
+    font-weight: 500;
+    color: var(--muted);
+    margin: 0 0 24px;
+    text-align: center;
+  }
+  .card {
+    width: 100%;
+    max-width: 420px;
+    background: var(--card);
+    border-radius: 16px;
+    padding: 24px;
+    margin-bottom: 16px;
+    text-align: center;
+  }
+  .label {
+    font-size: 0.85rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+  }
+  .total {
+    font-size: 2.2rem;
+    font-weight: 700;
+    color: var(--accent);
+    word-break: break-word;
+  }
+  .sub {
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-top: 8px;
+  }
+  .error {
+    color: #f87171;
+    font-size: 0.9rem;
+  }
+  .refresh {
+    background: none;
+    border: 1px solid #374151;
+    color: var(--text);
+    padding: 8px 16px;
+    border-radius: 999px;
+    font-size: 0.85rem;
+  }
+  .wide {
+    text-align: left;
+  }
+  .wide .label {
+    text-align: center;
+  }
+  .month-row {
+    border-bottom: 1px solid #2a2e37;
+  }
+  .month-row:last-child {
+    border-bottom: none;
+  }
+  .month-row summary {
+    list-style: none;
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 12px 0;
+    cursor: pointer;
+  }
+  .month-row summary::-webkit-details-marker {
+    display: none;
+  }
+  .month-name {
+    font-weight: 600;
+  }
+  .month-count {
+    font-size: 0.75rem;
+    color: var(--muted);
+    font-weight: 400;
+  }
+  .month-amount {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .month-detail {
+    padding: 0 0 14px;
+  }
+  .month-detail .remaining {
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin-bottom: 8px;
+  }
+  .item-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .item-list li {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.85rem;
+    padding: 4px 0;
+    color: var(--text);
+  }
+  .item-list li span:last-child {
+    color: var(--muted);
+  }
+  .no-end {
+    font-size: 0.8rem;
+    color: var(--muted);
+    margin-top: 8px;
+  }
+  .bills-total {
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: var(--accent);
+    text-align: center;
+    margin-bottom: 12px;
+  }
+</style>
+</head>
+<body>
+  <a class="back-link" href="/">← Home</a>
+  <h1>Installments & Bills</h1>
+
+  <div class="card">
+    <div class="label">Total Installments (active)</div>
+    <div class="total" id="total">Loading…</div>
+    <div class="sub" id="meta"></div>
+  </div>
+
+  <div class="card wide">
+    <div class="label">By Ending Month</div>
+    <div id="months-list">Loading…</div>
+    <div class="no-end" id="no-end"></div>
+  </div>
+
+  <div class="card wide">
+    <div class="label">Recurring Bills (active)</div>
+    <div class="bills-total" id="bills-total">Loading…</div>
+    <ul class="item-list" id="bills-list"></ul>
+  </div>
+
+  <button class="refresh" onclick="load()">Refresh</button>
+
+  <script>
+    function formatIDR(value) {
+      return new Intl.NumberFormat('id-ID', {
+        style: 'currency',
+        currency: 'IDR',
+        maximumFractionDigits: 0,
+      }).format(value);
+    }
+
+    async function loadSummary() {
+      const totalEl = document.getElementById('total');
+      const metaEl = document.getElementById('meta');
+      totalEl.textContent = 'Loading…';
+      metaEl.textContent = '';
+      try {
+        const res = await fetch('/api/installments-summary');
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        totalEl.textContent = formatIDR(data.total);
+        metaEl.textContent = `${data.activeCount} active items · updated ${new Date(data.updatedAt).toLocaleTimeString()}`;
+      } catch (err) {
+        totalEl.textContent = '—';
+        metaEl.innerHTML = `<span class="error">${err.message}</span>`;
+      }
+    }
+
+    async function loadByEndMonth() {
+      const listEl = document.getElementById('months-list');
+      const noEndEl = document.getElementById('no-end');
+      listEl.textContent = 'Loading…';
+      noEndEl.textContent = '';
+      try {
+        const res = await fetch('/api/installments-by-end-month');
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+
+        if (!data.months.length) {
+          listEl.innerHTML = '<div class="sub">No active installments with an end date.</div>';
+        } else {
+          listEl.innerHTML = data.months.map((m) => `
+            <details class="month-row">
+              <summary>
+                <span>
+                  <span class="month-name">${m.label}</span>
+                  <span class="month-count">(${m.count})</span>
+                </span>
+                <span class="month-amount">${formatIDR(m.amountEnding)}</span>
+              </summary>
+              <div class="month-detail">
+                <div class="remaining">Remaining after: ${formatIDR(m.remainingAfter)}</div>
+                <ul class="item-list">
+                  ${m.items.map((i) => `<li><span>${i.name}</span><span>${formatIDR(i.amount)}</span></li>`).join('')}
+                </ul>
+              </div>
+            </details>
+          `).join('');
+        }
+
+        if (data.noEndDate && data.noEndDate.count > 0) {
+          noEndEl.textContent = `+ ${data.noEndDate.count} active item(s) with no end date (${formatIDR(data.noEndDate.amount)}) not shown above.`;
+        }
+      } catch (err) {
+        listEl.innerHTML = `<span class="error">${err.message}</span>`;
+      }
+    }
+
+    async function loadBills() {
+      const totalEl = document.getElementById('bills-total');
+      const listEl = document.getElementById('bills-list');
+      totalEl.textContent = 'Loading…';
+      listEl.innerHTML = '';
+      try {
+        const res = await fetch('/api/bills-summary');
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        totalEl.textContent = formatIDR(data.total);
+        listEl.innerHTML = data.count
+          ? data.items.map((i) => `<li><span>${i.name}</span><span>${formatIDR(i.amount)}</span></li>`).join('')
+          : '<li><span class="sub">No active bills.</span></li>';
+      } catch (err) {
+        totalEl.textContent = '—';
+        listEl.innerHTML = `<span class="error">${err.message}</span>`;
+      }
+    }
+
+    function load() {
+      loadSummary();
+      loadByEndMonth();
+      loadBills();
+    }
+
+    load();
+  </script>
+</body>
+</html>

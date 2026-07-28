@@ -5,20 +5,20 @@ module.exports = async (req, res) => {
     const rows = await fetchInstallmentRows();
 
     let total = 0;
-    let activeCount = 0;
+    const items = [];
 
     for (const r of rows) {
-      if (r.isActive && !r.isBill) {
+      if (r.isActive && r.isBill) {
         total += r.amount;
-        activeCount += 1;
+        items.push({ name: r.name, amount: r.amount });
       }
     }
 
     res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
     res.status(200).json({
       total,
-      activeCount,
-      rowsRead: rows.length,
+      count: items.length,
+      items,
       updatedAt: new Date().toISOString(),
     });
   } catch (err) {
