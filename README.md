@@ -19,21 +19,13 @@ A tiny mobile-friendly page that shows the sum of `Amount` in the
 
 ## 3. Push this project to GitHub
 
-From inside this `mnab-dashboard` folder:
-
-```bash
-git init
-git remote add origin https://github.com/maulanna-enoch/MNAB.git
-git add .
-git commit -m "Initial dashboard: active installments total"
-git branch -M main
-git push -u origin main
-```
+Already done — this repo lives at https://github.com/maulanna-enoch/mnab-dashboard
+(pushed via GitHub Desktop).
 
 ## 4. Deploy on Vercel
 
 1. Go to https://vercel.com and sign up/log in with your GitHub account.
-2. "Add New Project" → import `maulanna-enoch/MNAB`.
+2. "Add New Project" → import `maulanna-enoch/mnab-dashboard`.
 3. Before deploying, add environment variables (Settings → Environment Variables), one per line from your service account JSON and sheet:
    - `GOOGLE_SERVICE_ACCOUNT_EMAIL` = the `client_email` value
    - `GOOGLE_PRIVATE_KEY` = the `private_key` value, quotes and all (keep the `\n` characters as-is)

@@ -16,6 +16,9 @@ module.exports = async (req, res) => {
     const response = await sheets.spreadsheets.values.get({
       spreadsheetId: process.env.SHEET_ID,
       range: 'installmentsbills!A2:I',
+      // Without this, Sheets returns the *displayed* text (e.g. "Rp 5.000.000"),
+      // which parseFloat can't read. This returns the underlying raw number/boolean.
+      valueRenderOption: 'UNFORMATTED_VALUE',
     });
 
     const rows = response.data.values || [];
@@ -34,7 +37,12 @@ module.exports = async (req, res) => {
     }
 
     res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
-    res.status(200).json({ total, activeCount, updatedAt: new Date().toISOString() });
+    res.status(200).json({
+      total,
+      activeCount,
+      rowsRead: rows.length,
+      updatedAt: new Date().toISOString(),
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
