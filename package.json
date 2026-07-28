@@ -1,0 +1,9 @@
+{
+  "name": "mnab-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Mobile-friendly dashboard for the MNAB (Maulanna Needs A Budget) Google Sheet",
+  "dependencies": {
+    "googleapis": "^140.0.0"
+  }
+}
