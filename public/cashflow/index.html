@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>Cash Flow · MNAB</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0f1115;
+    --card: #1a1d24;
+    --text: #f4f4f5;
+    --muted: #9ca3af;
+    --accent: #22c55e;
+    --paid: #e24b4a;
+    --budgeted: #f5b942;
+    --negative: #e24b4a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px;
+  }
+  .back-link {
+    align-self: flex-start;
+    max-width: 420px;
+    width: 100%;
+    margin: 0 auto 8px;
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 0.85rem;
+  }
+  h1 {
+    font-size: 1.1rem;
+    font-weight: 500;
+    color: var(--muted);
+    margin: 0 0 16px;
+    text-align: center;
+  }
+  select#month {
+    width: 100%;
+    max-width: 420px;
+    background: var(--card);
+    color: var(--text);
+    border: 1px solid #374151;
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 14px;
+    margin-bottom: 16px;
+  }
+  .card {
+    width: 100%;
+    max-width: 420px;
+    background: var(--card);
+    border-radius: 16px;
+    padding: 24px;
+    margin-bottom: 12px;
+    text-align: center;
+  }
+  .label {
+    font-size: 0.85rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 8px;
+  }
+  .hero-total {
+    font-size: 2.4rem;
+    font-weight: 700;
+    color: var(--accent);
+    word-break: break-word;
+  }
+  .section-total {
+    font-size: 1.4rem;
+    font-weight: 700;
+    color: var(--accent);
+    margin-bottom: 10px;
+  }
+  .sub {
+    font-size: 0.85rem;
+    color: var(--muted);
+    margin-top: 8px;
+  }
+  .error {
+    color: #f87171;
+    font-size: 0.9rem;
+  }
+  .refresh {
+    background: none;
+    border: 1px solid #374151;
+    color: var(--text);
+    padding: 8px 16px;
+    border-radius: 999px;
+    font-size: 0.85rem;
+  }
+  .bar {
+    display: flex;
+    height: 14px;
+    border-radius: 7px;
+    overflow: hidden;
+    background: var(--bg);
+    margin-bottom: 10px;
+  }
+  .bar-paid { background: var(--paid); }
+  .bar-budgeted { background: var(--budgeted); }
+  .legend {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.7rem;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+  .legend .dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 4px;
+  }
+  details {
+    border-top: 1px solid #2a2e37;
+    padding-top: 8px;
+    text-align: left;
+  }
+  summary {
+    cursor: pointer;
+    font-size: 0.75rem;
+    color: var(--muted);
+    text-align: center;
+  }
+  .item-list {
+    list-style: none;
+    margin: 8px 0 0;
+    padding: 0;
+  }
+  .item-list li {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.85rem;
+    padding: 4px 0;
+    color: var(--text);
+  }
+  .item-list li span:last-child {
+    color: var(--muted);
+  }
+  .item-list li.paid span:last-child { color: var(--paid); }
+  .item-list li.budgeted span:last-child { color: var(--budgeted); }
+</style>
+</head>
+<body>
+  <a class="back-link" href="/">← Home</a>
+  <h1>Cash Flow</h1>
+
+  <select id="month"></select>
+
+  <div class="card">
+    <div class="label">Left to spend</div>
+    <div class="hero-total" id="left-total">Loading…</div>
+    <div class="sub" id="left-meta"></div>
+  </div>
+
+  <div class="card">
+    <div class="label">Income</div>
+    <div class="section-total" id="income-total">Loading…</div>
+    <details>
+      <summary>View line items</summary>
+      <ul class="item-list" id="income-items"></ul>
+    </details>
+  </div>
+
+  <div class="card">
+    <div class="label">Outflow</div>
+    <div class="section-total" id="outflow-total">Loading…</div>
+    <div class="bar">
+      <div class="bar-paid" id="bar-paid"></div>
+      <div class="bar-budgeted" id="bar-budgeted"></div>
+    </div>
+    <div class="legend">
+      <span><span class="dot" style="background: var(--paid);"></span>Paid</span>
+      <span><span class="dot" style="background: var(--budgeted);"></span>Budgeted (unpaid)</span>
+    </div>
+    <details>
+      <summary>View line items</summary>
+      <ul class="item-list" id="outflow-items"></ul>
+    </details>
+  </div>
+
+  <button class="refresh" onclick="loadSummary()">Refresh</button>
+
+  <script>
+    function formatIDR(value) {
+      return new Intl.NumberFormat('id-ID', {
+        style: 'currency',
+        currency: 'IDR',
+        maximumFractionDigits: 0,
+      }).format(value);
+    }
+
+    async function loadMonths() {
+      const monthEl = document.getElementById('month');
+      try {
+        const res = await fetch('/api/cashflow-months');
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        if (!data.months.length) {
+          monthEl.innerHTML = '<option value="">No months found in Diary</option>';
+          return;
+        }
+        monthEl.innerHTML = data.months.map((m) => `<option value="${m.value}">${m.label}</option>`).join('');
+        loadSummary();
+      } catch (err) {
+        monthEl.innerHTML = '<option value="">Error loading months</option>';
+        document.getElementById('left-total').textContent = '—';
+        document.getElementById('left-meta').innerHTML = `<span class="error">${err.message}</span>`;
+      }
+    }
+
+    async function loadSummary() {
+      const monthEl = document.getElementById('month');
+      const month = monthEl.value;
+      if (!month) return;
+
+      const leftTotalEl = document.getElementById('left-total');
+      const leftMetaEl = document.getElementById('left-meta');
+      const incomeTotalEl = document.getElementById('income-total');
+      const incomeItemsEl = document.getElementById('income-items');
+      const outflowTotalEl = document.getElementById('outflow-total');
+      const outflowItemsEl = document.getElementById('outflow-items');
+
+      leftTotalEl.textContent = 'Loading…';
+      leftMetaEl.textContent = '';
+      incomeTotalEl.textContent = 'Loading…';
+      outflowTotalEl.textContent = 'Loading…';
+
+      try {
+        const res = await fetch(`/api/cashflow-summary?month=${encodeURIComponent(month)}`);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+
+        leftTotalEl.textContent = formatIDR(data.leftToSpend);
+        leftTotalEl.style.color = data.leftToSpend >= 0 ? 'var(--accent)' : 'var(--negative)';
+        leftMetaEl.textContent = `updated ${new Date(data.updatedAt).toLocaleTimeString()}`;
+
+        incomeTotalEl.textContent = formatIDR(data.income);
+        incomeItemsEl.innerHTML = data.incomeItems.length
+          ? data.incomeItems.map((i) => `<li><span>${i.name}</span><span>${formatIDR(i.amount)}</span></li>`).join('')
+          : '<li><span class="sub">No income logged.</span></li>';
+
+        outflowTotalEl.textContent = formatIDR(data.outflow);
+        const paidPct = data.outflow ? (data.paid / data.outflow) * 100 : 0;
+        const budgetedPct = data.outflow ? (data.budgeted / data.outflow) * 100 : 0;
+        document.getElementById('bar-paid').style.width = paidPct + '%';
+        document.getElementById('bar-budgeted').style.width = budgetedPct + '%';
+
+        const paidRows = data.paidItems.map((i) => `<li class="paid"><span>${i.name}</span><span>${formatIDR(i.amount)}</span></li>`);
+        const budgetedRows = data.budgetedItems.map((i) => `<li class="budgeted"><span>${i.name}</span><span>${formatIDR(i.amount)}</span></li>`);
+        outflowItemsEl.innerHTML = (paidRows.concat(budgetedRows).join('')) || '<li><span class="sub">No expenses logged.</span></li>';
+      } catch (err) {
+        leftTotalEl.textContent = '—';
+        leftMetaEl.innerHTML = `<span class="error">${err.message}</span>`;
+      }
+    }
+
+    document.getElementById('month').addEventListener('change', loadSummary);
+    loadMonths();
+  </script>
+</body>
+</html>

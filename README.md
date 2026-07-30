@@ -1,7 +1,23 @@
 # MNAB Dashboard
 
-A mobile-friendly home menu, with an "Installments & Bills" page reading from
-the `installmentsbills` tab. Rows are split into two categories:
+A mobile-friendly home menu with two pages:
+
+### Cash Flow (`/cashflow`)
+
+Reads the `Diary` tab. A month dropdown (populated from whatever months
+actually exist in `Diary`) drives three cards:
+
+- **Left to spend** (hero number) — `Income − Outflow`. Red if negative.
+- **Income** — sum of `Income/Expense = Income` rows for the selected month.
+- **Outflow** — sum of `Income/Expense = Expense` rows, split into **Paid**
+  (`Status = Paid`) and **Budgeted** (anything else — i.e. the unpaid rows
+  your sheet's button adds at the start of the month).
+
+Each card expands to show the underlying line items.
+
+### Installments & Bills (`/installments`)
+
+Reads the `installmentsbills` tab. Rows are split into two categories:
 
 - **Installments** — have a real payoff date in `Ends`. Broken down by ending
   month with a running "remaining after" total.
@@ -45,11 +61,14 @@ Already done — this repo lives at https://github.com/maulanna-enoch/mnab-dashb
 
 ```
 mnab-dashboard/
-  api/_lib/sheets.js                  Shared: reads the sheet, classifies each row (active/Bill/Installment)
+  api/_lib/sheets.js                  Shared: reads the sheet, classifies rows (installments/bills, diary income/expense/status)
+  api/cashflow-months.js              Distinct months found in Diary, for the month dropdown
+  api/cashflow-summary.js             Income/Paid/Budgeted/Left-to-spend for a given ?month=YYYY-MM
   api/installments-summary.js         Sum of active Installment amounts (excludes Bills)
   api/installments-by-end-month.js    Active Installments grouped by ending month, with running remaining total
   api/bills-summary.js                Sum + list of active Bills
   public/index.html                   Home menu page
+  public/cashflow/index.html          Cash Flow page (linked from home)
   public/installments/index.html      Installments & Bills page (linked from home)
   vercel.json                         Enables clean URLs (e.g. /installments instead of /installments.html)
   package.json                        Dependency: googleapis
