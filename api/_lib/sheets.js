@@ -67,10 +67,17 @@ async function fetchInstallmentRows() {
 async function fetchDiaryRows() {
   const sheets = getSheetsClient();
 
-  // Columns: Name, Income/Expense, Date, Month, Status, Amount, Expense, Income
+  // Columns: Name, Income/Expense, Date, Month, Status, amountDefault, Expense,
+  // Income, Category, amountVariable.
+  //
+  // amountDefault (F) is just the template/planned figure. Expense (G) and
+  // Income (H) are the real amounts -- each equals amountDefault +
+  // amountVariable (J), where amountVariable is a SUMIF pulled from a
+  // separate transactions tab. G is populated for Expense rows, H for
+  // Income rows.
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId: process.env.SHEET_ID,
-    range: 'Diary!A2:H',
+    range: 'Diary!A2:J',
     valueRenderOption: 'UNFORMATTED_VALUE',
   });
 
@@ -86,7 +93,12 @@ async function fetchDiaryRows() {
     // Anything not exactly "Paid" (case-insensitive) counts as unpaid/budgeted,
     // robust to whatever label your sheet button writes.
     const isPaid = status.toLowerCase() === 'paid';
-    const amount = parseFloat(row[5]) || 0;
+    const amountDefault = parseFloat(row[5]) || 0;
+    const expenseAmount = parseFloat(row[6]) || 0;
+    const incomeAmount = parseFloat(row[7]) || 0;
+    const category = row[8] || 'Uncategorized';
+    const amountVariable = parseFloat(row[9]) || 0;
+    const amount = type === 'Income' ? incomeAmount : expenseAmount;
 
     return {
       name,
@@ -96,6 +108,9 @@ async function fetchDiaryRows() {
       status,
       isPaid,
       amount,
+      amountDefault,
+      amountVariable,
+      category,
     };
   });
 }

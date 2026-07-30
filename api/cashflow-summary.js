@@ -18,10 +18,10 @@ module.exports = async (req, res) => {
 
     const paidItems = monthRows
       .filter((r) => r.type === 'Expense' && r.isPaid)
-      .map((r) => ({ name: r.name, amount: r.amount }));
+      .map((r) => ({ name: r.name, amount: r.amount, category: r.category }));
     const budgetedItems = monthRows
       .filter((r) => r.type === 'Expense' && !r.isPaid)
-      .map((r) => ({ name: r.name, amount: r.amount }));
+      .map((r) => ({ name: r.name, amount: r.amount, category: r.category }));
 
     const paid = paidItems.reduce((sum, i) => sum + i.amount, 0);
     const budgeted = budgetedItems.reduce((sum, i) => sum + i.amount, 0);

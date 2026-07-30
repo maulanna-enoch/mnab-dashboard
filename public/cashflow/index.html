@@ -152,6 +152,19 @@
   }
   .item-list li.paid span:last-child { color: var(--text); }
   .item-list li.budgeted span:last-child { color: var(--budgeted); }
+  .item-list li.category-header {
+    display: block;
+    font-size: 0.7rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    padding: 10px 0 2px;
+    border-top: 1px solid #2a2e37;
+  }
+  .item-list li.category-header:first-child {
+    border-top: none;
+    padding-top: 0;
+  }
 </style>
 </head>
 <body>
@@ -259,9 +272,31 @@
         document.getElementById('bar-paid').style.width = paidPct + '%';
         document.getElementById('bar-budgeted').style.width = budgetedPct + '%';
 
-        const paidRows = data.paidItems.map((i) => `<li class="paid"><span>${i.name}</span><span>${formatIDR(i.amount)}</span></li>`);
-        const budgetedRows = data.budgetedItems.map((i) => `<li class="budgeted"><span>${i.name}</span><span>${formatIDR(i.amount)}</span></li>`);
-        outflowItemsEl.innerHTML = (paidRows.concat(budgetedRows).join('')) || '<li><span class="sub">No expenses logged.</span></li>';
+        const allOutflowItems = data.paidItems.map((i) => ({ ...i, isPaid: true }))
+          .concat(data.budgetedItems.map((i) => ({ ...i, isPaid: false })));
+
+        const byCategory = {};
+        allOutflowItems.forEach((i) => {
+          const cat = i.category || 'Uncategorized';
+          (byCategory[cat] = byCategory[cat] || []).push(i);
+        });
+
+        const categoryOrder = ['Cash', 'Credit Cards'];
+        const categories = Object.keys(byCategory).sort((a, b) => {
+          const ai = categoryOrder.indexOf(a);
+          const bi = categoryOrder.indexOf(b);
+          if (ai === -1 && bi === -1) return a.localeCompare(b);
+          if (ai === -1) return 1;
+          if (bi === -1) return -1;
+          return ai - bi;
+        });
+
+        outflowItemsEl.innerHTML = categories.length
+          ? categories.map((cat) => `
+              <li class="category-header">${cat}</li>
+              ${byCategory[cat].map((i) => `<li class="${i.isPaid ? 'paid' : 'budgeted'}"><span>${i.name}</span><span>${formatIDR(i.amount)}</span></li>`).join('')}
+            `).join('')
+          : '<li><span class="sub">No expenses logged.</span></li>';
       } catch (err) {
         leftTotalEl.textContent = '—';
         leftMetaEl.innerHTML = `<span class="error">${err.message}</span>`;
