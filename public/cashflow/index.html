@@ -205,7 +205,7 @@
     </details>
   </div>
 
-  <button class="refresh" onclick="loadSummary()">Refresh</button>
+  <button class="refresh" onclick="loadSummary(true)">Refresh</button>
 
   <script>
     function formatIDR(value) {
@@ -235,7 +235,7 @@
       }
     }
 
-    async function loadSummary() {
+    async function loadSummary(forceFresh) {
       const monthEl = document.getElementById('month');
       const month = monthEl.value;
       if (!month) return;
@@ -253,7 +253,8 @@
       outflowTotalEl.textContent = 'Loading…';
 
       try {
-        const res = await fetch(`/api/cashflow-summary?month=${encodeURIComponent(month)}`);
+        const cacheBust = forceFresh ? `&fresh=${Date.now()}` : '';
+        const res = await fetch(`/api/cashflow-summary?month=${encodeURIComponent(month)}${cacheBust}`);
         const data = await res.json();
         if (data.error) throw new Error(data.error);
 
@@ -303,7 +304,7 @@
       }
     }
 
-    document.getElementById('month').addEventListener('change', loadSummary);
+    document.getElementById('month').addEventListener('change', () => loadSummary());
     loadMonths();
   </script>
 </body>
