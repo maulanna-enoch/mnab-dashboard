@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>Transactions · MNAB</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0f1115;
+    --card: #1a1d24;
+    --text: #f4f4f5;
+    --muted: #9ca3af;
+    --accent: #22c55e;
+    --uncleared: #f5b942;
+    --negative: #e24b4a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 24px 16px 100px;
+  }
+  .wrap { max-width: 420px; margin: 0 auto; position: relative; }
+  .back-link {
+    display: block;
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 0.85rem;
+    margin-bottom: 4px;
+  }
+  h1 {
+    font-size: 1.1rem;
+    font-weight: 500;
+    color: var(--muted);
+    margin: 0 0 16px;
+    text-align: center;
+  }
+  .date-header {
+    font-size: 0.7rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 16px 0 6px;
+  }
+  .date-header:first-of-type { margin-top: 0; }
+  .txn-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--card);
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-bottom: 8px;
+    cursor: pointer;
+  }
+  .txn-name { font-size: 0.9rem; }
+  .txn-meta { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
+  .txn-meta .uncleared { color: var(--uncleared); }
+  .txn-amount { font-size: 0.9rem; white-space: nowrap; }
+  .txn-amount.income { color: var(--accent); }
+  .sub { font-size: 0.85rem; color: var(--muted); }
+  .error { color: #f87171; font-size: 0.9rem; }
+
+  .fab {
+    position: fixed;
+    bottom: 24px;
+    right: max(16px, calc(50% - 210px + 16px));
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #0f1115;
+    border: none;
+    font-size: 28px;
+    line-height: 56px;
+    text-align: center;
+    padding: 0;
+    cursor: pointer;
+  }
+  .toast {
+    position: fixed;
+    bottom: 92px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #2a2e37;
+    color: var(--text);
+    font-size: 12px;
+    padding: 8px 16px;
+    border-radius: 999px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s;
+    z-index: 20;
+  }
+  .toast.show { opacity: 1; }
+
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.55);
+    display: none;
+    align-items: flex-end;
+    justify-content: center;
+    z-index: 10;
+  }
+  .overlay.open { display: flex; }
+  .sheet {
+    width: 100%;
+    max-width: 420px;
+    max-height: 85vh;
+    overflow-y: auto;
+    background: var(--card);
+    border-radius: 16px 16px 0 0;
+    padding: 18px 16px 24px;
+  }
+  .sheet-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 14px;
+  }
+  .sheet-title { font-size: 15px; font-weight: 600; }
+  .sheet-close { color: var(--muted); font-size: 20px; cursor: pointer; }
+  .field-label { font-size: 11px; color: var(--muted); }
+  .field {
+    width: 100%;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid #374151;
+    border-radius: 8px;
+    padding: 9px 10px;
+    font-size: 14px;
+    margin: 4px 0 10px;
+  }
+  .toggle-row { display: flex; gap: 8px; margin-bottom: 12px; }
+  .toggle-btn {
+    flex: 1;
+    padding: 8px;
+    border-radius: 8px;
+    border: 1px solid #374151;
+    background: var(--bg);
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .toggle-btn.active { border-color: var(--accent); color: var(--text); }
+  #type-toggle .toggle-btn[data-type="Expense"].active { border-color: var(--negative); color: var(--text); }
+  #type-toggle .toggle-btn[data-type="Income"].active { border-color: var(--accent); color: var(--text); }
+  .amount-block { text-align: center; margin-bottom: 16px; }
+  .amount-label { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+  .amount-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 6px;
+    max-width: 100%;
+    overflow: hidden;
+  }
+  .amount-currency { font-size: 18px; flex-shrink: 0; }
+  .amount-input {
+    min-width: 2ch;
+    max-width: 100%;
+    background: transparent;
+    border: none;
+    outline: none;
+    font-size: 30px;
+    font-weight: 700;
+    text-align: center;
+    padding: 0;
+  }
+  .amount-rule { height: 1px; background: #374151; margin-top: 8px; }
+  .row-2 { display: flex; gap: 10px; }
+  .row-2 > div { flex: 1; min-width: 0; }
+  .save-btn {
+    width: 100%;
+    padding: 12px;
+    border-radius: 10px;
+    border: none;
+    background: var(--accent);
+    color: #0f1115;
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  .save-btn:disabled { opacity: 0.6; }
+  .delete-link {
+    display: none;
+    text-align: center;
+    color: var(--negative);
+    font-size: 13px;
+    cursor: pointer;
+    padding: 4px;
+  }
+  .hint { font-size: 10px; color: var(--muted); margin: -6px 0 10px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <a class="back-link" href="/">← Home</a>
+    <h1>Transactions</h1>
+    <div id="list"><div class="sub">Loading…</div></div>
+  </div>
+
+  <button class="fab" id="fab">+</button>
+  <div class="toast" id="toast">Saved</div>
+
+  <div class="overlay" id="overlay">
+    <div class="sheet">
+      <div class="sheet-header">
+        <div class="sheet-title" id="sheet-title">Add transaction</div>
+        <div class="sheet-close" id="sheet-close">&times;</div>
+      </div>
+
+      <div class="toggle-row" id="type-toggle">
+        <button class="toggle-btn" data-type="Expense">Expense</button>
+        <button class="toggle-btn" data-type="Income">Income</button>
+      </div>
+
+      <div class="amount-block">
+        <div class="amount-label">Amount</div>
+        <div class="amount-row">
+          <span class="amount-currency" id="amount-currency">Rp</span>
+          <input id="f-amount" class="amount-input" type="text" inputmode="numeric" placeholder="0" />
+        </div>
+        <div class="amount-rule"></div>
+      </div>
+
+      <label class="field-label">Payee</label>
+      <input id="f-payee" class="field" type="text" placeholder="e.g. Sushi Hiro, Plaza Indonesia" />
+
+      <label class="field-label">Account (SOF)</label>
+      <select id="f-sof" class="field"></select>
+
+      <div class="row-2">
+        <div>
+          <label class="field-label">Date</label>
+          <input id="f-date" class="field" type="date" />
+        </div>
+        <div>
+          <label class="field-label">Billing month</label>
+          <input id="f-month" class="field" type="month" />
+        </div>
+      </div>
+      <div class="hint">Billing month defaults to the date's month — override for card statement cycles.</div>
+
+      <label class="field-label">Notes (optional)</label>
+      <input id="f-notes" class="field" type="text" placeholder="e.g. Aolion Knight Joycon" />
+
+      <div class="toggle-row" id="status-toggle">
+        <button class="toggle-btn" data-status="Cleared">Cleared</button>
+        <button class="toggle-btn" data-status="Uncleared">Uncleared</button>
+      </div>
+
+      <div id="form-error" class="error" style="display:none; margin-bottom: 8px;"></div>
+      <button class="save-btn" id="save-btn">Save</button>
+      <div class="delete-link" id="delete-link">Delete transaction</div>
+    </div>
+  </div>
+
+  <script>
+    function formatIDR(value) {
+      return new Intl.NumberFormat('id-ID', {
+        style: 'currency',
+        currency: 'IDR',
+        maximumFractionDigits: 0,
+      }).format(value);
+    }
+
+    function dateLabel(dateStr) {
+      if (!dateStr) return 'No date';
+      const d = new Date(dateStr + 'T00:00:00');
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+      if (d.getTime() === today.getTime()) return 'Today';
+      if (d.getTime() === yesterday.getTime()) return 'Yesterday';
+      return d.toLocaleDateString('en-GB', {
+        day: 'numeric', month: 'short',
+        year: d.getFullYear() !== today.getFullYear() ? 'numeric' : undefined,
+      });
+    }
+
+    let accounts = [];
+    let transactions = [];
+    let editingRow = null;
+
+    const overlay = document.getElementById('overlay');
+    const sheetTitle = document.getElementById('sheet-title');
+    const deleteLink = document.getElementById('delete-link');
+    const toast = document.getElementById('toast');
+    const formError = document.getElementById('form-error');
+    const amountInput = document.getElementById('f-amount');
+    const amountCurrency = document.getElementById('amount-currency');
+
+    // Amount field: plain-digit value with live "." thousands separators
+    // (matching the id-ID formatting used elsewhere), width grows with the
+    // digit count instead of wrapping/clipping.
+    function digitsOnly(str) {
+      return (str || '').replace(/[^\d]/g, '');
+    }
+    function formatAmountDisplay(digits) {
+      return digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    }
+    function resizeAmountInput() {
+      amountInput.style.width = (amountInput.value.length + 1) + 'ch';
+    }
+    function updateAmountColor() {
+      const isIncome = getToggle('type-toggle', 'type') === 'Income';
+      const color = isIncome ? 'var(--accent)' : 'var(--negative)';
+      amountInput.style.color = color;
+      amountCurrency.style.color = color;
+    }
+    amountInput.addEventListener('input', () => {
+      amountInput.value = formatAmountDisplay(digitsOnly(amountInput.value));
+      resizeAmountInput();
+    });
+
+    function showToast(msg) {
+      toast.textContent = msg;
+      toast.classList.add('show');
+      setTimeout(() => toast.classList.remove('show'), 1400);
+    }
+
+    function setToggle(groupId, attr, value) {
+      document.querySelectorAll(`#${groupId} .toggle-btn`).forEach((b) => {
+        b.classList.toggle('active', b.dataset[attr] === value);
+      });
+    }
+    function getToggle(groupId, attr) {
+      const active = document.querySelector(`#${groupId} .toggle-btn.active`);
+      return active ? active.dataset[attr] : null;
+    }
+    document.querySelectorAll('#type-toggle .toggle-btn').forEach((b) =>
+      b.addEventListener('click', () => {
+        setToggle('type-toggle', 'type', b.dataset.type);
+        updateAmountColor();
+      }));
+    document.querySelectorAll('#status-toggle .toggle-btn').forEach((b) =>
+      b.addEventListener('click', () => setToggle('status-toggle', 'status', b.dataset.status)));
+
+    function monthValue(d) {
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    }
+
+    function openForm(txn) {
+      formError.style.display = 'none';
+      overlay.classList.add('open');
+      const today = new Date();
+      if (txn) {
+        editingRow = txn.rowNumber;
+        sheetTitle.textContent = 'Edit transaction';
+        document.getElementById('f-payee').value = txn.payee;
+        document.getElementById('f-sof').value = txn.sof;
+        amountInput.value = formatAmountDisplay(digitsOnly(String(Math.round(txn.amount))));
+        document.getElementById('f-notes').value = txn.notes || '';
+        document.getElementById('f-date').value = txn.date || today.toISOString().slice(0, 10);
+        document.getElementById('f-month').value = txn.month || monthValue(today);
+        setToggle('type-toggle', 'type', txn.type);
+        setToggle('status-toggle', 'status', txn.cleared === 'Cleared' ? 'Cleared' : 'Uncleared');
+        deleteLink.style.display = 'block';
+      } else {
+        editingRow = null;
+        sheetTitle.textContent = 'Add transaction';
+        document.getElementById('f-payee').value = '';
+        amountInput.value = '';
+        document.getElementById('f-notes').value = '';
+        document.getElementById('f-date').value = today.toISOString().slice(0, 10);
+        document.getElementById('f-month').value = monthValue(today);
+        setToggle('type-toggle', 'type', 'Expense');
+        setToggle('status-toggle', 'status', 'Cleared');
+        deleteLink.style.display = 'none';
+      }
+      updateAmountColor();
+      resizeAmountInput();
+    }
+    function closeForm() { overlay.classList.remove('open'); }
+
+    document.getElementById('fab').addEventListener('click', () => openForm(null));
+    document.getElementById('sheet-close').addEventListener('click', closeForm);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeForm(); });
+
+    async function loadAccounts() {
+      const sofEl = document.getElementById('f-sof');
+      try {
+        const res = await fetch('/api/accounts-list');
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        accounts = data.accounts;
+        sofEl.innerHTML = accounts.map((a) => `<option value="${a.name}">${a.name}</option>`).join('');
+      } catch (err) {
+        sofEl.innerHTML = '<option value="">Error loading accounts</option>';
+      }
+    }
+
+    async function loadTransactions() {
+      const listEl = document.getElementById('list');
+      listEl.innerHTML = '<div class="sub">Loading…</div>';
+      try {
+        const res = await fetch('/api/transactions-list');
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        transactions = data.transactions;
+
+        if (!transactions.length) {
+          listEl.innerHTML = '<div class="sub">No transactions yet. Tap + to add one.</div>';
+          return;
+        }
+
+        let html = '';
+        let lastLabel = null;
+        transactions.forEach((t) => {
+          const label = dateLabel(t.date);
+          if (label !== lastLabel) {
+            html += `<div class="date-header">${label}</div>`;
+            lastLabel = label;
+          }
+          const isIncome = t.type === 'Income';
+          const amountText = (isIncome ? '+' : '') + formatIDR(t.amount);
+          const clearedNote = t.cleared === 'Cleared' ? '' : ` &middot; <span class="uncleared">uncleared</span>`;
+          html += `
+            <div class="txn-row" data-row="${t.rowNumber}">
+              <div>
+                <div class="txn-name">${t.payee}</div>
+                <div class="txn-meta">${t.sof}${clearedNote}</div>
+              </div>
+              <div class="txn-amount ${isIncome ? 'income' : ''}">${amountText}</div>
+            </div>
+          `;
+        });
+        listEl.innerHTML = html;
+
+        document.querySelectorAll('.txn-row').forEach((row) => {
+          row.addEventListener('click', () => {
+            const rowNumber = parseInt(row.dataset.row, 10);
+            const txn = transactions.find((t) => t.rowNumber === rowNumber);
+            if (txn) openForm(txn);
+          });
+        });
+      } catch (err) {
+        listEl.innerHTML = `<span class="error">${err.message}</span>`;
+      }
+    }
+
+    async function handleSave() {
+      const saveBtn = document.getElementById('save-btn');
+      const payload = {
+        payee: document.getElementById('f-payee').value.trim(),
+        type: getToggle('type-toggle', 'type'),
+        sof: document.getElementById('f-sof').value,
+        amount: digitsOnly(amountInput.value),
+        date: document.getElementById('f-date').value,
+        month: document.getElementById('f-month').value,
+        cleared: getToggle('status-toggle', 'status'),
+        notes: document.getElementById('f-notes').value.trim(),
+      };
+
+      if (!payload.payee || !payload.sof || !payload.amount || !payload.date || !payload.month) {
+        formError.textContent = 'Payee, account, amount, date, and month are required.';
+        formError.style.display = 'block';
+        return;
+      }
+
+      saveBtn.disabled = true;
+      formError.style.display = 'none';
+      try {
+        const isEdit = editingRow !== null;
+        const url = isEdit ? '/api/transactions-update' : '/api/transactions-add';
+        const body = isEdit ? { ...payload, rowNumber: editingRow } : payload;
+        const res = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        closeForm();
+        showToast('Saved');
+        loadTransactions();
+      } catch (err) {
+        formError.textContent = err.message;
+        formError.style.display = 'block';
+      } finally {
+        saveBtn.disabled = false;
+      }
+    }
+    document.getElementById('save-btn').addEventListener('click', handleSave);
+
+    async function handleDelete() {
+      if (editingRow === null) return;
+      if (!confirm('Delete this transaction?')) return;
+      try {
+        const res = await fetch('/api/transactions-delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rowNumber: editingRow }),
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        closeForm();
+        showToast('Deleted');
+        loadTransactions();
+      } catch (err) {
+        formError.textContent = err.message;
+        formError.style.display = 'block';
+      }
+    }
+    deleteLink.addEventListener('click', handleDelete);
+
+    loadAccounts();
+    loadTransactions();
+  </script>
+</body>
+</html>
