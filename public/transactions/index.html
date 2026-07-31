@@ -147,8 +147,33 @@
     font-size: 13px;
   }
   .toggle-btn.active { border-color: var(--accent); color: var(--text); }
+  #type-toggle .toggle-btn[data-type="Expense"].active { border-color: var(--negative); color: var(--text); }
+  #type-toggle .toggle-btn[data-type="Income"].active { border-color: var(--accent); color: var(--text); }
+  .amount-block { text-align: center; margin-bottom: 16px; }
+  .amount-label { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+  .amount-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 6px;
+    max-width: 100%;
+    overflow: hidden;
+  }
+  .amount-currency { font-size: 18px; flex-shrink: 0; }
+  .amount-input {
+    min-width: 2ch;
+    max-width: 100%;
+    background: transparent;
+    border: none;
+    outline: none;
+    font-size: 30px;
+    font-weight: 700;
+    text-align: center;
+    padding: 0;
+  }
+  .amount-rule { height: 1px; background: #374151; margin-top: 8px; }
   .row-2 { display: flex; gap: 10px; }
-  .row-2 > div { flex: 1; }
+  .row-2 > div { flex: 1; min-width: 0; }
   .save-btn {
     width: 100%;
     padding: 12px;
@@ -194,6 +219,15 @@
         <button class="toggle-btn" data-type="Income">Income</button>
       </div>
 
+      <div class="amount-block">
+        <div class="amount-label">Amount</div>
+        <div class="amount-row">
+          <span class="amount-currency" id="amount-currency">Rp</span>
+          <input id="f-amount" class="amount-input" type="text" inputmode="numeric" placeholder="0" />
+        </div>
+        <div class="amount-rule"></div>
+      </div>
+
       <label class="field-label">Payee</label>
       <input id="f-payee" class="field" type="text" placeholder="e.g. Sushi Hiro, Plaza Indonesia" />
 
@@ -202,18 +236,15 @@
 
       <div class="row-2">
         <div>
-          <label class="field-label">Amount (Rp)</label>
-          <input id="f-amount" class="field" type="number" placeholder="0" />
-        </div>
-        <div>
           <label class="field-label">Date</label>
           <input id="f-date" class="field" type="date" />
         </div>
+        <div>
+          <label class="field-label">Billing month</label>
+          <input id="f-month" class="field" type="month" />
+        </div>
       </div>
-
-      <label class="field-label">Billing month</label>
-      <input id="f-month" class="field" type="month" />
-      <div class="hint">Defaults to the date's month — override for card statement cycles.</div>
+      <div class="hint">Billing month defaults to the date's month — override for card statement cycles.</div>
 
       <label class="field-label">Notes (optional)</label>
       <input id="f-notes" class="field" type="text" placeholder="e.g. Aolion Knight Joycon" />
@@ -260,6 +291,31 @@
     const deleteLink = document.getElementById('delete-link');
     const toast = document.getElementById('toast');
     const formError = document.getElementById('form-error');
+    const amountInput = document.getElementById('f-amount');
+    const amountCurrency = document.getElementById('amount-currency');
+
+    // Amount field: plain-digit value with live "." thousands separators
+    // (matching the id-ID formatting used elsewhere), width grows with the
+    // digit count instead of wrapping/clipping.
+    function digitsOnly(str) {
+      return (str || '').replace(/[^\d]/g, '');
+    }
+    function formatAmountDisplay(digits) {
+      return digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    }
+    function resizeAmountInput() {
+      amountInput.style.width = (amountInput.value.length + 1) + 'ch';
+    }
+    function updateAmountColor() {
+      const isIncome = getToggle('type-toggle', 'type') === 'Income';
+      const color = isIncome ? 'var(--accent)' : 'var(--negative)';
+      amountInput.style.color = color;
+      amountCurrency.style.color = color;
+    }
+    amountInput.addEventListener('input', () => {
+      amountInput.value = formatAmountDisplay(digitsOnly(amountInput.value));
+      resizeAmountInput();
+    });
 
     function showToast(msg) {
       toast.textContent = msg;
@@ -277,7 +333,10 @@
       return active ? active.dataset[attr] : null;
     }
     document.querySelectorAll('#type-toggle .toggle-btn').forEach((b) =>
-      b.addEventListener('click', () => setToggle('type-toggle', 'type', b.dataset.type)));
+      b.addEventListener('click', () => {
+        setToggle('type-toggle', 'type', b.dataset.type);
+        updateAmountColor();
+      }));
     document.querySelectorAll('#status-toggle .toggle-btn').forEach((b) =>
       b.addEventListener('click', () => setToggle('status-toggle', 'status', b.dataset.status)));
 
@@ -294,7 +353,7 @@
         sheetTitle.textContent = 'Edit transaction';
         document.getElementById('f-payee').value = txn.payee;
         document.getElementById('f-sof').value = txn.sof;
-        document.getElementById('f-amount').value = txn.amount;
+        amountInput.value = formatAmountDisplay(digitsOnly(String(Math.round(txn.amount))));
         document.getElementById('f-notes').value = txn.notes || '';
         document.getElementById('f-date').value = txn.date || today.toISOString().slice(0, 10);
         document.getElementById('f-month').value = txn.month || monthValue(today);
@@ -305,7 +364,7 @@
         editingRow = null;
         sheetTitle.textContent = 'Add transaction';
         document.getElementById('f-payee').value = '';
-        document.getElementById('f-amount').value = '';
+        amountInput.value = '';
         document.getElementById('f-notes').value = '';
         document.getElementById('f-date').value = today.toISOString().slice(0, 10);
         document.getElementById('f-month').value = monthValue(today);
@@ -313,6 +372,8 @@
         setToggle('status-toggle', 'status', 'Cleared');
         deleteLink.style.display = 'none';
       }
+      updateAmountColor();
+      resizeAmountInput();
     }
     function closeForm() { overlay.classList.remove('open'); }
 
@@ -388,7 +449,7 @@
         payee: document.getElementById('f-payee').value.trim(),
         type: getToggle('type-toggle', 'type'),
         sof: document.getElementById('f-sof').value,
-        amount: document.getElementById('f-amount').value,
+        amount: digitsOnly(amountInput.value),
         date: document.getElementById('f-date').value,
         month: document.getElementById('f-month').value,
         cleared: getToggle('status-toggle', 'status'),
