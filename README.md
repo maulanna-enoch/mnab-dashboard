@@ -57,6 +57,37 @@ Already done — this repo lives at https://github.com/maulanna-enoch/mnab-dashb
 4. Deploy. Vercel gives you a URL like `mnab.vercel.app`.
 5. Open it on your phone, then "Add to Home Screen" for an app-like shortcut.
 
+## 5. Set up a second service account for write access
+
+Everything above is read-only (`spreadsheets.readonly` scope, shared as
+Viewer). The Transactions feature needs to *write* rows, so it uses a
+**separate** service account with Editor access, kept apart from the
+read-only one on purpose — a bug in a read endpoint can never accidentally
+write, because that credential is physically incapable of it.
+
+This doesn't cost anything extra — the Sheets API has no paid tier, and its
+quota is pooled per Google Cloud project, not per service account, so a
+second account in the same project doesn't shrink your headroom.
+
+1. In the same Google Cloud project as before: APIs & Services → Credentials
+   → Create Credentials → Service account.
+   - Name it something distinguishable, e.g. `mnab-writer`.
+2. Open it → Keys tab → Add Key → Create new key → JSON. Download it.
+3. Open that JSON file, note `client_email` and `private_key`.
+4. Open your Google Sheet → Share → paste the **new** service account's
+   `client_email` → set its access to **Editor** (not Viewer) → uncheck
+   "notify".
+5. In Vercel (Settings → Environment Variables), add two more variables
+   alongside your existing ones:
+   - `GOOGLE_WRITE_SERVICE_ACCOUNT_EMAIL` = the new account's `client_email`
+   - `GOOGLE_WRITE_PRIVATE_KEY` = the new account's `private_key` (same
+     rules as before: no surrounding quotes, keep the `\n` as literal text)
+6. Leave `GOOGLE_SERVICE_ACCOUNT_EMAIL` / `GOOGLE_PRIVATE_KEY` and the
+   original service account's Viewer access exactly as they are — every
+   existing page keeps using the read-only credential. Only the new
+   transaction-write endpoint(s) will use the write credential and the
+   `https://www.googleapis.com/auth/spreadsheets` (non-readonly) scope.
+
 ## Project structure
 
 ```
