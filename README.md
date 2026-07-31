@@ -1,6 +1,6 @@
 # MNAB Dashboard
 
-A mobile-friendly home menu with two pages:
+A mobile-friendly home menu with three pages:
 
 ### Cash Flow (`/cashflow`)
 
@@ -26,6 +26,25 @@ Reads the `installmentsbills` tab. Rows are split into two categories:
   no month breakdown.
 
 Both only count rows where `is_active` is `TRUE`.
+
+### Transactions (`/transactions`)
+
+Reads and **writes** the `transactions` tab (Payee, Income/Expense, SOF,
+Date, Month, Cleared, Amount, Expense, Income, Total, Notes). A chronological
+feed grouped by date, a "+" button to add an entry, and tapping any entry
+opens the same form pre-filled for editing or deleting.
+
+The `Amount` column is the only one you type — `Expense`, `Income`, and
+`Total` are computed by the app on every write, mirroring the sheet's own
+formula logic (`Expense = Amount` if the row is an Expense else 0, same for
+`Income`, `Total = Expense − Income`), since API-written rows aren't
+guaranteed to inherit a Table's auto-fill formulas. If you ever change that
+formula in the sheet, update `buildTransactionRow` in `api/_lib/sheets.js`
+to match.
+
+This is the one part of the app that writes to your sheet, and it uses a
+**separate, write-only service account** from everything else — see setup
+step 5 below.
 
 ## 1. Create a Google Cloud service account
 
@@ -92,15 +111,21 @@ second account in the same project doesn't shrink your headroom.
 
 ```
 mnab-dashboard/
-  api/_lib/sheets.js                  Shared: reads the sheet, classifies rows (installments/bills, diary income/expense/status)
+  api/_lib/sheets.js                  Shared: read/write clients, row parsing + classification, buildTransactionRow
   api/cashflow-months.js              Distinct months found in Diary, for the month dropdown
   api/cashflow-summary.js             Income/Paid/Budgeted/Left-to-spend for a given ?month=YYYY-MM
   api/installments-summary.js         Sum of active Installment amounts (excludes Bills)
   api/installments-by-end-month.js    Active Installments grouped by ending month, with running remaining total
   api/bills-summary.js                Sum + list of active Bills
+  api/accounts-list.js                Account names from the Accounts tab, for the transaction form's dropdown
+  api/transactions-list.js            All transactions, most recent first (no caching -- always fresh)
+  api/transactions-add.js             POST: appends a new row to transactions (write credential)
+  api/transactions-update.js          POST: overwrites a row by rowNumber (write credential)
+  api/transactions-delete.js          POST: removes a row by rowNumber (write credential)
   public/index.html                   Home menu page
   public/cashflow/index.html          Cash Flow page (linked from home)
   public/installments/index.html      Installments & Bills page (linked from home)
+  public/transactions/index.html      Transactions page: feed + add/edit/delete form (linked from home)
   vercel.json                         Enables clean URLs (e.g. /installments instead of /installments.html)
   package.json                        Dependency: googleapis
   .env.example                        Reference for the env vars above (don't commit real secrets)
