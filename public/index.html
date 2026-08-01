@@ -12,6 +12,7 @@
     --text: #f4f4f5;
     --muted: #9ca3af;
     --accent: #22c55e;
+    --negative: #e24b4a;
   }
   * { box-sizing: border-box; }
   body {
@@ -23,7 +24,7 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 40px 16px;
+    padding: 40px 16px 100px;
   }
   h1 {
     font-size: 1.3rem;
@@ -53,6 +54,113 @@
   nav a .chevron {
     color: var(--muted);
   }
+
+  .fab {
+    position: fixed;
+    bottom: 24px;
+    right: max(16px, calc(50% - 210px + 16px));
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: #0f1115;
+    border: none;
+    font-size: 28px;
+    line-height: 56px;
+    text-align: center;
+    padding: 0;
+    cursor: pointer;
+  }
+  .overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.55);
+    display: none;
+    align-items: flex-end;
+    justify-content: center;
+    z-index: 10;
+  }
+  .overlay.open { display: flex; }
+  .sheet {
+    width: 100%;
+    max-width: 420px;
+    max-height: 85vh;
+    overflow-y: auto;
+    background: var(--card);
+    border-radius: 16px 16px 0 0;
+    padding: 18px 16px 24px;
+  }
+  .sheet-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 14px;
+  }
+  .sheet-title { font-size: 15px; font-weight: 600; }
+  .sheet-close { color: var(--muted); font-size: 20px; cursor: pointer; }
+  .field-label { font-size: 11px; color: var(--muted); }
+  .field {
+    width: 100%;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid #374151;
+    border-radius: 8px;
+    padding: 9px 10px;
+    font-size: 14px;
+    margin: 4px 0 10px;
+  }
+  .toggle-row { display: flex; gap: 8px; margin-bottom: 12px; }
+  .toggle-btn {
+    flex: 1;
+    padding: 8px;
+    border-radius: 8px;
+    border: 1px solid #374151;
+    background: var(--bg);
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .toggle-btn.active { border-color: var(--accent); color: var(--text); }
+  #type-toggle .toggle-btn[data-type="Expense"].active { border-color: var(--negative); color: var(--text); }
+  #type-toggle .toggle-btn[data-type="Income"].active { border-color: var(--accent); color: var(--text); }
+  .amount-block { text-align: center; margin-bottom: 16px; }
+  .amount-label { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+  .amount-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 6px;
+    max-width: 100%;
+    overflow: hidden;
+  }
+  .amount-currency { font-size: 18px; flex-shrink: 0; }
+  .amount-input {
+    min-width: 2ch;
+    max-width: 100%;
+    background: transparent;
+    border: none;
+    outline: none;
+    font-size: 30px;
+    font-weight: 700;
+    text-align: center;
+    padding: 0;
+  }
+  .amount-rule { height: 1px; background: #374151; margin-top: 8px; }
+  .row-2 { display: flex; gap: 10px; }
+  .row-2 > div { flex: 1; min-width: 0; }
+  .save-btn {
+    width: 100%;
+    padding: 12px;
+    border-radius: 10px;
+    border: none;
+    background: var(--accent);
+    color: #0f1115;
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+  .save-btn:disabled { opacity: 0.6; }
+  .hint { font-size: 10px; color: var(--muted); margin: -6px 0 10px; }
+  .error { color: #f87171; font-size: 0.9rem; }
 </style>
 </head>
 <body>
@@ -71,5 +179,182 @@
       <span class="chevron">›</span>
     </a>
   </nav>
+
+  <button class="fab" id="fab">+</button>
+
+  <div class="overlay" id="overlay">
+    <div class="sheet">
+      <div class="sheet-header">
+        <div class="sheet-title">Add transaction</div>
+        <div class="sheet-close" id="sheet-close">&times;</div>
+      </div>
+
+      <div class="toggle-row" id="type-toggle">
+        <button class="toggle-btn" data-type="Expense">Expense</button>
+        <button class="toggle-btn" data-type="Income">Income</button>
+      </div>
+
+      <div class="amount-block">
+        <div class="amount-label">Amount</div>
+        <div class="amount-row">
+          <span class="amount-currency" id="amount-currency">Rp</span>
+          <input id="f-amount" class="amount-input" type="text" inputmode="numeric" placeholder="0" />
+        </div>
+        <div class="amount-rule"></div>
+      </div>
+
+      <label class="field-label">Payee</label>
+      <input id="f-payee" class="field" type="text" placeholder="e.g. Sushi Hiro, Plaza Indonesia" />
+
+      <label class="field-label">Account (SOF)</label>
+      <select id="f-sof" class="field"></select>
+
+      <div class="row-2">
+        <div>
+          <label class="field-label">Date</label>
+          <input id="f-date" class="field" type="date" />
+        </div>
+        <div>
+          <label class="field-label">Billing month</label>
+          <input id="f-month" class="field" type="month" />
+        </div>
+      </div>
+      <div class="hint">Billing month defaults to the date's month — override for card statement cycles.</div>
+
+      <label class="field-label">Notes (optional)</label>
+      <input id="f-notes" class="field" type="text" placeholder="e.g. Aolion Knight Joycon" />
+
+      <div class="toggle-row" id="status-toggle">
+        <button class="toggle-btn" data-status="Cleared">Cleared</button>
+        <button class="toggle-btn" data-status="Uncleared">Uncleared</button>
+      </div>
+
+      <div id="form-error" class="error" style="display:none; margin-bottom: 8px;"></div>
+      <button class="save-btn" id="save-btn">Save</button>
+    </div>
+  </div>
+
+  <script>
+    const overlay = document.getElementById('overlay');
+    const formError = document.getElementById('form-error');
+    const amountInput = document.getElementById('f-amount');
+    const amountCurrency = document.getElementById('amount-currency');
+
+    function digitsOnly(str) {
+      return (str || '').replace(/[^\d]/g, '');
+    }
+    function formatAmountDisplay(digits) {
+      return digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    }
+    function resizeAmountInput() {
+      amountInput.style.width = (amountInput.value.length + 1) + 'ch';
+    }
+    function updateAmountColor() {
+      const isIncome = getToggle('type-toggle', 'type') === 'Income';
+      const color = isIncome ? 'var(--accent)' : 'var(--negative)';
+      amountInput.style.color = color;
+      amountCurrency.style.color = color;
+    }
+    amountInput.addEventListener('input', () => {
+      amountInput.value = formatAmountDisplay(digitsOnly(amountInput.value));
+      resizeAmountInput();
+    });
+
+    function setToggle(groupId, attr, value) {
+      document.querySelectorAll(`#${groupId} .toggle-btn`).forEach((b) => {
+        b.classList.toggle('active', b.dataset[attr] === value);
+      });
+    }
+    function getToggle(groupId, attr) {
+      const active = document.querySelector(`#${groupId} .toggle-btn.active`);
+      return active ? active.dataset[attr] : null;
+    }
+    document.querySelectorAll('#type-toggle .toggle-btn').forEach((b) =>
+      b.addEventListener('click', () => {
+        setToggle('type-toggle', 'type', b.dataset.type);
+        updateAmountColor();
+      }));
+    document.querySelectorAll('#status-toggle .toggle-btn').forEach((b) =>
+      b.addEventListener('click', () => setToggle('status-toggle', 'status', b.dataset.status)));
+
+    function monthValue(d) {
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+    }
+
+    function openForm() {
+      formError.style.display = 'none';
+      overlay.classList.add('open');
+      const today = new Date();
+      document.getElementById('f-payee').value = '';
+      amountInput.value = '';
+      document.getElementById('f-notes').value = '';
+      document.getElementById('f-date').value = today.toISOString().slice(0, 10);
+      document.getElementById('f-month').value = monthValue(today);
+      setToggle('type-toggle', 'type', 'Expense');
+      setToggle('status-toggle', 'status', 'Cleared');
+      updateAmountColor();
+      resizeAmountInput();
+    }
+    // Abandoning the form (X or tapping the backdrop) just closes it --
+    // you're already on the home screen, so there's nowhere else to go.
+    function closeForm() { overlay.classList.remove('open'); }
+
+    document.getElementById('fab').addEventListener('click', openForm);
+    document.getElementById('sheet-close').addEventListener('click', closeForm);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeForm(); });
+
+    async function loadAccounts() {
+      const sofEl = document.getElementById('f-sof');
+      try {
+        const res = await fetch('/api/accounts-list');
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        sofEl.innerHTML = data.accounts.map((a) => `<option value="${a.name}">${a.name}</option>`).join('');
+      } catch (err) {
+        sofEl.innerHTML = '<option value="">Error loading accounts</option>';
+      }
+    }
+    loadAccounts();
+
+    async function handleSave() {
+      const saveBtn = document.getElementById('save-btn');
+      const payload = {
+        payee: document.getElementById('f-payee').value.trim(),
+        type: getToggle('type-toggle', 'type'),
+        sof: document.getElementById('f-sof').value,
+        amount: digitsOnly(amountInput.value),
+        date: document.getElementById('f-date').value,
+        month: document.getElementById('f-month').value,
+        cleared: getToggle('status-toggle', 'status'),
+        notes: document.getElementById('f-notes').value.trim(),
+      };
+
+      if (!payload.payee || !payload.sof || !payload.amount || !payload.date || !payload.month) {
+        formError.textContent = 'Payee, account, amount, date, and month are required.';
+        formError.style.display = 'block';
+        return;
+      }
+
+      saveBtn.disabled = true;
+      formError.style.display = 'none';
+      try {
+        const res = await fetch('/api/transactions-add', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        // Once the transaction is actually saved, hand off to the
+        // Transactions page so it's visible in the feed.
+        window.location.href = '/transactions';
+      } catch (err) {
+        formError.textContent = err.message;
+        formError.style.display = 'block';
+        saveBtn.disabled = false;
+      }
+    }
+    document.getElementById('save-btn').addEventListener('click', handleSave);
+  </script>
 </body>
 </html>
