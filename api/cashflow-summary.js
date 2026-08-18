@@ -16,16 +16,21 @@ module.exports = async (req, res) => {
       .map((r) => ({ name: r.name, amount: r.amount }));
     const income = incomeItems.reduce((sum, i) => sum + i.amount, 0);
 
-    const paidItems = monthRows
-      .filter((r) => r.type === 'Expense' && r.isPaid)
+    const expenseRows = monthRows.filter((r) => r.type === 'Expense');
+    const paidItems = expenseRows
+      .filter((r) => r.isPaid)
       .map((r) => ({ name: r.name, amount: r.amount, category: r.category }));
-    const budgetedItems = monthRows
-      .filter((r) => r.type === 'Expense' && !r.isPaid)
+    const billedItems = expenseRows
+      .filter((r) => r.isBilled)
+      .map((r) => ({ name: r.name, amount: r.amount, category: r.category }));
+    const unbilledItems = expenseRows
+      .filter((r) => r.isUnbilled)
       .map((r) => ({ name: r.name, amount: r.amount, category: r.category }));
 
     const paid = paidItems.reduce((sum, i) => sum + i.amount, 0);
-    const budgeted = budgetedItems.reduce((sum, i) => sum + i.amount, 0);
-    const outflow = paid + budgeted;
+    const billed = billedItems.reduce((sum, i) => sum + i.amount, 0);
+    const unbilled = unbilledItems.reduce((sum, i) => sum + i.amount, 0);
+    const outflow = paid + billed + unbilled;
     const leftToSpend = income - outflow;
 
     res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
@@ -34,11 +39,13 @@ module.exports = async (req, res) => {
       income,
       incomeItems,
       paid,
-      budgeted,
+      billed,
+      unbilled,
       outflow,
       leftToSpend,
       paidItems,
-      budgetedItems,
+      billedItems,
+      unbilledItems,
       updatedAt: new Date().toISOString(),
     });
   } catch (err) {
