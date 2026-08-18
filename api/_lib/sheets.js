@@ -138,9 +138,15 @@ async function fetchDiaryRows() {
     const hasMonth = typeof monthSerial === 'number';
     const monthDate = hasMonth ? serialToDate(monthSerial) : null;
     const status = (row[4] || '').toString().trim();
-    // Anything not exactly "Paid" (case-insensitive) counts as unpaid/budgeted,
-    // robust to whatever label your sheet button writes.
-    const isPaid = status.toLowerCase() === 'paid';
+    const statusLower = status.toLowerCase();
+    // Three statuses: "Paid" (settled), "Billed" (statement closed, amount
+    // is final/known), "Unbilled" (still accruing, amount is an estimate).
+    // Anything unrecognized falls back to "unbilled" so it reads as an
+    // estimate rather than silently disappearing.
+    const isPaid = statusLower === 'paid';
+    const isBilled = statusLower === 'billed';
+    const isUnbilled = !isPaid && !isBilled;
+    const statusKey = isPaid ? 'paid' : isBilled ? 'billed' : 'unbilled';
     const amountDefault = parseFloat(row[5]) || 0;
     const expenseAmount = parseFloat(row[6]) || 0;
     const incomeAmount = parseFloat(row[7]) || 0;
@@ -154,7 +160,10 @@ async function fetchDiaryRows() {
       monthDate,
       month: hasMonth ? monthKey(monthDate) : null,
       status,
+      statusKey,
       isPaid,
+      isBilled,
+      isUnbilled,
       amount,
       amountDefault,
       amountVariable,

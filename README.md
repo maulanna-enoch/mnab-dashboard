@@ -9,9 +9,10 @@ actually exist in `Diary`) drives three cards:
 
 - **Left to spend** (hero number) — `Income − Outflow`. Red if negative.
 - **Income** — sum of `Income/Expense = Income` rows for the selected month.
-- **Outflow** — sum of `Income/Expense = Expense` rows, split into **Paid**
-  (`Status = Paid`) and **Budgeted** (anything else — i.e. the unpaid rows
-  your sheet's button adds at the start of the month).
+- **Outflow** — sum of `Income/Expense = Expense` rows, split three ways by
+  `Status`: **Paid** (settled), **Billed** (statement closed, amount is
+  final), and **Unbilled** (still accruing, amount is an estimate — anything
+  that isn't exactly `Paid` or `Billed` falls into this bucket).
 
 Each card expands to show the underlying line items.
 

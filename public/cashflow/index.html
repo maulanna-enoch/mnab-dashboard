@@ -13,7 +13,8 @@
     --muted: #9ca3af;
     --accent: #22c55e;
     --paid: #e24b4a;
-    --budgeted: #f5b942;
+    --billed: #f5b942;
+    --unbilled: #60a5fa;
     --negative: #e24b4a;
   }
   * { box-sizing: border-box; }
@@ -109,7 +110,8 @@
     margin-bottom: 10px;
   }
   .bar-paid { background: var(--paid); }
-  .bar-budgeted { background: var(--budgeted); }
+  .bar-billed { background: var(--billed); }
+  .bar-unbilled { background: var(--unbilled); }
   .legend {
     display: flex;
     justify-content: space-between;
@@ -151,7 +153,8 @@
     color: var(--muted);
   }
   .item-list li.paid span:last-child { color: var(--text); }
-  .item-list li.budgeted span:last-child { color: var(--budgeted); }
+  .item-list li.billed span:last-child { color: var(--billed); }
+  .item-list li.unbilled span:last-child { color: var(--unbilled); }
   .item-list li.category-header {
     display: block;
     font-size: 0.7rem;
@@ -193,11 +196,13 @@
     <div class="section-total" id="outflow-total">Loading…</div>
     <div class="bar">
       <div class="bar-paid" id="bar-paid"></div>
-      <div class="bar-budgeted" id="bar-budgeted"></div>
+      <div class="bar-billed" id="bar-billed"></div>
+      <div class="bar-unbilled" id="bar-unbilled"></div>
     </div>
     <div class="legend">
       <span><span class="dot" style="background: var(--paid);"></span>Paid</span>
-      <span><span class="dot" style="background: var(--budgeted);"></span>Budgeted (unpaid)</span>
+      <span><span class="dot" style="background: var(--billed);"></span>Billed</span>
+      <span><span class="dot" style="background: var(--unbilled);"></span>Unbilled</span>
     </div>
     <details>
       <summary>View line items</summary>
@@ -269,12 +274,15 @@
 
         outflowTotalEl.textContent = formatIDR(data.outflow);
         const paidPct = data.outflow ? (data.paid / data.outflow) * 100 : 0;
-        const budgetedPct = data.outflow ? (data.budgeted / data.outflow) * 100 : 0;
+        const billedPct = data.outflow ? (data.billed / data.outflow) * 100 : 0;
+        const unbilledPct = data.outflow ? (data.unbilled / data.outflow) * 100 : 0;
         document.getElementById('bar-paid').style.width = paidPct + '%';
-        document.getElementById('bar-budgeted').style.width = budgetedPct + '%';
+        document.getElementById('bar-billed').style.width = billedPct + '%';
+        document.getElementById('bar-unbilled').style.width = unbilledPct + '%';
 
-        const allOutflowItems = data.paidItems.map((i) => ({ ...i, isPaid: true }))
-          .concat(data.budgetedItems.map((i) => ({ ...i, isPaid: false })));
+        const allOutflowItems = data.paidItems.map((i) => ({ ...i, statusKey: 'paid' }))
+          .concat(data.billedItems.map((i) => ({ ...i, statusKey: 'billed' })))
+          .concat(data.unbilledItems.map((i) => ({ ...i, statusKey: 'unbilled' })));
 
         const byCategory = {};
         allOutflowItems.forEach((i) => {
@@ -295,7 +303,7 @@
         outflowItemsEl.innerHTML = categories.length
           ? categories.map((cat) => `
               <li class="category-header">${cat}</li>
-              ${byCategory[cat].map((i) => `<li class="${i.isPaid ? 'paid' : 'budgeted'}"><span>${i.name}</span><span>${formatIDR(i.amount)}</span></li>`).join('')}
+              ${byCategory[cat].map((i) => `<li class="${i.statusKey}"><span>${i.name}</span><span>${formatIDR(i.amount)}</span></li>`).join('')}
             `).join('')
           : '<li><span class="sub">No expenses logged.</span></li>';
       } catch (err) {
