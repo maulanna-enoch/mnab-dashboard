@@ -78,6 +78,33 @@
     color: var(--accent);
     word-break: break-word;
   }
+  .hero-unit {
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  .toggle-row {
+    display: flex;
+    gap: 8px;
+    margin: 14px auto 0;
+    max-width: 260px;
+  }
+  .toggle-btn {
+    flex: 1;
+    padding: 8px;
+    border-radius: 999px;
+    border: 1px solid #374151;
+    background: var(--bg);
+    color: var(--muted);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  .toggle-btn.active {
+    border-color: var(--accent);
+    color: var(--text);
+    background: rgba(34, 197, 94, 0.12);
+  }
   .section-total {
     font-size: 1.4rem;
     font-weight: 700;
@@ -179,6 +206,13 @@
   <div class="card">
     <div class="label">Left to spend</div>
     <div class="hero-total" id="left-total">Loading…</div>
+    <div class="hero-unit" id="left-unit"></div>
+
+    <div class="toggle-row" id="modeToggle">
+      <button class="toggle-btn active" data-mode="total">Total</button>
+      <button class="toggle-btn" data-mode="perday">Per day</button>
+    </div>
+
     <div class="sub" id="left-meta"></div>
   </div>
 
@@ -220,6 +254,90 @@
         maximumFractionDigits: 0,
       }).format(value);
     }
+
+    // ---- "Left to spend" per-day math ----
+    // Divides the current "left to spend" total by the number of days
+    // between today and the 25th (payroll day) of whichever month is being
+    // viewed -- e.g. viewing August on the 19th gives 6 days (19th -> 25th
+    // of August); viewing September on the same day gives 37 days (19th
+    // Aug -> 25th Sep). Always measured from *today*, not the 1st of the
+    // viewed month.
+    const PAYROLL_DAY = 25;
+    let mode = 'total'; // 'total' | 'perday'
+    let lastSummary = null; // last-loaded /api/cashflow-summary payload, so toggling doesn't refetch
+
+    function dayLabel(d) {
+      return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    }
+
+    function daysBetween(a, b) {
+      const MS_PER_DAY = 24 * 60 * 60 * 1000;
+      const aMid = new Date(a.getFullYear(), a.getMonth(), a.getDate());
+      const bMid = new Date(b.getFullYear(), b.getMonth(), b.getDate());
+      return Math.round((bMid - aMid) / MS_PER_DAY);
+    }
+
+    // Payroll date for the viewed month is always THAT month's 25th, no
+    // matter how far off it is. If that date has already passed relative
+    // to today (e.g. viewing the current month after the 25th), roll
+    // forward to next month's 25th instead -- a payroll date in the past
+    // isn't a useful divisor.
+    function payrollDateFor(viewedYear, viewedMonthIndex, today) {
+      let payroll = new Date(viewedYear, viewedMonthIndex, PAYROLL_DAY);
+      let rolledForward = false;
+      if (payroll < new Date(today.getFullYear(), today.getMonth(), today.getDate())) {
+        payroll = new Date(viewedYear, viewedMonthIndex + 1, PAYROLL_DAY);
+        rolledForward = true;
+      }
+      return { payroll, rolledForward };
+    }
+
+    function renderLeftToSpend() {
+      if (!lastSummary) return;
+      const data = lastSummary;
+      const leftTotalEl = document.getElementById('left-total');
+      const leftUnitEl = document.getElementById('left-unit');
+      const leftMetaEl = document.getElementById('left-meta');
+
+      if (mode === 'total') {
+        leftTotalEl.textContent = formatIDR(data.leftToSpend);
+        leftTotalEl.style.color = data.leftToSpend >= 0 ? 'var(--accent)' : 'var(--negative)';
+        leftUnitEl.textContent = '';
+        leftMetaEl.textContent = `updated ${new Date(data.updatedAt).toLocaleTimeString()}`;
+        return;
+      }
+
+      // Per-day mode
+      const [yearStr, monthStr] = data.month.split('-');
+      const viewedYear = Number(yearStr);
+      const viewedMonthIndex = Number(monthStr) - 1;
+      const today = new Date();
+      const { payroll, rolledForward } = payrollDateFor(viewedYear, viewedMonthIndex, today);
+      const days = Math.max(1, daysBetween(today, payroll));
+
+      // Already overspent (negative left-to-spend) -> nothing left to
+      // divide up, so per-day floors at zero instead of showing a
+      // negative daily "allowance" that doesn't mean anything in practice.
+      const isOverspent = data.leftToSpend < 0;
+      const perDay = isOverspent ? 0 : data.leftToSpend / days;
+
+      leftTotalEl.textContent = formatIDR(Math.round(perDay));
+      leftTotalEl.style.color = perDay > 0 ? 'var(--accent)' : 'var(--negative)';
+      leftUnitEl.textContent = '/ day';
+      leftMetaEl.innerHTML =
+        (isOverspent
+          ? `Already ${formatIDR(Math.abs(data.leftToSpend))} over for this month &mdash; nothing left to spend per day`
+          : `${formatIDR(data.leftToSpend)} over ${days} day(s) &mdash; ${dayLabel(today)} &rarr; ${dayLabel(payroll)} (payroll)`) +
+        (rolledForward ? '<br><span style="color:var(--muted);">25th of the viewed month already passed &mdash; rolled to next payroll</span>' : '');
+    }
+
+    document.querySelectorAll('#modeToggle .toggle-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        mode = btn.dataset.mode;
+        document.querySelectorAll('#modeToggle .toggle-btn').forEach((b) => b.classList.toggle('active', b === btn));
+        renderLeftToSpend();
+      });
+    });
 
     async function loadMonths() {
       const monthEl = document.getElementById('month');
@@ -263,9 +381,8 @@
         const data = await res.json();
         if (data.error) throw new Error(data.error);
 
-        leftTotalEl.textContent = formatIDR(data.leftToSpend);
-        leftTotalEl.style.color = data.leftToSpend >= 0 ? 'var(--accent)' : 'var(--negative)';
-        leftMetaEl.textContent = `updated ${new Date(data.updatedAt).toLocaleTimeString()}`;
+        lastSummary = data;
+        renderLeftToSpend();
 
         incomeTotalEl.textContent = formatIDR(data.income);
         incomeItemsEl.innerHTML = data.incomeItems.length
