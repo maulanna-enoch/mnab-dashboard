@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
-<title>MOCKUP · Account Reconciliation · MNAB</title>
+<title>Accounts · MNAB</title>
 <style>
   :root {
     color-scheme: light dark;
@@ -27,20 +27,6 @@
   }
   .wrap { max-width: 420px; margin: 0 auto; position: relative; }
 
-  /* -- mockup banner, not part of the real app -- */
-  .mockup-banner {
-    max-width: 420px;
-    margin: 0 auto 18px;
-    background: #2a1f0d;
-    border: 1px solid #7c5a12;
-    color: #f5c452;
-    font-size: 11.5px;
-    line-height: 1.5;
-    padding: 10px 12px;
-    border-radius: 10px;
-  }
-  .mockup-banner b { color: #ffd76a; }
-
   .back-link {
     display: block;
     color: var(--muted);
@@ -58,40 +44,7 @@
   }
   .sub { font-size: 0.85rem; color: var(--muted); }
   .error { color: #f87171; font-size: 0.9rem; }
-
-  /* -- home nav (mock, shows the new "Accounts" item) -- */
-  nav.home-nav {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-    margin-bottom: 8px;
-  }
-  nav.home-nav a {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    background: var(--card);
-    color: var(--text);
-    text-decoration: none;
-    border-radius: 16px;
-    padding: 20px 24px;
-    font-size: 1rem;
-    font-weight: 500;
-    cursor: pointer;
-  }
-  nav.home-nav a.new-item { border: 1px dashed rgba(34,197,94,0.5); background: rgba(34,197,94,0.06); }
-  nav.home-nav a .chevron { color: var(--muted); }
-  .new-tag {
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    background: var(--accent);
-    color: #0f1115;
-    padding: 2px 6px;
-    border-radius: 999px;
-    margin-left: 8px;
-    font-weight: 700;
-  }
+  .loading { color: var(--muted); font-size: 0.85rem; text-align: center; padding: 24px 0; }
 
   /* -- accounts list -- */
   .acct-row {
@@ -258,36 +211,18 @@
 </head>
 <body>
 
-<div class="mockup-banner">
-  <b>Mockup only</b> — static mock data, nothing wired to the sheet yet. Screens: Home → Accounts list → Account detail → Reconcile flow (+ Undo). Navigate by clicking through it like the real app.
-</div>
-
-<!-- ============ SCREEN: HOME ============ -->
-<div class="wrap" id="screen-home">
-  <h1 style="margin-top:8px;">MNAB · Maulanna Needs A Budget</h1>
-  <nav class="home-nav">
-    <a onclick="goto('cashflow-stub')"><span>Cash Flow</span><span class="chevron">›</span></a>
-    <a onclick="goto('installments-stub')"><span>Installments &amp; Bills</span><span class="chevron">›</span></a>
-    <a onclick="goto('transactions-stub')"><span>Transactions</span><span class="chevron">›</span></a>
-    <a class="new-item" onclick="goto('accounts')"><span>Accounts<span class="new-tag">New</span></span><span class="chevron">›</span></a>
-  </nav>
-</div>
-
-<!-- ============ SCREEN: STUB (other existing pages, not part of this mockup) ============ -->
-<div class="wrap" id="screen-stub" style="display:none;">
-  <a class="back-link" onclick="goto('home')">← Home</a>
-  <h1>(existing page, unchanged)</h1>
-  <p class="sub" style="text-align:center;">This screen isn't part of issue #6 — included only so the nav click doesn't dead-end.</p>
-</div>
-
 <!-- ============ SCREEN: ACCOUNTS LIST ============ -->
-<div class="wrap" id="screen-accounts" style="display:none;">
-  <a class="back-link" onclick="goto('home')">← Home</a>
+<div class="wrap" id="screen-accounts">
+  <a class="back-link" href="/">← Home</a>
   <h1>Accounts</h1>
-  <div class="section-label">Cash &amp; Bank</div>
-  <div id="acct-list-cash"></div>
-  <div class="section-label">Credit Cards</div>
-  <div id="acct-list-credit"></div>
+  <div id="accounts-loading" class="loading">Loading accounts…</div>
+  <div id="accounts-error" class="error" style="display:none;"></div>
+  <div id="accounts-content" style="display:none;">
+    <div class="section-label">Cash &amp; Bank</div>
+    <div id="acct-list-cash"></div>
+    <div class="section-label">Credit Cards</div>
+    <div id="acct-list-credit"></div>
+  </div>
 </div>
 
 <!-- ============ SCREEN: ACCOUNT DETAIL ============ -->
@@ -295,22 +230,27 @@
   <a class="back-link" onclick="goto('accounts')">← Accounts</a>
   <h1 id="detail-title">Account</h1>
 
-  <div class="acct-header">
-    <div class="acct-header-top">
-      <div>
-        <div class="acct-header-name" id="detail-name"></div>
-        <div class="acct-header-type" id="detail-type"></div>
-      </div>
-    </div>
-    <div class="acct-header-balance" id="detail-balance"></div>
-    <div class="acct-header-meta" id="detail-meta"></div>
-    <div class="acct-header-actions">
-      <button class="btn btn-primary" onclick="openReconcile()">Reconcile</button>
-    </div>
-    <div class="last-recon-link" onclick="openUndo()">View / undo last reconciliation</div>
-  </div>
+  <div id="detail-loading" class="loading" style="display:none;">Loading…</div>
+  <div id="detail-error" class="error" style="display:none;"></div>
 
-  <div id="detail-txn-list"></div>
+  <div id="detail-content" style="display:none;">
+    <div class="acct-header">
+      <div class="acct-header-top">
+        <div>
+          <div class="acct-header-name" id="detail-name"></div>
+          <div class="acct-header-type" id="detail-type"></div>
+        </div>
+      </div>
+      <div class="acct-header-balance" id="detail-balance"></div>
+      <div class="acct-header-meta" id="detail-meta"></div>
+      <div class="acct-header-actions">
+        <button class="btn btn-primary" onclick="openReconcile()">Reconcile</button>
+      </div>
+      <div class="last-recon-link" onclick="openUndo()">View / undo last reconciliation</div>
+    </div>
+
+    <div id="detail-txn-list"></div>
+  </div>
 </div>
 
 <!-- ============ RECONCILE BOTTOM SHEET ============ -->
@@ -391,49 +331,40 @@
 
 <script>
   /* ============================================================
-     MOCK DATA — stands in for GET /api/accounts-list,
-     GET /api/transactions-list (filtered by SOF), and whatever the
-     real reconcile endpoints end up being.
+     Wired to the real backend:
+       GET  /api/accounts-list
+       GET  /api/transactions-list
+       GET  /api/accounts-detail?name=...
+       POST /api/reconcile-calculate      { account, asOfDate }
+       POST /api/reconcile-confirm        { account, asOfDate, statementAmount }
+       POST /api/reconcile-add-adjustment { account, asOfDate, statementAmount }
+       POST /api/reconcile-add-transaction{ account, name, type, date, amount, month }
+       GET  /api/reconcile-last?account=...
+       POST /api/reconcile-undo           { account }
      ============================================================ */
 
-  const MOCK_ACCOUNTS = [
-    { name: 'BCA Checking', type: 'Bank', lastReconciledThrough: '2026-07-31', lastReconciledStatement: 4250000 },
-    { name: 'Cash', type: 'Cash', lastReconciledThrough: null, lastReconciledStatement: null },
-    { name: 'CC Visa', type: 'Credit Card', lastReconciledThrough: '2026-07-20', lastReconciledStatement: 1820000 },
-  ];
-
-  // total = Expense - Income (sheet's own convention, from buildTransactionRow).
-  // Positive = net spend on that account. Matches how Reconcile.gs's book
-  // balance is computed (sum of Total for Cleared txns).
-  const MOCK_TRANSACTIONS = [
-    { rowNumber: 2, payee: 'Salary', sof: 'BCA Checking', type: 'Income', date: '2026-08-01', cleared: true, reconciled: false, amount: 12000000, total: -12000000 },
-    { rowNumber: 3, payee: 'Groceries', sof: 'BCA Checking', type: 'Expense', date: '2026-08-03', cleared: true, reconciled: false, amount: 850000, total: 850000 },
-    { rowNumber: 4, payee: 'Electric bill', sof: 'BCA Checking', type: 'Expense', date: '2026-08-05', cleared: true, reconciled: false, amount: 620000, total: 620000 },
-    { rowNumber: 5, payee: 'Pending transfer', sof: 'BCA Checking', type: 'Expense', date: '2026-08-19', cleared: false, reconciled: false, amount: 500000, total: 500000 },
-    { rowNumber: 6, payee: 'Coffee', sof: 'Cash', type: 'Expense', date: '2026-08-10', cleared: true, reconciled: false, amount: 45000, total: 45000 },
-    { rowNumber: 7, payee: 'Parking', sof: 'Cash', type: 'Expense', date: '2026-08-18', cleared: false, reconciled: false, amount: 20000, total: 20000 },
-    { rowNumber: 8, payee: 'Netflix', sof: 'CC Visa', type: 'Expense', date: '2026-07-25', cleared: true, reconciled: true, amount: 150000, total: 150000 },
-    { rowNumber: 9, payee: 'Grab rides', sof: 'CC Visa', type: 'Expense', date: '2026-08-02', cleared: true, reconciled: false, amount: 320000, total: 320000 },
-    { rowNumber: 10, payee: 'Online shopping', sof: 'CC Visa', type: 'Expense', date: '2026-08-11', cleared: true, reconciled: false, amount: 780000, total: 780000 },
-    { rowNumber: 11, payee: 'Restaurant', sof: 'CC Visa', type: 'Expense', date: '2026-08-15', cleared: false, reconciled: false, amount: 260000, total: 260000 },
-  ];
-
-  const MOCK_RECON_LOG = {
-    'CC Visa': [
-      { periodStart: null, periodEnd: '2026-07-20', systemTotal: 1820000, statementAmount: 1820000, variance: 0, matchedCount: 6, adjustmentType: null, adjustmentAmount: null, status: 'Reconciled', timestamp: '2026-07-20 21:14', isCurrent: true },
-    ],
-    'BCA Checking': [
-      { periodStart: null, periodEnd: '2026-07-31', systemTotal: 4250000, statementAmount: 4300000, variance: 50000, matchedCount: 9, adjustmentType: 'Expense', adjustmentAmount: 50000, status: 'Reconciled via adjustment', timestamp: '2026-07-31 09:02', isCurrent: true },
-    ],
-    'Cash': [],
-  };
+  async function apiGet(url) {
+    const res = await fetch(url);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    return data;
+  }
+  async function apiPost(url, body) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    return data;
+  }
 
   function formatIDR(value) {
     return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(value);
   }
   function todayISO() {
-    const d = new Date('2026-08-20T00:00:00'); // fixed "today" for this mockup
-    return d.toISOString().slice(0, 10);
+    return new Date().toISOString().slice(0, 10);
   }
 
   /* ---------------- custom confirm/alert modal ----------------
@@ -469,11 +400,10 @@
   }
 
   function goto(id) {
-    ['home', 'stub', 'accounts', 'detail'].forEach((s) => {
+    ['accounts', 'detail'].forEach((s) => {
       document.getElementById('screen-' + s).style.display = 'none';
     });
-    const map = { 'cashflow-stub': 'stub', 'installments-stub': 'stub', 'transactions-stub': 'stub' };
-    document.getElementById('screen-' + (map[id] || id)).style.display = 'block';
+    document.getElementById('screen-' + id).style.display = 'block';
     window.scrollTo(0, 0);
   }
 
@@ -483,26 +413,59 @@
   // transactions, cleared AND uncleared. This is a NEW figure for the
   // mobile view -- Reconcile.gs's "book balance" is cleared-only and is
   // used purely as the reconciliation comparison figure, not as a
-  // day-to-day running balance. Flagging this as an assumption to confirm.
-  function accountStats(name) {
-    const rows = MOCK_TRANSACTIONS.filter((t) => t.sof === name);
-    const clearedTotal = rows.filter((t) => t.cleared).reduce((s, t) => s + t.total, 0);
-    const unclearedTotal = rows.filter((t) => !t.cleared).reduce((s, t) => s + t.total, 0);
-    const runningTotal = clearedTotal + unclearedTotal;
-    return { clearedTotal, unclearedTotal, runningTotal, unclearedCount: rows.filter((t) => !t.cleared).length };
+  // day-to-day running balance (confirmed with user).
+  //
+  // Derived client-side from the same two endpoints the rest of the app
+  // already uses (accounts-list, transactions-list) -- "total" here mirrors
+  // buildTransactionRow's own convention (Total = Expense - Income), which
+  // isn't itself in transactions-list's response, just type + amount.
+  function accountStats(accountName, transactions) {
+    const rows = transactions.filter((t) => t.sof === accountName);
+    const totalOf = (t) => (t.type === 'Income' ? -t.amount : t.amount);
+    const clearedTotal = rows.filter((t) => t.cleared === 'Cleared').reduce((s, t) => s + totalOf(t), 0);
+    const unclearedRows = rows.filter((t) => t.cleared !== 'Cleared');
+    const unclearedTotal = unclearedRows.reduce((s, t) => s + totalOf(t), 0);
+    return {
+      clearedTotal,
+      unclearedTotal,
+      runningTotal: clearedTotal + unclearedTotal,
+      unclearedCount: unclearedRows.length,
+    };
   }
 
-  function renderAccountsList() {
+  async function loadAccountsList() {
+    const loadingEl = document.getElementById('accounts-loading');
+    const errorEl = document.getElementById('accounts-error');
+    const contentEl = document.getElementById('accounts-content');
+    loadingEl.style.display = 'block';
+    errorEl.style.display = 'none';
+    contentEl.style.display = 'none';
+
+    try {
+      const [accountsRes, transactionsRes] = await Promise.all([
+        apiGet('/api/accounts-list'),
+        apiGet('/api/transactions-list'),
+      ]);
+      renderAccountsList(accountsRes.accounts, transactionsRes.transactions);
+      loadingEl.style.display = 'none';
+      contentEl.style.display = 'block';
+    } catch (err) {
+      loadingEl.style.display = 'none';
+      errorEl.textContent = 'Couldn\'t load accounts: ' + err.message;
+      errorEl.style.display = 'block';
+    }
+  }
+
+  function renderAccountsList(accounts, transactions) {
     const cashEl = document.getElementById('acct-list-cash');
     const creditEl = document.getElementById('acct-list-credit');
     cashEl.innerHTML = '';
     creditEl.innerHTML = '';
 
-    MOCK_ACCOUNTS.forEach((a) => {
-      const stats = accountStats(a.name);
-      const isCredit = a.type.toLowerCase().includes('credit');
+    accounts.forEach((a) => {
+      const stats = accountStats(a.name, transactions);
+      const isCredit = (a.type || '').toLowerCase().includes('credit');
       const balanceClass = isCredit ? (stats.runningTotal > 0 ? 'owed' : 'positive') : (stats.runningTotal < 0 ? 'positive' : '');
-      const balanceLabel = isCredit ? 'owed' : formatIDR(stats.runningTotal).startsWith('-') ? '' : '';
 
       const row = document.createElement('div');
       row.className = 'acct-row';
@@ -510,7 +473,7 @@
       row.innerHTML = `
         <div>
           <div class="acct-name">${a.name}</div>
-          <div class="acct-type">${a.type}</div>
+          <div class="acct-type">${a.type || ''}</div>
         </div>
         <div class="acct-balance-block">
           <div class="acct-balance ${balanceClass}">${formatIDR(Math.abs(stats.runningTotal))}${isCredit && stats.runningTotal > 0 ? ' owed' : ''}</div>
@@ -521,40 +484,53 @@
     });
   }
 
-  /* ---------------- account detail (reuses transaction-row rendering) ---------------- */
+  /* ---------------- account detail ---------------- */
 
   let currentAccount = null;
+  let currentAccountMeta = null; // { name, type, lastReconciledThrough, lastReconciledStatement }
 
-  function openAccountDetail(name) {
+  async function openAccountDetail(name) {
     currentAccount = name;
-    const account = MOCK_ACCOUNTS.find((a) => a.name === name);
-    const stats = accountStats(name);
-    const isCredit = account.type.toLowerCase().includes('credit');
-
-    document.getElementById('detail-title').textContent = name;
-    document.getElementById('detail-name').textContent = name;
-    document.getElementById('detail-type').textContent = account.type;
-
-    const balEl = document.getElementById('detail-balance');
-    balEl.textContent = formatIDR(Math.abs(stats.runningTotal)) + (isCredit && stats.runningTotal > 0 ? ' owed' : '');
-    balEl.className = 'acct-header-balance ' + (isCredit ? (stats.runningTotal > 0 ? 'owed' : 'positive') : '');
-
-    const metaEl = document.getElementById('detail-meta');
-    const metaBits = [];
-    if (stats.unclearedCount) metaBits.push(`<span class="uncleared-amt">${stats.unclearedCount} uncleared &middot; ${formatIDR(stats.unclearedTotal)}</span>`);
-    metaBits.push(account.lastReconciledThrough ? `Last reconciled through ${account.lastReconciledThrough}` : 'Never reconciled');
-    metaEl.innerHTML = metaBits.join(' &middot; ');
-
-    renderDetailTxnList(name);
     goto('detail');
+    document.getElementById('detail-title').textContent = name;
+
+    const loadingEl = document.getElementById('detail-loading');
+    const errorEl = document.getElementById('detail-error');
+    const contentEl = document.getElementById('detail-content');
+    loadingEl.style.display = 'block';
+    errorEl.style.display = 'none';
+    contentEl.style.display = 'none';
+
+    try {
+      const data = await apiGet('/api/accounts-detail?name=' + encodeURIComponent(name));
+      currentAccountMeta = data.account;
+      const isCredit = (data.account.type || '').toLowerCase().includes('credit');
+
+      document.getElementById('detail-name').textContent = data.account.name;
+      document.getElementById('detail-type').textContent = data.account.type || '';
+
+      const balEl = document.getElementById('detail-balance');
+      balEl.textContent = formatIDR(Math.abs(data.stats.runningTotal)) + (isCredit && data.stats.runningTotal > 0 ? ' owed' : '');
+      balEl.className = 'acct-header-balance ' + (isCredit ? (data.stats.runningTotal > 0 ? 'owed' : 'positive') : '');
+
+      const metaEl = document.getElementById('detail-meta');
+      const metaBits = [];
+      if (data.stats.unclearedCount) metaBits.push(`<span class="uncleared-amt">${data.stats.unclearedCount} uncleared &middot; ${formatIDR(data.stats.unclearedTotal)}</span>`);
+      metaBits.push(data.account.lastReconciledThrough ? `Last reconciled through ${data.account.lastReconciledThrough}` : 'Never reconciled');
+      metaEl.innerHTML = metaBits.join(' &middot; ');
+
+      renderDetailTxnList(data.transactions);
+      loadingEl.style.display = 'none';
+      contentEl.style.display = 'block';
+    } catch (err) {
+      loadingEl.style.display = 'none';
+      errorEl.textContent = 'Couldn\'t load this account: ' + err.message;
+      errorEl.style.display = 'block';
+    }
   }
 
-  // Same row markup/behavior as the existing Transactions page -- this is
-  // meant to literally reuse that rendering code (and TransactionForm.open
-  // for tap-to-edit) once wired up for real, just pre-filtered by SOF.
-  function renderDetailTxnList(name) {
+  function renderDetailTxnList(rows) {
     const listEl = document.getElementById('detail-txn-list');
-    const rows = MOCK_TRANSACTIONS.filter((t) => t.sof === name).sort((a, b) => (a.date < b.date ? 1 : -1));
     if (!rows.length) {
       listEl.innerHTML = '<div class="sub">No transactions for this account yet.</div>';
       return;
@@ -562,12 +538,12 @@
     let html = '';
     let lastLabel = null;
     rows.forEach((t) => {
-      const label = t.date;
+      const label = t.date || '(no date)';
       if (label !== lastLabel) { html += `<div class="date-header">${label}</div>`; lastLabel = label; }
       const isIncome = t.type === 'Income';
       const amountText = (isIncome ? '+' : '') + formatIDR(t.amount);
       const metaBits = [];
-      if (!t.cleared) metaBits.push('<span class="uncleared">uncleared</span>');
+      if (!t.isCleared) metaBits.push('<span class="uncleared">uncleared</span>');
       if (t.reconciled) metaBits.push('<span class="reconciled-tag">reconciled</span>');
       html += `
         <div class="txn-row ${t.reconciled ? 'reconciled' : ''}">
@@ -587,7 +563,7 @@
   let rcState = null; // { account, asOfDate, cumulativeSum, matchedCount, sinceDateLabel, sinceDateIso }
 
   function openReconcile() {
-    const account = MOCK_ACCOUNTS.find((a) => a.name === currentAccount);
+    const account = currentAccountMeta;
     document.getElementById('rc-account-name').textContent = currentAccount;
     document.getElementById('rc-asof-date').value = todayISO();
     document.getElementById('rc-statement-amount').value = '';
@@ -596,7 +572,7 @@
     document.getElementById('rc-actions').style.display = 'none';
     document.getElementById('rc-add-form').style.display = 'none';
 
-    const isCredit = account.type.toLowerCase().includes('credit');
+    const isCredit = (account.type || '').toLowerCase().includes('credit');
     document.getElementById('rc-amount-label').textContent = isCredit
       ? 'New charges shown on the actual card statement for this cycle'
       : 'Actual total per your bank/cash records for this period';
@@ -607,6 +583,9 @@
   function closeReconcile() {
     document.getElementById('rc-overlay').classList.remove('open');
   }
+  function rcSetBusy(busy) {
+    document.querySelectorAll('#rc-overlay button').forEach((b) => { b.disabled = busy; });
+  }
 
   // Merges what the sheet macro splits into "Calculate" then "Compare" --
   // here both the as-of date and statement amount are entered together, so
@@ -614,34 +593,36 @@
   // match/mismatch comparison in a single step. Also the re-entry point
   // after "Add transaction" loops back in (same as the macro's
   // keepStatementAmount behavior), just re-running this whole function.
-  function rcCalculate() {
-    const account = MOCK_ACCOUNTS.find((a) => a.name === currentAccount);
+  async function rcCalculate() {
     const asOfDate = document.getElementById('rc-asof-date').value;
     if (!asOfDate) { showAlert('Pick a date.'); return; }
     const raw = document.getElementById('rc-statement-amount').value;
     const statementAmount = Number(String(raw).replace(/[^0-9.-]/g, ''));
     if (isNaN(statementAmount) || raw.trim() === '') { showAlert("That doesn't look like a number.", "Statement amount"); return; }
 
-    const sinceIso = account.lastReconciledThrough;
-    const rows = MOCK_TRANSACTIONS.filter((t) => t.sof === currentAccount && t.cleared);
-
-    const cumulative = rows.filter((t) => t.date <= asOfDate);
-    const cumulativeSum = cumulative.reduce((s, t) => s + t.total, 0);
-
-    const incremental = rows.filter((t) => !t.reconciled && t.date <= asOfDate && (!sinceIso || t.date > sinceIso));
+    rcSetBusy(true);
+    let calc;
+    try {
+      calc = await apiPost('/api/reconcile-calculate', { account: currentAccount, asOfDate });
+    } catch (err) {
+      rcSetBusy(false);
+      showAlert(err.message, 'Calculation failed');
+      return;
+    }
+    rcSetBusy(false);
 
     rcState = {
       account: currentAccount,
       asOfDate,
       statementAmount,
-      cumulativeSum,
-      matchedCount: incremental.length,
-      sinceDateLabel: sinceIso || '(beginning)',
-      sinceDateIso: sinceIso,
+      cumulativeSum: calc.cumulativeSum,
+      matchedCount: calc.matchedCount,
+      sinceDateLabel: calc.sinceDateLabel,
+      sinceDateIso: calc.sinceDateIso,
     };
 
     document.getElementById('rc-result-date').textContent = asOfDate;
-    document.getElementById('rc-result-sum').textContent = cumulativeSum.toLocaleString();
+    document.getElementById('rc-result-sum').textContent = rcState.cumulativeSum.toLocaleString();
     document.getElementById('rc-since-label').textContent = rcState.sinceDateLabel;
     document.getElementById('rc-matched-count').textContent = rcState.matchedCount + ' txn(s)';
     document.getElementById('rc-result-box').style.display = 'block';
@@ -701,9 +682,22 @@
   function rcConfirmReconcile() {
     showConfirm(
       `This will mark ${rcState.matchedCount} transaction(s) as reconciled and update ${rcState.account}'s "Last Reconciled" info. Continue?`,
-      () => {
-        showAlert(`[mock] Reconciled. ${rcState.matchedCount} transaction(s) marked, Accounts tab updated.`, 'Done');
-        closeReconcile();
+      async () => {
+        rcSetBusy(true);
+        try {
+          const r = await apiPost('/api/reconcile-confirm', {
+            account: rcState.account,
+            asOfDate: rcState.asOfDate,
+            statementAmount: rcState.statementAmount,
+          });
+          rcSetBusy(false);
+          showAlert(`Reconciled. ${r.matchedCount} transaction(s) marked, Accounts tab updated.`, 'Done');
+          closeReconcile();
+          openAccountDetail(currentAccount); // refresh detail view with new state
+        } catch (err) {
+          rcSetBusy(false);
+          showAlert(err.message, 'Reconcile failed');
+        }
       },
       { title: 'Confirm & Reconcile', confirmLabel: 'Confirm & Reconcile' }
     );
@@ -714,9 +708,22 @@
     const projAmount = Math.abs(rcState.variance);
     showConfirm(
       `This will insert one new "Reconciliation" ${projType} transaction for ${projAmount.toLocaleString()} dated ${rcState.asOfDate}, and mark ${rcState.matchedCount + 1} transaction(s) as reconciled.\n\nYou can undo this afterward via "View / undo last reconciliation", but only until this account is reconciled again. Continue?`,
-      () => {
-        showAlert(`[mock] Inserted a Reconciliation ${projType} row for ${projAmount.toLocaleString()}. ${rcState.matchedCount + 1} transaction(s) total marked reconciled.`, 'Done');
-        closeReconcile();
+      async () => {
+        rcSetBusy(true);
+        try {
+          const r = await apiPost('/api/reconcile-add-adjustment', {
+            account: rcState.account,
+            asOfDate: rcState.asOfDate,
+            statementAmount: rcState.statementAmount,
+          });
+          rcSetBusy(false);
+          showAlert(`Inserted a Reconciliation ${r.type} row for ${r.amount.toLocaleString()}. ${r.matchedCount} transaction(s) total marked reconciled.`, 'Done');
+          closeReconcile();
+          openAccountDetail(currentAccount);
+        } catch (err) {
+          rcSetBusy(false);
+          showAlert(err.message, 'Add adjustment failed');
+        }
       },
       { title: 'Add adjustment row', confirmLabel: 'Add adjustment row' }
     );
@@ -773,7 +780,7 @@
     document.getElementById('rc-add-form').style.display = 'none';
   }
 
-  function rcSaveTransaction() {
+  async function rcSaveTransaction() {
     const name = document.getElementById('rc-add-name').value.trim();
     const dateStr = document.getElementById('rc-add-date').value;
     const monthStr = document.getElementById('rc-add-month').value;
@@ -785,72 +792,112 @@
     if (!monthStr) { showAlert('Pick a billing month.'); return; }
     if (isNaN(amount) || amount <= 0) { showAlert('Enter a positive amount.'); return; }
 
-    // [mock] would call something like POST /api/reconcile-add-transaction,
-    // then loop back into rcCalculate() automatically, same as the sheet
-    // macro's keepStatementAmount behavior.
-    MOCK_TRANSACTIONS.push({
-      rowNumber: MOCK_TRANSACTIONS.length + 2,
-      payee: name, sof: currentAccount, type: rcAddType, date: dateStr,
-      cleared: true, reconciled: false, amount, total: rcAddType === 'Expense' ? amount : -amount,
-    });
+    const tooOld = rcState.sinceDateIso && dateStr <= rcState.sinceDateIso;
+    const tooNew = dateStr > rcState.asOfDate;
+    if (tooOld || tooNew) {
+      const windowLabel = (rcState.sinceDateIso || '(beginning)') + ' → ' + rcState.asOfDate;
+      showConfirm(
+        `This date is outside the current reconciliation window (${windowLabel}).\n\nAdd it anyway?`,
+        () => rcDoSaveTransaction(name, dateStr, monthStr, amount),
+        { title: 'Outside reconciliation window', confirmLabel: 'Add anyway' }
+      );
+      return;
+    }
+    rcDoSaveTransaction(name, dateStr, monthStr, amount);
+  }
 
-    rcHideAddForm();
-    // rc-statement-amount and rc-asof-date still hold what was typed
-    // before "Add transaction" was opened, so this just re-runs the whole
-    // calculate+compare step against the now-larger transaction set --
-    // same loop-until-it-matches behavior as the sheet macro.
-    rcCalculate();
+  async function rcDoSaveTransaction(name, dateStr, monthStr, amount) {
+    rcSetBusy(true);
+    try {
+      await apiPost('/api/reconcile-add-transaction', {
+        account: currentAccount,
+        name,
+        type: rcAddType,
+        date: dateStr,
+        amount,
+        month: monthStr,
+      });
+      rcSetBusy(false);
+      rcHideAddForm();
+      // rc-statement-amount and rc-asof-date still hold what was typed
+      // before "Add transaction" was opened, so this just re-runs the whole
+      // calculate+compare step against the now-larger transaction set --
+      // same loop-until-it-matches behavior as the sheet macro.
+      rcCalculate();
+    } catch (err) {
+      rcSetBusy(false);
+      showAlert(err.message, 'Add transaction failed');
+    }
   }
 
   /* ---------------- undo last reconciliation ---------------- */
 
-  function openUndo() {
+  async function openUndo() {
     document.getElementById('undo-account-name').textContent = currentAccount;
-    const entries = MOCK_RECON_LOG[currentAccount] || [];
     const body = document.getElementById('undo-body');
-
-    if (!entries.length) {
-      body.innerHTML = '<p class="sub">No reconciliation history found for this account.</p>';
-    } else {
-      const e = entries[entries.length - 1];
-      const adj = e.adjustmentType
-        ? `<div class="rc-row"><span>Adjustment row</span><span>${e.adjustmentType} ${e.adjustmentAmount.toLocaleString()}</span></div>`
-        : '';
-      body.innerHTML = `
-        <div class="rc-result-box rc-log-entry">
-          <div class="rc-row"><span>Period</span><span>${e.periodStart || '(beginning)'} → ${e.periodEnd}</span></div>
-          <div class="rc-row"><span>System total</span><span>${e.systemTotal.toLocaleString()}</span></div>
-          <div class="rc-row"><span>Statement amount</span><span>${e.statementAmount.toLocaleString()}</span></div>
-          <div class="rc-row"><span>Variance</span><span>${e.variance.toLocaleString()}</span></div>
-          <div class="rc-row"><span>Transactions marked reconciled</span><span>${e.matchedCount}</span></div>
-          ${adj}
-          <div class="rc-row"><span>Logged</span><span>${e.timestamp}</span></div>
-        </div>
-      `;
-      if (e.isCurrent) {
-        const btn = document.createElement('button');
-        btn.className = 'btn btn-danger btn-block';
-        btn.style.marginTop = '12px';
-        btn.textContent = 'Undo this reconciliation';
-        btn.onclick = () => {
-          showConfirm(
-            'This will un-mark those transactions as reconciled, delete the auto-inserted adjustment row (if there was one), and restore the Accounts tab to its prior state. Continue?',
-            () => { showAlert('[mock] Undone.', 'Done'); closeUndo(); },
-            { title: 'Undo this reconciliation', confirmLabel: 'Undo', danger: true }
-          );
-        };
-        body.appendChild(btn);
-      } else {
-        body.innerHTML += '<p class="error" style="margin-top:10px;">This account has been reconciled again since this entry — undoing it now is not safe and is disabled.</p>';
-      }
-    }
+    body.innerHTML = '<p class="sub">Looking up…</p>';
     document.getElementById('undo-overlay').classList.add('open');
+
+    let e;
+    try {
+      e = await apiGet('/api/reconcile-last?account=' + encodeURIComponent(currentAccount));
+    } catch (err) {
+      body.innerHTML = `<p class="error">${err.message}</p>`;
+      return;
+    }
+
+    if (!e.found) {
+      body.innerHTML = '<p class="sub">No reconciliation history found for this account.</p>';
+      return;
+    }
+
+    const adj = e.adjustmentType
+      ? `<div class="rc-row"><span>Adjustment row</span><span>${e.adjustmentType} ${e.adjustmentAmount.toLocaleString()}</span></div>`
+      : '';
+    body.innerHTML = `
+      <div class="rc-result-box rc-log-entry">
+        <div class="rc-row"><span>Period</span><span>${e.periodStartLabel} → ${e.periodEndLabel}</span></div>
+        <div class="rc-row"><span>System total</span><span>${e.systemTotal.toLocaleString()}</span></div>
+        <div class="rc-row"><span>Statement amount</span><span>${e.statementAmount.toLocaleString()}</span></div>
+        <div class="rc-row"><span>Variance</span><span>${e.variance.toLocaleString()}</span></div>
+        <div class="rc-row"><span>Transactions marked reconciled</span><span>${e.matchedCount}</span></div>
+        ${adj}
+      </div>
+    `;
+    if (e.isCurrent) {
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-danger btn-block';
+      btn.style.marginTop = '12px';
+      btn.textContent = 'Undo this reconciliation';
+      btn.onclick = () => {
+        showConfirm(
+          'This will un-mark those transactions as reconciled, delete the auto-inserted adjustment row (if there was one), and restore the Accounts tab to its prior state. Continue?',
+          async () => {
+            document.querySelectorAll('#undo-overlay button').forEach((b) => { b.disabled = true; });
+            try {
+              const r = await apiPost('/api/reconcile-undo', { account: currentAccount });
+              document.querySelectorAll('#undo-overlay button').forEach((b) => { b.disabled = false; });
+              showAlert('Undone. ' + r.restoredCount + ' transaction(s) un-reconciled' + (r.deletedAdjustment ? ', adjustment row deleted' : '') + '.', 'Done');
+              closeUndo();
+              openAccountDetail(currentAccount);
+            } catch (err) {
+              document.querySelectorAll('#undo-overlay button').forEach((b) => { b.disabled = false; });
+              showAlert(err.message, 'Undo failed');
+            }
+          },
+          { title: 'Undo this reconciliation', confirmLabel: 'Undo', danger: true }
+        );
+      };
+      body.appendChild(btn);
+    } else {
+      body.innerHTML += '<p class="error" style="margin-top:10px;">This account has been reconciled again since this entry — undoing it now is not safe and is disabled.</p>';
+    }
   }
   function closeUndo() {
     document.getElementById('undo-overlay').classList.remove('open');
   }
 
-  renderAccountsList();
+  loadAccountsList();
 </script>
 </body>
 </html>
