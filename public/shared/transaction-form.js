@@ -95,7 +95,13 @@
   // once you've changed it yourself.
   function guessBillingMonth(dateStr) {
     const d = new Date(dateStr + 'T00:00:00');
-    if (d.getDate() > 12) d.setMonth(d.getMonth() + 1);
+    // Snap to day 1 before incrementing the month -- otherwise a date like
+    // Aug 31 rolls into October (September only has 30 days), overshooting
+    // the guess by an extra month.
+    if (d.getDate() > 12) {
+      d.setDate(1);
+      d.setMonth(d.getMonth() + 1);
+    }
     return monthValue(d);
   }
 
