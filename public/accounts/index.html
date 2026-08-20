@@ -334,13 +334,17 @@
      Wired to the real backend:
        GET  /api/accounts-list
        GET  /api/transactions-list
-       GET  /api/accounts-detail?name=...
-       POST /api/reconcile-calculate      { account, asOfDate }
-       POST /api/reconcile-confirm        { account, asOfDate, statementAmount }
-       POST /api/reconcile-add-adjustment { account, asOfDate, statementAmount }
-       POST /api/reconcile-add-transaction{ account, name, type, date, amount, month }
-       GET  /api/reconcile-last?account=...
-       POST /api/reconcile-undo           { account }
+       All reconciliation actions are consolidated into ONE serverless
+       function (api/reconcile.js), dispatched by `action` -- Vercel's
+       Hobby plan caps a deployment at 12 Serverless Functions total, so
+       six-plus separate reconcile-*.js files would break every deploy.
+       GET  /api/reconcile?action=detail&name=...
+       POST /api/reconcile  { action: 'calculate', account, asOfDate }
+       POST /api/reconcile  { action: 'confirm', account, asOfDate, statementAmount }
+       POST /api/reconcile  { action: 'add-adjustment', account, asOfDate, statementAmount }
+       POST /api/reconcile  { action: 'add-transaction', account, name, type, date, amount, month }
+       GET  /api/reconcile?action=last&account=...
+       POST /api/reconcile  { action: 'undo', account }
      ============================================================ */
 
   async function apiGet(url) {
@@ -502,7 +506,7 @@
     contentEl.style.display = 'none';
 
     try {
-      const data = await apiGet('/api/accounts-detail?name=' + encodeURIComponent(name));
+      const data = await apiGet('/api/reconcile?action=detail&name=' + encodeURIComponent(name));
       currentAccountMeta = data.account;
       const isCredit = (data.account.type || '').toLowerCase().includes('credit');
 
@@ -603,7 +607,7 @@
     rcSetBusy(true);
     let calc;
     try {
-      calc = await apiPost('/api/reconcile-calculate', { account: currentAccount, asOfDate });
+      calc = await apiPost('/api/reconcile', { action: 'calculate', account: currentAccount, asOfDate });
     } catch (err) {
       rcSetBusy(false);
       showAlert(err.message, 'Calculation failed');
@@ -685,7 +689,8 @@
       async () => {
         rcSetBusy(true);
         try {
-          const r = await apiPost('/api/reconcile-confirm', {
+          const r = await apiPost('/api/reconcile', {
+            action: 'confirm',
             account: rcState.account,
             asOfDate: rcState.asOfDate,
             statementAmount: rcState.statementAmount,
@@ -711,7 +716,8 @@
       async () => {
         rcSetBusy(true);
         try {
-          const r = await apiPost('/api/reconcile-add-adjustment', {
+          const r = await apiPost('/api/reconcile', {
+            action: 'add-adjustment',
             account: rcState.account,
             asOfDate: rcState.asOfDate,
             statementAmount: rcState.statementAmount,
@@ -809,7 +815,8 @@
   async function rcDoSaveTransaction(name, dateStr, monthStr, amount) {
     rcSetBusy(true);
     try {
-      await apiPost('/api/reconcile-add-transaction', {
+      await apiPost('/api/reconcile', {
+        action: 'add-transaction',
         account: currentAccount,
         name,
         type: rcAddType,
@@ -840,7 +847,7 @@
 
     let e;
     try {
-      e = await apiGet('/api/reconcile-last?account=' + encodeURIComponent(currentAccount));
+      e = await apiGet('/api/reconcile?action=last&account=' + encodeURIComponent(currentAccount));
     } catch (err) {
       body.innerHTML = `<p class="error">${err.message}</p>`;
       return;
@@ -875,7 +882,7 @@
           async () => {
             document.querySelectorAll('#undo-overlay button').forEach((b) => { b.disabled = true; });
             try {
-              const r = await apiPost('/api/reconcile-undo', { account: currentAccount });
+              const r = await apiPost('/api/reconcile', { action: 'undo', account: currentAccount });
               document.querySelectorAll('#undo-overlay button').forEach((b) => { b.disabled = false; });
               showAlert('Undone. ' + r.restoredCount + ' transaction(s) un-reconciled' + (r.deletedAdjustment ? ', adjustment row deleted' : '') + '.', 'Done');
               closeUndo();
