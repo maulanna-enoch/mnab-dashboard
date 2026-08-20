@@ -14,6 +14,7 @@
     --accent: #22c55e;
     --uncleared: #f5b942;
     --negative: #e24b4a;
+    --upcoming: #60a5fa;
   }
   * { box-sizing: border-box; }
   body {
@@ -64,6 +65,46 @@
   .txn-amount.income { color: var(--accent); }
   .sub { font-size: 0.85rem; color: var(--muted); }
   .error { color: #f87171; font-size: 0.9rem; }
+
+  /* -- future-transactions toggle -- */
+  .upcoming-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--card);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    font-size: 12.5px;
+    color: var(--muted);
+    cursor: pointer;
+    user-select: none;
+  }
+  .upcoming-toggle .label { display: flex; align-items: center; gap: 6px; }
+  .upcoming-toggle .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--upcoming, #60a5fa); }
+  .switch {
+    position: relative;
+    width: 38px;
+    height: 22px;
+    border-radius: 999px;
+    background: #374151;
+    flex-shrink: 0;
+    transition: background 0.15s;
+  }
+  .switch.on { background: var(--upcoming, #60a5fa); }
+  .switch::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform 0.15s;
+  }
+  .switch.on::after { transform: translateX(16px); }
+  .date-header.upcoming { color: var(--upcoming, #60a5fa); }
+  .txn-row.upcoming { border: 1px dashed rgba(96,165,250,0.4); background: rgba(96,165,250,0.06); }
+  .txn-meta .upcoming-tag { color: var(--upcoming, #60a5fa); }
 
   .fab {
     position: fixed;
@@ -149,7 +190,19 @@
   .toggle-btn.active { border-color: var(--accent); color: var(--text); }
   #type-toggle .toggle-btn[data-type="Expense"].active { border-color: var(--negative); color: var(--text); }
   #type-toggle .toggle-btn[data-type="Income"].active { border-color: var(--accent); color: var(--text); }
-  .amount-block { text-align: center; margin-bottom: 16px; }
+  /* The whole card is the tap target now, not just the shrink-wrapped
+     <input> -- wrapping it in a <label for="f-amount"> (see markup below)
+     natively forwards any click inside it to focus the input. */
+  .amount-block {
+    text-align: center;
+    margin-bottom: 16px;
+    display: block;
+    cursor: text;
+    border-radius: 12px;
+    padding: 6px 6px 0;
+    transition: background 0.15s;
+  }
+  .amount-block:focus-within { background: rgba(34,197,94,0.06); }
   .amount-label { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
   .amount-row {
     display: flex;
@@ -158,6 +211,8 @@
     gap: 6px;
     max-width: 100%;
     overflow: hidden;
+    min-height: 40px;
+    padding: 6px 0;
   }
   .amount-currency { font-size: 18px; flex-shrink: 0; }
   .amount-input {
@@ -201,6 +256,12 @@
   <div class="wrap">
     <a class="back-link" href="/">← Home</a>
     <h1>Transactions</h1>
+
+    <div class="upcoming-toggle" id="upcoming-toggle">
+      <span class="label"><span class="dot"></span><span id="upcoming-label">Upcoming</span></span>
+      <div class="switch" id="upcoming-switch"></div>
+    </div>
+
     <div id="list"><div class="sub">Loading…</div></div>
   </div>
 
@@ -219,14 +280,14 @@
         <button class="toggle-btn" data-type="Income">Income</button>
       </div>
 
-      <div class="amount-block">
+      <label class="amount-block" for="f-amount">
         <div class="amount-label">Amount</div>
         <div class="amount-row">
           <span class="amount-currency" id="amount-currency">Rp</span>
           <input id="f-amount" class="amount-input" type="text" inputmode="numeric" placeholder="0" />
         </div>
         <div class="amount-rule"></div>
-      </div>
+      </label>
 
       <label class="field-label">Payee</label>
       <input id="f-payee" class="field" type="text" placeholder="e.g. Sushi Hiro, Plaza Indonesia" />
@@ -269,13 +330,24 @@
       }).format(value);
     }
 
+    // Local-date "YYYY-MM-DD", not UTC -- toISOString() converts to UTC
+    // first, which silently shifts the date back a day for any positive
+    // UTC offset (e.g. WIB/UTC+7). Every date string in this file should
+    // go through this instead of toISOString().
+    function todayISO() {
+      const d = new Date();
+      return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }
+
     function dateLabel(dateStr) {
       if (!dateStr) return 'No date';
       const d = new Date(dateStr + 'T00:00:00');
       const today = new Date(); today.setHours(0, 0, 0, 0);
       const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+      const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
       if (d.getTime() === today.getTime()) return 'Today';
       if (d.getTime() === yesterday.getTime()) return 'Yesterday';
+      if (d.getTime() === tomorrow.getTime()) return 'Tomorrow';
       return d.toLocaleDateString('en-GB', {
         day: 'numeric', month: 'short',
         year: d.getFullYear() !== today.getFullYear() ? 'numeric' : undefined,
@@ -285,6 +357,7 @@
     let accounts = [];
     let transactions = [];
     let editingRow = null;
+    let showUpcoming = false;
 
     const overlay = document.getElementById('overlay');
     const sheetTitle = document.getElementById('sheet-title');
@@ -293,6 +366,11 @@
     const formError = document.getElementById('form-error');
     const amountInput = document.getElementById('f-amount');
     const amountCurrency = document.getElementById('amount-currency');
+    const dateInput = document.getElementById('f-date');
+    const monthInput = document.getElementById('f-month');
+    const upcomingToggleEl = document.getElementById('upcoming-toggle');
+    const upcomingSwitchEl = document.getElementById('upcoming-switch');
+    const upcomingLabelEl = document.getElementById('upcoming-label');
 
     // Amount field: plain-digit value with live "." thousands separators
     // (matching the id-ID formatting used elsewhere), width grows with the
@@ -344,10 +422,29 @@
       return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
     }
 
+    // Billing-month pre-fill: day 1-12 of the month -> that same month,
+    // day 13+ -> the next month. Same heuristic already used in
+    // Reconcile.gs and the reconciliation dialog, applied here so this
+    // form's Billing month field isn't just a blind copy of the date's own
+    // month. Still fully editable -- this is a starting guess -- and a
+    // "touched" flag stops it from overwriting a manual edit once you've
+    // changed it yourself.
+    function guessBillingMonth(dateStr) {
+      const d = new Date(dateStr + 'T00:00:00');
+      if (d.getDate() > 12) d.setMonth(d.getMonth() + 1);
+      return monthValue(d);
+    }
+    let monthTouched = false;
+    monthInput.addEventListener('input', () => { monthTouched = true; });
+    dateInput.addEventListener('change', () => {
+      if (!monthTouched) monthInput.value = guessBillingMonth(dateInput.value);
+    });
+
     function openForm(txn) {
       formError.style.display = 'none';
       overlay.classList.add('open');
-      const today = new Date();
+      const todayStr = todayISO();
+      monthTouched = false;
       if (txn) {
         editingRow = txn.rowNumber;
         sheetTitle.textContent = 'Edit transaction';
@@ -355,8 +452,9 @@
         document.getElementById('f-sof').value = txn.sof;
         amountInput.value = formatAmountDisplay(digitsOnly(String(Math.round(txn.amount))));
         document.getElementById('f-notes').value = txn.notes || '';
-        document.getElementById('f-date').value = txn.date || today.toISOString().slice(0, 10);
-        document.getElementById('f-month').value = txn.month || monthValue(today);
+        dateInput.value = txn.date || todayStr;
+        monthInput.value = txn.month || guessBillingMonth(dateInput.value);
+        monthTouched = true; // editing an existing row -- don't override its saved month on open
         setToggle('type-toggle', 'type', txn.type);
         setToggle('status-toggle', 'status', txn.cleared === 'Cleared' ? 'Cleared' : 'Uncleared');
         deleteLink.style.display = 'block';
@@ -366,8 +464,8 @@
         document.getElementById('f-payee').value = '';
         amountInput.value = '';
         document.getElementById('f-notes').value = '';
-        document.getElementById('f-date').value = today.toISOString().slice(0, 10);
-        document.getElementById('f-month').value = monthValue(today);
+        dateInput.value = todayStr;
+        monthInput.value = guessBillingMonth(todayStr);
         setToggle('type-toggle', 'type', 'Expense');
         setToggle('status-toggle', 'status', 'Cleared');
         deleteLink.style.display = 'none';
@@ -402,46 +500,77 @@
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         transactions = data.transactions;
-
-        if (!transactions.length) {
-          listEl.innerHTML = '<div class="sub">No transactions yet. Tap + to add one.</div>';
-          return;
-        }
-
-        let html = '';
-        let lastLabel = null;
-        transactions.forEach((t) => {
-          const label = dateLabel(t.date);
-          if (label !== lastLabel) {
-            html += `<div class="date-header">${label}</div>`;
-            lastLabel = label;
-          }
-          const isIncome = t.type === 'Income';
-          const amountText = (isIncome ? '+' : '') + formatIDR(t.amount);
-          const clearedNote = t.cleared === 'Cleared' ? '' : ` &middot; <span class="uncleared">uncleared</span>`;
-          html += `
-            <div class="txn-row" data-row="${t.rowNumber}">
-              <div>
-                <div class="txn-name">${t.payee}</div>
-                <div class="txn-meta">${t.sof}${clearedNote}</div>
-              </div>
-              <div class="txn-amount ${isIncome ? 'income' : ''}">${amountText}</div>
-            </div>
-          `;
-        });
-        listEl.innerHTML = html;
-
-        document.querySelectorAll('.txn-row').forEach((row) => {
-          row.addEventListener('click', () => {
-            const rowNumber = parseInt(row.dataset.row, 10);
-            const txn = transactions.find((t) => t.rowNumber === rowNumber);
-            if (txn) openForm(txn);
-          });
-        });
+        renderList();
       } catch (err) {
         listEl.innerHTML = `<span class="error">${err.message}</span>`;
       }
     }
+
+    // Renders from the already-fetched `transactions` array -- called after
+    // load, and again whenever the upcoming toggle flips, so switching it
+    // doesn't need a refetch. Sorted descending by date so "today" is what
+    // actually sits on top once future-dated rows are filtered out, rather
+    // than trusting whatever order the API happens to return.
+    function renderList() {
+      const listEl = document.getElementById('list');
+      const todayStr = todayISO();
+
+      const sorted = [...transactions].sort((a, b) =>
+        a.date < b.date ? 1 : a.date > b.date ? -1 : (b.rowNumber || 0) - (a.rowNumber || 0)
+      );
+
+      const upcomingCount = sorted.filter((t) => t.date > todayStr).length;
+      upcomingSwitchEl.classList.toggle('on', showUpcoming);
+      upcomingLabelEl.textContent = showUpcoming
+        ? (upcomingCount ? `Showing ${upcomingCount} upcoming` : 'No upcoming transactions')
+        : (upcomingCount ? `${upcomingCount} upcoming hidden` : 'No upcoming transactions');
+
+      const visible = showUpcoming ? sorted : sorted.filter((t) => t.date <= todayStr);
+
+      if (!visible.length) {
+        listEl.innerHTML = '<div class="sub">No transactions yet. Tap + to add one.</div>';
+        return;
+      }
+
+      let html = '';
+      let lastLabel = null;
+      visible.forEach((t) => {
+        const isUpcoming = t.date > todayStr;
+        const label = dateLabel(t.date);
+        if (label !== lastLabel) {
+          html += `<div class="date-header ${isUpcoming ? 'upcoming' : ''}">${label}</div>`;
+          lastLabel = label;
+        }
+        const isIncome = t.type === 'Income';
+        const amountText = (isIncome ? '+' : '') + formatIDR(t.amount);
+        const metaBits = [t.sof];
+        if (t.cleared !== 'Cleared') metaBits.push('<span class="uncleared">uncleared</span>');
+        if (isUpcoming) metaBits.push('<span class="upcoming-tag">upcoming</span>');
+        html += `
+          <div class="txn-row ${isUpcoming ? 'upcoming' : ''}" data-row="${t.rowNumber}">
+            <div>
+              <div class="txn-name">${t.payee}</div>
+              <div class="txn-meta">${metaBits.join(' &middot; ')}</div>
+            </div>
+            <div class="txn-amount ${isIncome ? 'income' : ''}">${amountText}</div>
+          </div>
+        `;
+      });
+      listEl.innerHTML = html;
+
+      document.querySelectorAll('.txn-row').forEach((row) => {
+        row.addEventListener('click', () => {
+          const rowNumber = parseInt(row.dataset.row, 10);
+          const txn = transactions.find((t) => t.rowNumber === rowNumber);
+          if (txn) openForm(txn);
+        });
+      });
+    }
+
+    upcomingToggleEl.addEventListener('click', () => {
+      showUpcoming = !showUpcoming;
+      renderList();
+    });
 
     async function handleSave() {
       const saveBtn = document.getElementById('save-btn');
