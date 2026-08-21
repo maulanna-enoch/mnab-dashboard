@@ -486,12 +486,18 @@
     accounts.forEach((a) => {
       const stats = accountStats(a.name, transactions);
       const isCredit = (a.type || '').toLowerCase().includes('credit');
-      // Same red/green language for both account kinds: red = the "bad"
-      // direction (owed on a card, overdrawn in cash/bank), green = the
-      // "healthy" direction -- just flipped, since a credit account's
-      // positive runningTotal means debt while a cash account's negative
-      // runningTotal means overdrawn.
-      const isBad = isCredit ? stats.runningTotal > 0 : stats.runningTotal < 0;
+      // Same red/green language AND same sign direction for both account
+      // kinds -- no flip by type. accountStats' runningTotal follows the
+      // sheet-wide Total = Expense - Income convention, so a positive value
+      // always means net money leaving that account: on a credit card
+      // that's debt owed (bad/red); on a cash/bank account it's just as bad
+      // (spending outpacing income, balance trending down -- e.g. 0 income
+      // and any cleared expenses already makes this positive). A previous
+      // version of this flipped the direction for cash based on a literal
+      // reading of issue #11's text ("positive = healthy" for cash), which
+      // doesn't hold given how Total is actually computed here -- that
+      // showed 0-income/some-expenses accounts as green instead of red.
+      const isBad = stats.runningTotal > 0;
       const balanceClass = isBad ? 'owed' : 'positive';
       // Credit cards: drop the "owed" suffix on debt (the implied default
       // state for a card, doesn't need spelling out) and append "CR" on the
