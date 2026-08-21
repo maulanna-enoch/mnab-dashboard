@@ -152,6 +152,48 @@
   .txn-amount { font-size: 0.9rem; white-space: nowrap; }
   .txn-amount.income { color: var(--accent); }
 
+  /* -- future-transactions toggle (same behavior as transactions/index.html's
+     "Upcoming" toggle) -- lives outside #detail-txn-pull so it stays pinned
+     during the pull-to-refresh drag, same as .acct-header. -- */
+  .upcoming-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--card);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    font-size: 12.5px;
+    color: var(--muted);
+    cursor: pointer;
+    user-select: none;
+  }
+  .upcoming-toggle .label { display: flex; align-items: center; gap: 6px; }
+  .upcoming-toggle .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--upcoming, #60a5fa); }
+  .switch {
+    position: relative;
+    width: 38px;
+    height: 22px;
+    border-radius: 999px;
+    background: #374151;
+    flex-shrink: 0;
+    transition: background 0.15s;
+  }
+  .switch.on { background: var(--upcoming, #60a5fa); }
+  .switch::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform 0.15s;
+  }
+  .switch.on::after { transform: translateX(16px); }
+  .date-header.upcoming { color: var(--upcoming, #60a5fa); }
+  .txn-row.upcoming { border: 1px dashed rgba(96,165,250,0.4); background: rgba(96,165,250,0.06); }
+  .txn-meta .upcoming-tag { color: var(--upcoming, #60a5fa); }
+
   /* -- pull-to-refresh (account detail transaction list only; .acct-header
      stays pinned above this since it's outside #detail-txn-pull) -- the
      indicator lives in normal flow at height:0 and grows as you drag, which
@@ -284,6 +326,11 @@
         <button class="btn btn-primary" onclick="openReconcile()">Reconcile</button>
       </div>
       <div class="last-recon-link" onclick="openUndo()">View / undo last reconciliation</div>
+    </div>
+
+    <div class="upcoming-toggle" id="detail-upcoming-toggle">
+      <span class="label"><span class="dot"></span><span id="detail-upcoming-label">Upcoming</span></span>
+      <div class="switch" id="detail-upcoming-switch"></div>
     </div>
 
     <div class="txn-pull-wrap" id="detail-txn-pull">
@@ -571,6 +618,15 @@
   let currentAccount = null;
   let currentAccountMeta = null; // { name, type, lastReconciledThrough, lastReconciledStatement }
   let currentAccountTxns = []; // full (unfiltered) rows from the last successful fetch
+  let showUpcomingDetail = false; // mirrors transactions/index.html's own showUpcoming toggle state
+
+  const detailUpcomingToggleEl = document.getElementById('detail-upcoming-toggle');
+  const detailUpcomingSwitchEl = document.getElementById('detail-upcoming-switch');
+  const detailUpcomingLabelEl = document.getElementById('detail-upcoming-label');
+  detailUpcomingToggleEl.addEventListener('click', () => {
+    showUpcomingDetail = !showUpcomingDetail;
+    renderDetailTxnList(currentAccountTxns);
+  });
 
   // Does the actual fetch + in-place DOM update for the detail screen, with
   // no loading/error chrome of its own -- used both by the initial
@@ -624,19 +680,29 @@
     }
   }
 
-  // Future-dated transactions (date > today) are hidden here, same cutoff
-  // rule the Transactions page uses -- a scheduled/upcoming entry shouldn't
-  // read as if it already happened. Each visible row is tappable and opens
-  // the shared edit form via TransactionForm.open(), same flow as the
-  // Transactions page's row click. Rows carry data-row so the click handler
-  // can look the full transaction object back up in `rows` (needed for
-  // sof/notes/month, which aren't rendered but ARE required by
-  // TransactionForm.open() to avoid corrupting them on save -- see
-  // actionDetail in api/reconcile.js).
+  // Future-dated transactions (date > today) are hidden by default, same
+  // cutoff rule the Transactions page uses -- a scheduled/upcoming entry
+  // shouldn't read as if it already happened. Same "Upcoming" show/hide
+  // toggle as that page too (clarified after initial feedback: "same as the
+  // Transactions page" meant the whole toggle behavior, not just a hard
+  // filter) -- flipping it re-renders from currentAccountTxns, no refetch.
+  // Each visible row is tappable and opens the shared edit form via
+  // TransactionForm.open(), same flow as the Transactions page's row click.
+  // Rows carry data-row so the click handler can look the full transaction
+  // object back up in `rows` (needed for sof/notes/month, which aren't
+  // rendered but ARE required by TransactionForm.open() to avoid corrupting
+  // them on save -- see actionDetail in api/reconcile.js).
   function renderDetailTxnList(rows) {
     const listEl = document.getElementById('detail-txn-list');
     const todayStr = TransactionForm.todayISO();
-    const visible = rows.filter((t) => !t.date || t.date <= todayStr);
+
+    const upcomingCount = rows.filter((t) => t.date && t.date > todayStr).length;
+    detailUpcomingSwitchEl.classList.toggle('on', showUpcomingDetail);
+    detailUpcomingLabelEl.textContent = showUpcomingDetail
+      ? (upcomingCount ? `Showing ${upcomingCount} upcoming` : 'No upcoming transactions')
+      : (upcomingCount ? `${upcomingCount} upcoming hidden` : 'No upcoming transactions');
+
+    const visible = showUpcomingDetail ? rows : rows.filter((t) => !t.date || t.date <= todayStr);
 
     if (!visible.length) {
       listEl.innerHTML = '<div class="sub">No transactions for this account yet.</div>';
@@ -645,15 +711,20 @@
     let html = '';
     let lastLabel = null;
     visible.forEach((t) => {
+      const isUpcoming = !!(t.date && t.date > todayStr);
       const label = t.date || '(no date)';
-      if (label !== lastLabel) { html += `<div class="date-header">${label}</div>`; lastLabel = label; }
+      if (label !== lastLabel) {
+        html += `<div class="date-header ${isUpcoming ? 'upcoming' : ''}">${label}</div>`;
+        lastLabel = label;
+      }
       const isIncome = t.type === 'Income';
       const amountText = (isIncome ? '+' : '') + formatIDR(t.amount);
       const metaBits = [];
       if (!t.isCleared) metaBits.push('<span class="uncleared">uncleared</span>');
       if (t.reconciled) metaBits.push('<span class="reconciled-tag">reconciled</span>');
+      if (isUpcoming) metaBits.push('<span class="upcoming-tag">upcoming</span>');
       html += `
-        <div class="txn-row ${t.reconciled ? 'reconciled' : ''}" data-row="${t.rowNumber}">
+        <div class="txn-row ${t.reconciled ? 'reconciled' : ''} ${isUpcoming ? 'upcoming' : ''}" data-row="${t.rowNumber}">
           <div>
             <div class="txn-name">${t.payee}</div>
             <div class="txn-meta">${metaBits.join(' &middot; ') || '&nbsp;'}</div>
