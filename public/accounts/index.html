@@ -100,6 +100,7 @@
   .acct-header-balance.positive { color: var(--accent); }
   .acct-header-meta { font-size: 0.72rem; color: var(--muted); margin-top: 6px; }
   .acct-header-meta .uncleared-amt { color: var(--uncleared); }
+  .acct-header-meta div + div { margin-top: 2px; }
   .acct-header-actions { display: flex; gap: 10px; margin-top: 14px; }
   .btn {
     padding: 10px 14px;
@@ -642,15 +643,29 @@
     document.getElementById('detail-name').textContent = data.account.name;
     document.getElementById('detail-type').textContent = data.account.type || '';
 
+    // Same red/green language and CR-suffix convention as the accounts
+    // list (issue #11): no sign flip by account type -- a positive
+    // runningTotal always means money owed/leaving, so it's red on both
+    // cash and credit accounts. Credit cards specifically drop the "owed"
+    // suffix (implied default state for a card) and instead flag the
+    // less-common in-credit state with a trailing "CR" suffix (issue #13).
     const balEl = document.getElementById('detail-balance');
-    balEl.textContent = formatIDR(Math.abs(data.stats.runningTotal)) + (isCredit && data.stats.runningTotal > 0 ? ' owed' : '');
-    balEl.className = 'acct-header-balance ' + (isCredit ? (data.stats.runningTotal > 0 ? 'owed' : 'positive') : '');
+    const isBad = data.stats.runningTotal > 0;
+    const creditSuffix = isCredit && !isBad ? ' CR' : '';
+    balEl.textContent = formatIDR(Math.abs(data.stats.runningTotal)) + creditSuffix;
+    balEl.className = 'acct-header-balance ' + (isCredit ? (isBad ? 'owed' : 'positive') : '');
 
+    // Cleared-amount + last-reconciled-through, each on their own line,
+    // replacing the old "x uncleared (Rp...)" line (issue #15). Cleared
+    // amount gets the same CR-suffix treatment as the header balance,
+    // based on its own sign (a card can be in credit on the cleared
+    // figure even while uncleared charges make the running total owed).
     const metaEl = document.getElementById('detail-meta');
-    const metaBits = [];
-    if (data.stats.unclearedCount) metaBits.push(`<span class="uncleared-amt">${data.stats.unclearedCount} uncleared &middot; ${formatIDR(data.stats.unclearedTotal)}</span>`);
-    metaBits.push(data.account.lastReconciledThrough ? `Last reconciled through ${data.account.lastReconciledThrough}` : 'Never reconciled');
-    metaEl.innerHTML = metaBits.join(' &middot; ');
+    const clearedIsBad = data.stats.clearedTotal > 0;
+    const clearedCreditSuffix = isCredit && !clearedIsBad ? ' CR' : '';
+    const clearedLine = `${formatIDR(Math.abs(data.stats.clearedTotal))}${clearedCreditSuffix} cleared`;
+    const reconLine = data.account.lastReconciledThrough ? `Last reconciled through ${data.account.lastReconciledThrough}` : 'Never reconciled';
+    metaEl.innerHTML = `<div>${clearedLine}</div><div>${reconLine}</div>`;
 
     currentAccountTxns = data.transactions;
     renderDetailTxnList(currentAccountTxns);
