@@ -460,6 +460,23 @@
     }
   }
 
+  // Relative "when was this last reconciled" label for the accounts list
+  // row, sourced from lastReconciledAt (the Reconciliations tab's Timestamp
+  // column -- when the action actually happened) rather than the account's
+  // "Last Reconciled Through" statement date. Compares local calendar days
+  // (getFullYear/getMonth/getDate), not toISOString/UTC day boundaries --
+  // see the toISOString timezone footgun noted elsewhere in this app for WIB
+  // (UTC+7) users.
+  function lastReconciledLabel(iso) {
+    if (!iso) return 'Never reconciled';
+    const then = new Date(iso);
+    if (isNaN(then.getTime())) return 'Never reconciled';
+    const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const diffDays = Math.round((startOfDay(new Date()) - startOfDay(then)) / (24 * 60 * 60 * 1000));
+    const rel = diffDays <= 0 ? 'Today' : diffDays === 1 ? 'Yesterday' : `${diffDays} days ago`;
+    return `Last reconciled ${rel}`;
+  }
+
   function renderAccountsList(accounts, transactions) {
     const cashEl = document.getElementById('acct-list-cash');
     const creditEl = document.getElementById('acct-list-credit');
@@ -469,7 +486,17 @@
     accounts.forEach((a) => {
       const stats = accountStats(a.name, transactions);
       const isCredit = (a.type || '').toLowerCase().includes('credit');
-      const balanceClass = isCredit ? (stats.runningTotal > 0 ? 'owed' : 'positive') : (stats.runningTotal < 0 ? 'positive' : '');
+      // Same red/green language for both account kinds: red = the "bad"
+      // direction (owed on a card, overdrawn in cash/bank), green = the
+      // "healthy" direction -- just flipped, since a credit account's
+      // positive runningTotal means debt while a cash account's negative
+      // runningTotal means overdrawn.
+      const isBad = isCredit ? stats.runningTotal > 0 : stats.runningTotal < 0;
+      const balanceClass = isBad ? 'owed' : 'positive';
+      // Credit cards: drop the "owed" suffix on debt (the implied default
+      // state for a card, doesn't need spelling out) and append "CR" on the
+      // less-common in-credit state instead.
+      const balanceSuffix = isCredit && !isBad ? ' CR' : '';
 
       const row = document.createElement('div');
       row.className = 'acct-row';
@@ -480,8 +507,8 @@
           <div class="acct-type">${a.type || ''}</div>
         </div>
         <div class="acct-balance-block">
-          <div class="acct-balance ${balanceClass}">${formatIDR(Math.abs(stats.runningTotal))}${isCredit && stats.runningTotal > 0 ? ' owed' : ''}</div>
-          ${stats.unclearedCount ? `<div class="acct-uncleared">${stats.unclearedCount} uncleared (${formatIDR(stats.unclearedTotal)})</div>` : `<div class="acct-uncleared" style="visibility:hidden;">—</div>`}
+          <div class="acct-balance ${balanceClass}">${formatIDR(Math.abs(stats.runningTotal))}${balanceSuffix}</div>
+          <div class="acct-uncleared">${lastReconciledLabel(a.lastReconciledAt)}</div>
         </div>
       `;
       (isCredit ? creditEl : cashEl).appendChild(row);
