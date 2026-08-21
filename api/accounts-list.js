@@ -1,10 +1,21 @@
 const { fetchAccountRows } = require('./_lib/sheets');
+const { getSheetsClient, getLastReconciledTimestamps } = require('./_lib/reconcile');
 
 module.exports = async (req, res) => {
   try {
-    const accounts = await fetchAccountRows();
+    const [accounts, lastReconciledByName] = await Promise.all([
+      fetchAccountRows(),
+      getLastReconciledTimestamps(getSheetsClient()),
+    ]);
+    // lastReconciledAt is an ISO timestamp (when the reconciliation action was
+    // logged), not a statement date -- see accounts/index.html's
+    // lastReconciledLabel() for how it's turned into "Today"/"Yesterday"/etc.
+    const accountsWithReconciled = accounts.map((a) => ({
+      ...a,
+      lastReconciledAt: lastReconciledByName[String(a.name).trim().toLowerCase()] || null,
+    }));
     res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
-    res.status(200).json({ accounts, updatedAt: new Date().toISOString() });
+    res.status(200).json({ accounts: accountsWithReconciled, updatedAt: new Date().toISOString() });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
