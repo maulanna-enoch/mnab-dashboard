@@ -242,6 +242,7 @@ module.exports = {
   fetchAccountRows,
   fetchTransactionRows,
   buildTransactionRow,
+  getSheetsClient,
   getWriteSheetsClient,
   getSheetGridId,
   serialToDate,
