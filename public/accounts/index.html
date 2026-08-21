@@ -460,6 +460,23 @@
     }
   }
 
+  // Relative "when was this last reconciled" label for the accounts list
+  // row, sourced from lastReconciledAt (the Reconciliations tab's Timestamp
+  // column -- when the action actually happened) rather than the account's
+  // "Last Reconciled Through" statement date. Compares local calendar days
+  // (getFullYear/getMonth/getDate), not toISOString/UTC day boundaries --
+  // see the toISOString timezone footgun noted elsewhere in this app for WIB
+  // (UTC+7) users.
+  function lastReconciledLabel(iso) {
+    if (!iso) return 'Never reconciled';
+    const then = new Date(iso);
+    if (isNaN(then.getTime())) return 'Never reconciled';
+    const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const diffDays = Math.round((startOfDay(new Date()) - startOfDay(then)) / (24 * 60 * 60 * 1000));
+    const rel = diffDays <= 0 ? 'Today' : diffDays === 1 ? 'Yesterday' : `${diffDays} days ago`;
+    return `Last reconciled ${rel}`;
+  }
+
   function renderAccountsList(accounts, transactions) {
     const cashEl = document.getElementById('acct-list-cash');
     const creditEl = document.getElementById('acct-list-credit');
@@ -469,7 +486,23 @@
     accounts.forEach((a) => {
       const stats = accountStats(a.name, transactions);
       const isCredit = (a.type || '').toLowerCase().includes('credit');
-      const balanceClass = isCredit ? (stats.runningTotal > 0 ? 'owed' : 'positive') : (stats.runningTotal < 0 ? 'positive' : '');
+      // Same red/green language AND same sign direction for both account
+      // kinds -- no flip by type. accountStats' runningTotal follows the
+      // sheet-wide Total = Expense - Income convention, so a positive value
+      // always means net money leaving that account: on a credit card
+      // that's debt owed (bad/red); on a cash/bank account it's just as bad
+      // (spending outpacing income, balance trending down -- e.g. 0 income
+      // and any cleared expenses already makes this positive). A previous
+      // version of this flipped the direction for cash based on a literal
+      // reading of issue #11's text ("positive = healthy" for cash), which
+      // doesn't hold given how Total is actually computed here -- that
+      // showed 0-income/some-expenses accounts as green instead of red.
+      const isBad = stats.runningTotal > 0;
+      const balanceClass = isBad ? 'owed' : 'positive';
+      // Credit cards: drop the "owed" suffix on debt (the implied default
+      // state for a card, doesn't need spelling out) and append "CR" on the
+      // less-common in-credit state instead.
+      const balanceSuffix = isCredit && !isBad ? ' CR' : '';
 
       const row = document.createElement('div');
       row.className = 'acct-row';
@@ -480,8 +513,8 @@
           <div class="acct-type">${a.type || ''}</div>
         </div>
         <div class="acct-balance-block">
-          <div class="acct-balance ${balanceClass}">${formatIDR(Math.abs(stats.runningTotal))}${isCredit && stats.runningTotal > 0 ? ' owed' : ''}</div>
-          ${stats.unclearedCount ? `<div class="acct-uncleared">${stats.unclearedCount} uncleared (${formatIDR(stats.unclearedTotal)})</div>` : `<div class="acct-uncleared" style="visibility:hidden;">—</div>`}
+          <div class="acct-balance ${balanceClass}">${formatIDR(Math.abs(stats.runningTotal))}${balanceSuffix}</div>
+          <div class="acct-uncleared">${lastReconciledLabel(a.lastReconciledAt)}</div>
         </div>
       `;
       (isCredit ? creditEl : cashEl).appendChild(row);

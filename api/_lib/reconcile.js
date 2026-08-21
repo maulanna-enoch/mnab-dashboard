@@ -436,6 +436,47 @@ async function getReconciliationLogRows(sheets, accountName) {
   return { map, rows };
 }
 
+// Batched read of the Reconciliations tab returning, per account, the
+// timestamp of its most recent reconciliation *action* (when it was
+// actually performed/logged) -- distinct from Accounts' "Last Reconciled
+// Through" (a user-chosen statement as-of date). One sheet read for every
+// account, rather than getReconciliationLogRows()'s one-read-per-account
+// (that function still exists for the single-account detail/undo flows).
+// actionUndo deletes the corresponding log row on undo, so the max
+// Timestamp per account here always reflects current state, no extra
+// bookkeeping needed.
+async function getLastReconciledTimestamps(sheets) {
+  const spreadsheetId = process.env.SHEET_ID;
+  const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties' });
+  const sheetExists = (meta.data.sheets || []).some((s) => s.properties.title === RECONCILE_SHEETS.log);
+  if (!sheetExists) return {};
+
+  const map = await getHeaderMap(sheets, spreadsheetId, RECONCILE_SHEETS.log);
+  if (!('Account' in map) || !('Timestamp' in map)) return {};
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${RECONCILE_SHEETS.log}!A2:Z`,
+    valueRenderOption: 'UNFORMATTED_VALUE',
+  });
+  const values = response.data.values || [];
+
+  const latestSerial = {};
+  values.forEach((row) => {
+    const account = row[map['Account']];
+    const timestampSerial = row[map['Timestamp']];
+    if (!account || typeof timestampSerial !== 'number') return;
+    const key = String(account).trim().toLowerCase();
+    if (!(key in latestSerial) || timestampSerial > latestSerial[key]) latestSerial[key] = timestampSerial;
+  });
+
+  const result = {};
+  Object.keys(latestSerial).forEach((key) => {
+    result[key] = serialToDate(latestSerial[key]).toISOString();
+  });
+  return result;
+}
+
 async function deleteSheetRow(sheets, sheetName, rowNumber) {
   const spreadsheetId = process.env.SHEET_ID;
   const gridId = await getSheetGridId(sheets, spreadsheetId, sheetName);
@@ -474,6 +515,7 @@ module.exports = {
   clearAccountLastReconciled,
   logReconciliation,
   getReconciliationLogRows,
+  getLastReconciledTimestamps,
   deleteSheetRow,
   getSheetsClient,
   getWriteSheetsClient,
