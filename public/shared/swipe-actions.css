@@ -33,6 +33,11 @@
   font-size: 10px;
   font-weight: 600;
   user-select: none;
+  touch-action: manipulation;
+  /* Instant feedback on press (.swx-pressed, toggled in swipe-actions.js on
+     pointerdown/up) needs to snap, not ease -- a transition here would just
+     re-introduce the lag this is meant to remove. */
+  transition: filter 0.05s linear;
 }
 .swx-action-label { line-height: 1; }
 .swx-delete {
@@ -45,3 +50,20 @@
   background: rgba(96, 165, 250, 0.2);
   color: #93c5fd;
 }
+.swx-action.swx-pressed { filter: brightness(1.35); }
+
+/* Busy state: the tapped action is mid-network-call (spinner + "Deleting…"
+   / "Clearing…" / "Unclearing…", swapped in by swipe-actions.js). The whole
+   row's actions are inert until it resolves, since a row usually gets
+   re-rendered away entirely on success anyway. */
+.swx-wrap.swx-busy .swx-action { pointer-events: none; }
+.swx-spinner {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  opacity: 0.85;
+  animation: swx-spin 0.7s linear infinite;
+}
+@keyframes swx-spin { to { transform: rotate(360deg); } }
