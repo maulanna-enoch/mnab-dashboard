@@ -60,6 +60,21 @@ function formatISODate(date) {
   return date.toISOString().slice(0, 10);
 }
 
+// "Today" in the user's timezone (WIB / Asia/Jakarta, UTC+7, no DST) as a
+// UTC-midnight Date -- directly comparable with the UTC-midnight Date
+// objects this module already uses for transaction dates (see
+// parseISODate/serialToDate above). Vercel's serverless functions run in
+// UTC, so naively reading `new Date()`'s own getUTCFullYear/etc. would read
+// the wrong calendar day for the ~7 hours of every WIB day between 00:00 and
+// 06:59 WIB (still "yesterday" in UTC) -- the same toISOString/timezone
+// footgun called out elsewhere in this app (see transaction-form.js's
+// todayISO), just server-side instead of client-side.
+const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
+function todayWIBDate() {
+  const wibNow = new Date(Date.now() + WIB_OFFSET_MS);
+  return new Date(Date.UTC(wibNow.getUTCFullYear(), wibNow.getUTCMonth(), wibNow.getUTCDate()));
+}
+
 // Rough default for which billing month a transaction belongs to: dates
 // early in the month (day <= 12) stay in that calendar month; later dates
 // roll into the next one. Fixed version of the bug that also existed here
@@ -502,6 +517,7 @@ module.exports = {
   round2,
   parseISODate,
   formatISODate,
+  todayWIBDate,
   parseISOMonth,
   billingMonthForDate,
   fetchAccountsForReconcile,
