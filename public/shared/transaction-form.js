@@ -43,7 +43,8 @@
         </label>
 
         <label class="txf-field-label">Payee</label>
-        <input id="txf-f-payee" class="txf-field" type="text" placeholder="e.g. Sushi Hiro, Plaza Indonesia" />
+        <input id="txf-f-payee" class="txf-field" type="text" placeholder="e.g. Sushi Hiro, Plaza Indonesia" list="txf-payee-list" autocomplete="off" />
+        <datalist id="txf-payee-list"></datalist>
 
         <label class="txf-field-label">Account (SOF)</label>
         <select id="txf-f-sof" class="txf-field"></select>
@@ -150,6 +151,23 @@
       sofEl.innerHTML = data.accounts.map((a) => `<option value="${a.name}">${a.name}</option>`).join('');
     } catch (err) {
       sofEl.innerHTML = '<option value="">Error loading accounts</option>';
+    }
+  }
+
+  // Populates the Payee field's <datalist> with previously-used payees so
+  // typing offers native browser autocomplete. Best-effort: the field stays
+  // a normal free-text input either way, so a failure here just means no
+  // suggestions rather than a broken form.
+  async function loadPayees() {
+    const payeeListEl = state.payeeListEl;
+    if (!payeeListEl) return;
+    try {
+      const res = await fetch('/api/payees-list');
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      payeeListEl.innerHTML = (data.payees || []).map((p) => `<option value="${p}"></option>`).join('');
+    } catch (err) {
+      // Silent -- autocomplete is a nice-to-have, not worth surfacing an error for.
     }
   }
 
@@ -272,6 +290,7 @@
       amountInput: rootEl.querySelector('#txf-f-amount'),
       amountCurrency: rootEl.querySelector('#txf-amount-currency'),
       payeeEl: rootEl.querySelector('#txf-f-payee'),
+      payeeListEl: rootEl.querySelector('#txf-payee-list'),
       sofEl: rootEl.querySelector('#txf-f-sof'),
       dateInput: rootEl.querySelector('#txf-f-date'),
       monthInput: rootEl.querySelector('#txf-f-month'),
@@ -309,6 +328,7 @@
     state.deleteLink.addEventListener('click', handleDelete);
 
     loadAccounts();
+    loadPayees();
   }
 
   global.TransactionForm = { mount, open, close, todayISO, guessBillingMonth };
