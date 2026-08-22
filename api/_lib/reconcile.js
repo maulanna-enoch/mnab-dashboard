@@ -9,7 +9,7 @@
 // Statement) that the macro self-provisioned, in whatever order they ended
 // up in, so column-letter assumptions would be fragile here specifically.
 
-const { getSheetsClient, getWriteSheetsClient, getSheetGridId, serialToDate, dateToSerial } = require('./sheets');
+const { getSheetsClient, getWriteSheetsClient, getSheetGridId, serialToDate, dateToSerial, monthKey } = require('./sheets');
 
 const RECONCILE_SHEETS = {
   transactions: 'transactions',
@@ -157,6 +157,7 @@ async function fetchTransactionsForReconcile(sheets) {
   const rows = values.map((row, i) => {
     const sofRaw = row[map['SOF']];
     const dateSerial = row[map['Date']];
+    const monthSerial = map['Month'] !== undefined ? row[map['Month']] : undefined;
     const clearedRaw = String(row[map['Cleared']] || '').trim();
     const reconciledRaw = row[map['Reconciled']];
     const reconciledDateSerial = row[map['Reconciled Date']];
@@ -171,6 +172,7 @@ async function fetchTransactionsForReconcile(sheets) {
       rowNumber: i + 2,
       sof: sofRaw ? String(sofRaw).trim() : '',
       date: typeof dateSerial === 'number' ? serialToDate(dateSerial) : null,
+      month: typeof monthSerial === 'number' ? monthKey(serialToDate(monthSerial)) : null,
       cleared: clearedRaw,
       isCleared: clearedRaw.toLowerCase() === 'cleared',
       type,

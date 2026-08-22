@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
 <title>Accounts · MNAB</title>
+<link rel="stylesheet" href="/shared/transaction-form.css" />
 <style>
   :root {
     color-scheme: light dark;
@@ -17,6 +18,16 @@
     --upcoming: #60a5fa;
   }
   * { box-sizing: border-box; }
+  html, body {
+    /* Mobile Safari rubber-bands (and, on some versions, treats a downward
+       drag while already scrolled to the top as its own native gesture) --
+       both fight visually with our own pull-to-refresh drag below. `contain`
+       stops the overscroll from chaining up to the browser's own handling
+       once JS has claimed the gesture, without disabling normal scrolling.
+       Supported Safari 16+ (effectively all real iOS devices by now); older
+       Safari just falls back to the native bounce, same as before this. */
+    overscroll-behavior-y: contain;
+  }
   body {
     margin: 0;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -142,6 +153,74 @@
   .txn-amount { font-size: 0.9rem; white-space: nowrap; }
   .txn-amount.income { color: var(--accent); }
 
+  /* -- future-transactions toggle (same behavior as transactions/index.html's
+     "Upcoming" toggle) -- lives outside #detail-txn-pull so it stays pinned
+     during the pull-to-refresh drag, same as .acct-header. -- */
+  .upcoming-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--card);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    font-size: 12.5px;
+    color: var(--muted);
+    cursor: pointer;
+    user-select: none;
+  }
+  .upcoming-toggle .label { display: flex; align-items: center; gap: 6px; }
+  .upcoming-toggle .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--upcoming, #60a5fa); }
+  .switch {
+    position: relative;
+    width: 38px;
+    height: 22px;
+    border-radius: 999px;
+    background: #374151;
+    flex-shrink: 0;
+    transition: background 0.15s;
+  }
+  .switch.on { background: var(--upcoming, #60a5fa); }
+  .switch::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform 0.15s;
+  }
+  .switch.on::after { transform: translateX(16px); }
+  .date-header.upcoming { color: var(--upcoming, #60a5fa); }
+  .txn-row.upcoming { border: 1px dashed rgba(96,165,250,0.4); background: rgba(96,165,250,0.06); }
+  .txn-meta .upcoming-tag { color: var(--upcoming, #60a5fa); }
+
+  /* -- pull-to-refresh (account detail transaction list only; .acct-header
+     stays pinned above this since it's outside #detail-txn-pull) -- the
+     indicator lives in normal flow at height:0 and grows as you drag, which
+     is what actually pushes the list down -- no separate transform needed. */
+  .txn-pull-wrap { position: relative; overscroll-behavior-y: contain; touch-action: pan-y; }
+  .pull-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 0;
+    overflow: hidden;
+    color: var(--muted);
+    font-size: 0.75rem;
+  }
+  .pull-spinner {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid #374151;
+    border-top-color: var(--accent);
+    flex-shrink: 0;
+    animation: pull-spin 0.7s linear infinite;
+  }
+  @keyframes pull-spin { to { transform: rotate(360deg); } }
+
   /* -- bottom sheet, matching the app's existing txf-overlay/txf-sheet pattern -- */
   .rc-overlay {
     position: fixed;
@@ -250,9 +329,21 @@
       <div class="last-recon-link" onclick="openUndo()">View / undo last reconciliation</div>
     </div>
 
-    <div id="detail-txn-list"></div>
+    <div class="upcoming-toggle" id="detail-upcoming-toggle">
+      <span class="label"><span class="dot"></span><span id="detail-upcoming-label">Upcoming</span></span>
+      <div class="switch" id="detail-upcoming-switch"></div>
+    </div>
+
+    <div class="txn-pull-wrap" id="detail-txn-pull">
+      <div class="pull-indicator" id="pull-indicator">
+        <span class="pull-spinner"></span><span id="pull-label">Pull to refresh</span>
+      </div>
+      <div id="detail-txn-list"></div>
+    </div>
   </div>
 </div>
+
+<div id="txf-root"></div>
 
 <!-- ============ RECONCILE BOTTOM SHEET ============ -->
 <div class="rc-overlay" id="rc-overlay">
@@ -330,6 +421,7 @@
   </div>
 </div>
 
+<script src="/shared/transaction-form.js"></script>
 <script>
   /* ============================================================
      Wired to the real backend:
@@ -526,6 +618,59 @@
 
   let currentAccount = null;
   let currentAccountMeta = null; // { name, type, lastReconciledThrough, lastReconciledStatement }
+  let currentAccountTxns = []; // full (unfiltered) rows from the last successful fetch
+  let showUpcomingDetail = false; // mirrors transactions/index.html's own showUpcoming toggle state
+
+  const detailUpcomingToggleEl = document.getElementById('detail-upcoming-toggle');
+  const detailUpcomingSwitchEl = document.getElementById('detail-upcoming-switch');
+  const detailUpcomingLabelEl = document.getElementById('detail-upcoming-label');
+  detailUpcomingToggleEl.addEventListener('click', () => {
+    showUpcomingDetail = !showUpcomingDetail;
+    renderDetailTxnList(currentAccountTxns);
+  });
+
+  // Does the actual fetch + in-place DOM update for the detail screen, with
+  // no loading/error chrome of its own -- used both by the initial
+  // openAccountDetail() load (wrapped in loading/error UI below) AND by
+  // pull-to-refresh / TransactionForm's onSaved/onDeleted callbacks, which
+  // want a lightweight in-place refresh with no full-page loading flash.
+  // Throws on failure -- callers decide how to surface that.
+  async function fetchAndRenderAccountDetail(name) {
+    const data = await apiGet('/api/reconcile?action=detail&name=' + encodeURIComponent(name));
+    currentAccountMeta = data.account;
+    const isCredit = (data.account.type || '').toLowerCase().includes('credit');
+
+    document.getElementById('detail-name').textContent = data.account.name;
+    document.getElementById('detail-type').textContent = data.account.type || '';
+
+    // Same red/green language and CR-suffix convention as the accounts
+    // list (issue #11): no sign flip by account type -- a positive
+    // runningTotal always means money owed/leaving, so it's red on both
+    // cash and credit accounts. Credit cards specifically drop the "owed"
+    // suffix (implied default state for a card) and instead flag the
+    // less-common in-credit state with a trailing "CR" suffix (issue #13).
+    const balEl = document.getElementById('detail-balance');
+    const isBad = data.stats.runningTotal > 0;
+    const creditSuffix = isCredit && !isBad ? ' CR' : '';
+    balEl.textContent = formatIDR(Math.abs(data.stats.runningTotal)) + creditSuffix;
+    balEl.className = 'acct-header-balance ' + (isCredit ? (isBad ? 'owed' : 'positive') : '');
+
+    // Cleared-amount + last-reconciled-through, each on their own line,
+    // replacing the old "x uncleared (Rp...)" line (issue #15). Cleared
+    // amount gets the same CR-suffix treatment as the header balance,
+    // based on its own sign (a card can be in credit on the cleared
+    // figure even while uncleared charges make the running total owed).
+    const metaEl = document.getElementById('detail-meta');
+    const clearedIsBad = data.stats.clearedTotal > 0;
+    const clearedCreditSuffix = isCredit && !clearedIsBad ? ' CR' : '';
+    const clearedLine = `${formatIDR(Math.abs(data.stats.clearedTotal))}${clearedCreditSuffix} cleared`;
+    const reconLine = data.account.lastReconciledThrough ? `Last reconciled through ${data.account.lastReconciledThrough}` : 'Never reconciled';
+    metaEl.innerHTML = `<div>${clearedLine}</div><div>${reconLine}</div>`;
+
+    currentAccountTxns = data.transactions;
+    renderDetailTxnList(currentAccountTxns);
+    return data;
+  }
 
   async function openAccountDetail(name) {
     currentAccount = name;
@@ -540,38 +685,7 @@
     contentEl.style.display = 'none';
 
     try {
-      const data = await apiGet('/api/reconcile?action=detail&name=' + encodeURIComponent(name));
-      currentAccountMeta = data.account;
-      const isCredit = (data.account.type || '').toLowerCase().includes('credit');
-
-      document.getElementById('detail-name').textContent = data.account.name;
-      document.getElementById('detail-type').textContent = data.account.type || '';
-
-      // Same red/green language and CR-suffix convention as the accounts
-      // list (issue #11): no sign flip by account type -- a positive
-      // runningTotal always means money owed/leaving, so it's red on both
-      // cash and credit accounts. Credit cards specifically drop the "owed"
-      // suffix (implied default state for a card) and instead flag the
-      // less-common in-credit state with a trailing "CR" suffix (issue #13).
-      const balEl = document.getElementById('detail-balance');
-      const isBad = data.stats.runningTotal > 0;
-      const creditSuffix = isCredit && !isBad ? ' CR' : '';
-      balEl.textContent = formatIDR(Math.abs(data.stats.runningTotal)) + creditSuffix;
-      balEl.className = 'acct-header-balance ' + (isCredit ? (isBad ? 'owed' : 'positive') : '');
-
-      // Cleared-amount + last-reconciled-through, each on their own line,
-      // replacing the old "x uncleared (Rp...)" line (issue #15). Cleared
-      // amount gets the same CR-suffix treatment as the header balance,
-      // based on its own sign (a card can be in credit on the cleared
-      // figure even while uncleared charges make the running total owed).
-      const metaEl = document.getElementById('detail-meta');
-      const clearedIsBad = data.stats.clearedTotal > 0;
-      const clearedCreditSuffix = isCredit && !clearedIsBad ? ' CR' : '';
-      const clearedLine = `${formatIDR(Math.abs(data.stats.clearedTotal))}${clearedCreditSuffix} cleared`;
-      const reconLine = data.account.lastReconciledThrough ? `Last reconciled through ${data.account.lastReconciledThrough}` : 'Never reconciled';
-      metaEl.innerHTML = `<div>${clearedLine}</div><div>${reconLine}</div>`;
-
-      renderDetailTxnList(data.transactions);
+      await fetchAndRenderAccountDetail(name);
       loadingEl.style.display = 'none';
       contentEl.style.display = 'block';
     } catch (err) {
@@ -581,24 +695,51 @@
     }
   }
 
+  // Future-dated transactions (date > today) are hidden by default, same
+  // cutoff rule the Transactions page uses -- a scheduled/upcoming entry
+  // shouldn't read as if it already happened. Same "Upcoming" show/hide
+  // toggle as that page too (clarified after initial feedback: "same as the
+  // Transactions page" meant the whole toggle behavior, not just a hard
+  // filter) -- flipping it re-renders from currentAccountTxns, no refetch.
+  // Each visible row is tappable and opens the shared edit form via
+  // TransactionForm.open(), same flow as the Transactions page's row click.
+  // Rows carry data-row so the click handler can look the full transaction
+  // object back up in `rows` (needed for sof/notes/month, which aren't
+  // rendered but ARE required by TransactionForm.open() to avoid corrupting
+  // them on save -- see actionDetail in api/reconcile.js).
   function renderDetailTxnList(rows) {
     const listEl = document.getElementById('detail-txn-list');
-    if (!rows.length) {
+    const todayStr = TransactionForm.todayISO();
+
+    const upcomingCount = rows.filter((t) => t.date && t.date > todayStr).length;
+    detailUpcomingSwitchEl.classList.toggle('on', showUpcomingDetail);
+    detailUpcomingLabelEl.textContent = showUpcomingDetail
+      ? (upcomingCount ? `Showing ${upcomingCount} upcoming` : 'No upcoming transactions')
+      : (upcomingCount ? `${upcomingCount} upcoming hidden` : 'No upcoming transactions');
+
+    const visible = showUpcomingDetail ? rows : rows.filter((t) => !t.date || t.date <= todayStr);
+
+    if (!visible.length) {
       listEl.innerHTML = '<div class="sub">No transactions for this account yet.</div>';
       return;
     }
     let html = '';
     let lastLabel = null;
-    rows.forEach((t) => {
+    visible.forEach((t) => {
+      const isUpcoming = !!(t.date && t.date > todayStr);
       const label = t.date || '(no date)';
-      if (label !== lastLabel) { html += `<div class="date-header">${label}</div>`; lastLabel = label; }
+      if (label !== lastLabel) {
+        html += `<div class="date-header ${isUpcoming ? 'upcoming' : ''}">${label}</div>`;
+        lastLabel = label;
+      }
       const isIncome = t.type === 'Income';
       const amountText = (isIncome ? '+' : '') + formatIDR(t.amount);
       const metaBits = [];
       if (!t.isCleared) metaBits.push('<span class="uncleared">uncleared</span>');
       if (t.reconciled) metaBits.push('<span class="reconciled-tag">reconciled</span>');
+      if (isUpcoming) metaBits.push('<span class="upcoming-tag">upcoming</span>');
       html += `
-        <div class="txn-row ${t.reconciled ? 'reconciled' : ''}">
+        <div class="txn-row ${t.reconciled ? 'reconciled' : ''} ${isUpcoming ? 'upcoming' : ''}" data-row="${t.rowNumber}">
           <div>
             <div class="txn-name">${t.payee}</div>
             <div class="txn-meta">${metaBits.join(' &middot; ') || '&nbsp;'}</div>
@@ -608,6 +749,93 @@
       `;
     });
     listEl.innerHTML = html;
+
+    listEl.querySelectorAll('.txn-row').forEach((row) => {
+      row.addEventListener('click', () => {
+        const rowNumber = parseInt(row.dataset.row, 10);
+        const txn = rows.find((t) => t.rowNumber === rowNumber);
+        if (txn) TransactionForm.open(txn);
+      });
+    });
+  }
+
+  /* ---------------- pull-to-refresh (account detail transaction list) ----------------
+     Pointer Events (not touchstart/mousedown) unify touch + mouse, and are
+     also what Chromium dispatches for Playwright's simulated mouse input --
+     so this is testable headlessly without a real touch device. Scoped to
+     #detail-txn-pull only: .acct-header (back arrow, name, balance, actions)
+     lives outside this wrapper and never moves. */
+  const PULL_THRESHOLD = 64;
+  const PULL_MAX = 100;
+  let pull = null; // { startY, pointerId, dragging, refreshing }
+
+  function setupPullToRefresh() {
+    const wrapEl = document.getElementById('detail-txn-pull');
+    const indicatorEl = document.getElementById('pull-indicator');
+    const labelEl = document.getElementById('pull-label');
+
+    function setPull(px, animate) {
+      indicatorEl.style.transition = animate ? 'height 0.2s' : '';
+      indicatorEl.style.height = px + 'px';
+    }
+
+    function onPointerDown(e) {
+      if (pull && pull.refreshing) return;
+      // Only start the gesture from the very top of the page -- otherwise
+      // this would hijack an ordinary downward scroll mid-list.
+      if (window.scrollY > 0) return;
+      pull = { startY: e.clientY, pointerId: e.pointerId, dragging: false, refreshing: false };
+    }
+
+    function onPointerMove(e) {
+      if (!pull || pull.refreshing || pull.pointerId !== e.pointerId) return;
+      const dy = e.clientY - pull.startY;
+      if (dy <= 0 || window.scrollY > 0) {
+        if (pull.dragging) { pull.dragging = false; setPull(0, true); }
+        return;
+      }
+      pull.dragging = true;
+      if (e.cancelable) e.preventDefault();
+      const pulled = Math.min(dy * 0.5, PULL_MAX);
+      setPull(pulled, false);
+      labelEl.textContent = pulled >= PULL_THRESHOLD ? 'Release to refresh' : 'Pull to refresh';
+    }
+
+    async function onPointerUp(e) {
+      if (!pull || pull.pointerId !== e.pointerId) return;
+      const dy = e.clientY - pull.startY;
+      const pulled = Math.min(Math.max(dy, 0) * 0.5, PULL_MAX);
+      if (!pull.dragging || pulled < PULL_THRESHOLD) {
+        pull = null;
+        setPull(0, true);
+        return;
+      }
+      pull.refreshing = true;
+      labelEl.textContent = 'Refreshing…';
+      setPull(PULL_THRESHOLD, true);
+      try {
+        await fetchAndRenderAccountDetail(currentAccount);
+      } catch (err) {
+        // Leave the existing list as-is on a failed refresh -- no dedicated
+        // error UI here since the pull gesture itself already communicates
+        // "try again" (unlike the full-page load, this isn't the only way
+        // to see this account's data).
+      }
+      pull = null;
+      setPull(0, true);
+      labelEl.textContent = 'Pull to refresh';
+    }
+
+    function onPointerCancel(e) {
+      if (!pull || pull.pointerId !== e.pointerId) return;
+      pull = null;
+      setPull(0, true);
+    }
+
+    wrapEl.addEventListener('pointerdown', onPointerDown);
+    wrapEl.addEventListener('pointermove', onPointerMove, { passive: false });
+    wrapEl.addEventListener('pointerup', onPointerUp);
+    wrapEl.addEventListener('pointercancel', onPointerCancel);
   }
 
   /* ---------------- reconcile flow (mirrors Reconcile.gs step for step) ---------------- */
@@ -952,6 +1180,15 @@
     document.getElementById('undo-overlay').classList.remove('open');
   }
 
+  TransactionForm.mount(document.getElementById('txf-root'), {
+    supportEditDelete: true,
+    showFab: false, // this screen's own "Reconcile" action is the primary CTA; adding
+                     // transactions here goes through the reconcile flow's "Add transaction",
+                     // not a floating-action-button duplicate of the Transactions page's.
+    onSaved: () => { if (currentAccount) fetchAndRenderAccountDetail(currentAccount); },
+    onDeleted: () => { if (currentAccount) fetchAndRenderAccountDetail(currentAccount); },
+  });
+  setupPullToRefresh();
   loadAccountsList();
 </script>
 </body>
