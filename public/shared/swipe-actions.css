@@ -1,0 +1,47 @@
+/* Shared swipe-to-reveal styling for transaction list rows. Pairs with
+ * shared/swipe-actions.js -- see that file for the markup this expects
+ * (SwipeActions.rowHTML wraps an existing `.txn-row` in a `.swx-wrap`).
+ *
+ * Both host pages already define `.txn-row` (background, border-radius,
+ * margin-bottom, padding) in their own <style> block -- this file only adds
+ * the wrapper + the two revealed action buttons, and neutralizes the
+ * row's own margin-bottom (moved onto the wrapper instead, so swiping
+ * doesn't leave a gap under the sliding card).
+ */
+.swx-wrap {
+  position: relative;
+  overflow: hidden;
+  border-radius: 12px;
+  margin-bottom: 8px;
+}
+.swx-wrap .txn-row {
+  position: relative;
+  z-index: 1;
+  margin-bottom: 0;
+  touch-action: pan-y;
+}
+.swx-action {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 76px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  font-size: 10px;
+  font-weight: 600;
+  user-select: none;
+}
+.swx-action-label { line-height: 1; }
+.swx-delete {
+  right: 0;
+  background: rgba(226, 75, 74, 0.22);
+  color: #f5a3a2;
+}
+.swx-clear {
+  left: 0;
+  background: rgba(96, 165, 250, 0.2);
+  color: #93c5fd;
+}
