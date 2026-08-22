@@ -26,6 +26,7 @@ const {
   parseISOMonth,
   billingMonthForDate,
   formatISODate,
+  todayWIBDate,
   round2,
   RECONCILE_SHEETS,
 } = require('./_lib/reconcile');
@@ -274,10 +275,19 @@ async function actionDetail(query, res) {
       return b.date - a.date;
     });
 
+  // Running balance = only transactions through today, same cutoff the
+  // detail screen's own "Upcoming" toggle uses for what it shows by default
+  // -- a scheduled/future-dated transaction hasn't happened yet, so it
+  // shouldn't move the balance the user sees at the top of the screen.
+  // `rows` itself stays unfiltered (still returned in full below, so the
+  // Upcoming toggle can reveal those rows on demand); only the stats sums
+  // below skip them.
+  const todayWIB = todayWIBDate();
   let clearedTotal = 0;
   let unclearedTotal = 0;
   let unclearedCount = 0;
   rows.forEach((r) => {
+    if (r.date && r.date > todayWIB) return;
     if (r.isCleared) clearedTotal += r.amount;
     else {
       unclearedTotal += r.amount;

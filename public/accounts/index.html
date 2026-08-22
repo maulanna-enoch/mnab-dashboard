@@ -195,6 +195,20 @@
   .txn-row.upcoming { border: 1px dashed rgba(96,165,250,0.4); background: rgba(96,165,250,0.06); }
   .txn-meta .upcoming-tag { color: var(--upcoming, #60a5fa); }
 
+  /* -- account detail: everything above the Upcoming toggle (back link,
+     title, balance header) stays pinned while the transaction list below it
+     scrolls -- sticks to the top of the viewport once scrolled that far, own
+     opaque background so the list doesn't show through as it passes
+     underneath. Body itself stays the scroll container (no separate
+     overflow:auto region), so window.scrollY-based pull-to-refresh logic
+     below is unaffected. -- */
+  .detail-sticky {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--bg);
+  }
+
   /* -- pull-to-refresh (account detail transaction list only; .acct-header
      stays pinned above this since it's outside #detail-txn-pull) -- the
      indicator lives in normal flow at height:0 and grows as you drag, which
@@ -307,39 +321,44 @@
 
 <!-- ============ SCREEN: ACCOUNT DETAIL ============ -->
 <div class="wrap" id="screen-detail" style="display:none;">
-  <a class="back-link" onclick="goto('accounts')">← Accounts</a>
-  <h1 id="detail-title">Account</h1>
+  <!-- Everything in here (back link, title, balance header, Upcoming
+       toggle) stays pinned to the top of the viewport as the transaction
+       list below scrolls -- see .detail-sticky. -->
+  <div class="detail-sticky">
+    <a class="back-link" onclick="goto('accounts')">← Accounts</a>
+    <h1 id="detail-title">Account</h1>
 
-  <div id="detail-loading" class="loading" style="display:none;">Loading…</div>
-  <div id="detail-error" class="error" style="display:none;"></div>
+    <div id="detail-loading" class="loading" style="display:none;">Loading…</div>
+    <div id="detail-error" class="error" style="display:none;"></div>
 
-  <div id="detail-content" style="display:none;">
-    <div class="acct-header">
-      <div class="acct-header-top">
-        <div>
-          <div class="acct-header-name" id="detail-name"></div>
-          <div class="acct-header-type" id="detail-type"></div>
+    <div id="detail-content" style="display:none;">
+      <div class="acct-header">
+        <div class="acct-header-top">
+          <div>
+            <div class="acct-header-name" id="detail-name"></div>
+            <div class="acct-header-type" id="detail-type"></div>
+          </div>
         </div>
+        <div class="acct-header-balance" id="detail-balance"></div>
+        <div class="acct-header-meta" id="detail-meta"></div>
+        <div class="acct-header-actions">
+          <button class="btn btn-primary" onclick="openReconcile()">Reconcile</button>
+        </div>
+        <div class="last-recon-link" onclick="openUndo()">View / undo last reconciliation</div>
       </div>
-      <div class="acct-header-balance" id="detail-balance"></div>
-      <div class="acct-header-meta" id="detail-meta"></div>
-      <div class="acct-header-actions">
-        <button class="btn btn-primary" onclick="openReconcile()">Reconcile</button>
-      </div>
-      <div class="last-recon-link" onclick="openUndo()">View / undo last reconciliation</div>
-    </div>
 
-    <div class="upcoming-toggle" id="detail-upcoming-toggle">
-      <span class="label"><span class="dot"></span><span id="detail-upcoming-label">Upcoming</span></span>
-      <div class="switch" id="detail-upcoming-switch"></div>
-    </div>
-
-    <div class="txn-pull-wrap" id="detail-txn-pull">
-      <div class="pull-indicator" id="pull-indicator">
-        <span class="pull-spinner"></span><span id="pull-label">Pull to refresh</span>
+      <div class="upcoming-toggle" id="detail-upcoming-toggle">
+        <span class="label"><span class="dot"></span><span id="detail-upcoming-label">Upcoming</span></span>
+        <div class="switch" id="detail-upcoming-switch"></div>
       </div>
-      <div id="detail-txn-list"></div>
     </div>
+  </div>
+
+  <div class="txn-pull-wrap" id="detail-txn-pull" style="display:none;">
+    <div class="pull-indicator" id="pull-indicator">
+      <span class="pull-spinner"></span><span id="pull-label">Pull to refresh</span>
+    </div>
+    <div id="detail-txn-list"></div>
   </div>
 </div>
 
@@ -517,7 +536,11 @@
   // buildTransactionRow's own convention (Total = Expense - Income), which
   // isn't itself in transactions-list's response, just type + amount.
   function accountStats(accountName, transactions) {
-    const rows = transactions.filter((t) => t.sof === accountName);
+    // Running balance = only transactions through today -- same cutoff the
+    // account detail screen's "Upcoming" toggle uses (issue: running
+    // balance shouldn't include upcoming/future-dated transactions).
+    const todayStr = TransactionForm.todayISO();
+    const rows = transactions.filter((t) => t.sof === accountName && (!t.date || t.date <= todayStr));
     const totalOf = (t) => (t.type === 'Income' ? -t.amount : t.amount);
     const clearedTotal = rows.filter((t) => t.cleared === 'Cleared').reduce((s, t) => s + totalOf(t), 0);
     const unclearedRows = rows.filter((t) => t.cleared !== 'Cleared');
@@ -680,14 +703,20 @@
     const loadingEl = document.getElementById('detail-loading');
     const errorEl = document.getElementById('detail-error');
     const contentEl = document.getElementById('detail-content');
+    // Sibling of detail-content now (moved out so only the sticky header
+    // portion -- not the transaction list -- lives inside .detail-sticky),
+    // so it needs its own display toggle alongside contentEl's.
+    const listEl = document.getElementById('detail-txn-pull');
     loadingEl.style.display = 'block';
     errorEl.style.display = 'none';
     contentEl.style.display = 'none';
+    listEl.style.display = 'none';
 
     try {
       await fetchAndRenderAccountDetail(name);
       loadingEl.style.display = 'none';
       contentEl.style.display = 'block';
+      listEl.style.display = 'block';
     } catch (err) {
       loadingEl.style.display = 'none';
       errorEl.textContent = 'Couldn\'t load this account: ' + err.message;
