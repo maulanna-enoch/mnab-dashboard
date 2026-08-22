@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
 <title>Transactions · MNAB</title>
 <link rel="stylesheet" href="/shared/transaction-form.css" />
+<link rel="stylesheet" href="/shared/swipe-actions.css" />
 <style>
   :root {
     color-scheme: light dark;
@@ -124,6 +125,7 @@
   <div id="txf-root"></div>
 
   <script src="/shared/transaction-form.js"></script>
+  <script src="/shared/swipe-actions.js"></script>
   <script>
     function formatIDR(value) {
       return new Intl.NumberFormat('id-ID', {
@@ -218,25 +220,70 @@
         const metaBits = [t.sof];
         if (t.cleared !== 'Cleared') metaBits.push('<span class="uncleared">uncleared</span>');
         if (isUpcoming) metaBits.push('<span class="upcoming-tag">upcoming</span>');
-        html += `
-          <div class="txn-row ${isUpcoming ? 'upcoming' : ''}" data-row="${t.rowNumber}">
+        const rowInner = `
             <div>
               <div class="txn-name">${t.payee}</div>
               <div class="txn-meta">${metaBits.join(' &middot; ')}</div>
             </div>
             <div class="txn-amount ${isIncome ? 'income' : ''}">${amountText}</div>
-          </div>
         `;
+        html += SwipeActions.rowHTML(t.rowNumber, `txn-row ${isUpcoming ? 'upcoming' : ''}`, rowInner, t.cleared === 'Cleared');
       });
       listEl.innerHTML = html;
 
       document.querySelectorAll('.txn-row').forEach((row) => {
         row.addEventListener('click', () => {
-          const rowNumber = parseInt(row.dataset.row, 10);
+          const rowNumber = parseInt(row.closest('.swx-wrap').dataset.row, 10);
           const txn = transactions.find((t) => t.rowNumber === rowNumber);
           if (txn) TransactionForm.open(txn);
         });
       });
+
+      SwipeActions.init(listEl, {
+        getRow: (rowNumber) => transactions.find((t) => t.rowNumber === rowNumber),
+        onDelete: deleteTransactionViaSwipe,
+        onToggleClear: toggleClearedViaSwipe,
+        onError: (err) => alert(err.message),
+      });
+    }
+
+    // Swipe-left delete: same endpoint/payload as the shared form's own
+    // Delete link (transaction-form.js's handleDelete) -- confirmation is
+    // handled by SwipeActions itself before this is ever called.
+    async function deleteTransactionViaSwipe(txn) {
+      const res = await fetch('/api/transactions-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rowNumber: txn.rowNumber }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      await loadTransactions();
+    }
+
+    // Swipe-right clear/unclear toggle: transactions-update rewrites the
+    // whole row, so every other field has to be resent unchanged -- exactly
+    // what the shared form's own Save does for a normal edit, just with
+    // `cleared` flipped and no sheet round-trip through the edit sheet UI.
+    async function toggleClearedViaSwipe(txn) {
+      const res = await fetch('/api/transactions-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rowNumber: txn.rowNumber,
+          payee: txn.payee,
+          type: txn.type,
+          sof: txn.sof,
+          amount: txn.amount,
+          date: txn.date,
+          month: txn.month,
+          notes: txn.notes,
+          cleared: txn.cleared === 'Cleared' ? 'Uncleared' : 'Cleared',
+        }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      await loadTransactions();
     }
 
     upcomingToggleEl.addEventListener('click', () => {

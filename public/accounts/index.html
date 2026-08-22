@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
 <title>Accounts · MNAB</title>
 <link rel="stylesheet" href="/shared/transaction-form.css" />
+<link rel="stylesheet" href="/shared/swipe-actions.css" />
 <style>
   :root {
     color-scheme: light dark;
@@ -441,6 +442,7 @@
 </div>
 
 <script src="/shared/transaction-form.js"></script>
+<script src="/shared/swipe-actions.js"></script>
 <script>
   /* ============================================================
      Wired to the real backend:
@@ -767,25 +769,71 @@
       if (!t.isCleared) metaBits.push('<span class="uncleared">uncleared</span>');
       if (t.reconciled) metaBits.push('<span class="reconciled-tag">reconciled</span>');
       if (isUpcoming) metaBits.push('<span class="upcoming-tag">upcoming</span>');
-      html += `
-        <div class="txn-row ${t.reconciled ? 'reconciled' : ''} ${isUpcoming ? 'upcoming' : ''}" data-row="${t.rowNumber}">
+      const rowInner = `
           <div>
             <div class="txn-name">${t.payee}</div>
             <div class="txn-meta">${metaBits.join(' &middot; ') || '&nbsp;'}</div>
           </div>
           <div class="txn-amount ${isIncome ? 'income' : ''}">${amountText}</div>
-        </div>
       `;
+      html += SwipeActions.rowHTML(t.rowNumber, `txn-row ${t.reconciled ? 'reconciled' : ''} ${isUpcoming ? 'upcoming' : ''}`, rowInner, t.isCleared);
     });
     listEl.innerHTML = html;
 
     listEl.querySelectorAll('.txn-row').forEach((row) => {
       row.addEventListener('click', () => {
-        const rowNumber = parseInt(row.dataset.row, 10);
+        const rowNumber = parseInt(row.closest('.swx-wrap').dataset.row, 10);
         const txn = rows.find((t) => t.rowNumber === rowNumber);
         if (txn) TransactionForm.open(txn);
       });
     });
+
+    SwipeActions.init(listEl, {
+      getRow: (rowNumber) => rows.find((t) => t.rowNumber === rowNumber),
+      onDelete: deleteDetailTxnViaSwipe,
+      onToggleClear: toggleDetailTxnClearedViaSwipe,
+      onError: (err) => alert(err.message),
+    });
+  }
+
+  // Swipe-left delete on the account detail list -- same endpoint as the
+  // shared form's own Delete link, then an in-place refresh (no full-page
+  // loading flash), same as pull-to-refresh and the form's onDeleted.
+  async function deleteDetailTxnViaSwipe(txn) {
+    const res = await fetch('/api/transactions-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rowNumber: txn.rowNumber }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    await fetchAndRenderAccountDetail(currentAccount);
+  }
+
+  // Swipe-right clear/unclear toggle -- transactions-update rewrites the
+  // whole row, so every other field is resent unchanged; only `cleared`
+  // flips. `t.isCleared` (boolean, from /api/reconcile's detail action) is
+  // the source of truth here rather than `t.cleared` (the sheet's raw
+  // string), since it's already normalized.
+  async function toggleDetailTxnClearedViaSwipe(txn) {
+    const res = await fetch('/api/transactions-update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        rowNumber: txn.rowNumber,
+        payee: txn.payee,
+        type: txn.type,
+        sof: txn.sof,
+        amount: txn.amount,
+        date: txn.date,
+        month: txn.month,
+        notes: txn.notes,
+        cleared: txn.isCleared ? 'Uncleared' : 'Cleared',
+      }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    await fetchAndRenderAccountDetail(currentAccount);
   }
 
   /* ---------------- pull-to-refresh (account detail transaction list) ----------------
@@ -813,13 +861,17 @@
       // Only start the gesture from the very top of the page -- otherwise
       // this would hijack an ordinary downward scroll mid-list.
       if (window.scrollY > 0) return;
-      pull = { startY: e.clientY, pointerId: e.pointerId, dragging: false, refreshing: false };
+      pull = { startX: e.clientX, startY: e.clientY, pointerId: e.pointerId, dragging: false, refreshing: false };
     }
 
     function onPointerMove(e) {
       if (!pull || pull.refreshing || pull.pointerId !== e.pointerId) return;
       const dy = e.clientY - pull.startY;
-      if (dy <= 0 || window.scrollY > 0) {
+      const dx = e.clientX - pull.startX;
+      // A predominantly-horizontal move is a row swipe (see shared/
+      // swipe-actions.js), not a pull-to-refresh -- bail so the two
+      // gestures don't fight over the same pointer.
+      if (dy <= 0 || window.scrollY > 0 || Math.abs(dx) > Math.abs(dy)) {
         if (pull.dragging) { pull.dragging = false; setPull(0, true); }
         return;
       }
