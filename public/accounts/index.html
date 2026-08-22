@@ -324,6 +324,7 @@
       <div class="acct-header-balance" id="detail-balance"></div>
       <div class="acct-header-meta" id="detail-meta"></div>
       <div class="acct-header-actions">
+        <button class="btn btn-secondary" onclick="openAddTransactionForAccount()">Add Transaction</button>
         <button class="btn btn-primary" onclick="openReconcile()">Reconcile</button>
       </div>
       <div class="last-recon-link" onclick="openUndo()">View / undo last reconciliation</div>
@@ -759,6 +760,20 @@
     });
   }
 
+  // "Add Transaction" header action (issue #24) -- opens the shared sheet in
+  // its normal blank/add mode, then pre-selects this account in the Account
+  // (SOF) field. Deliberately done here rather than inside TransactionForm's
+  // own open() -- that function is also being actively edited by a parallel
+  // PR (#23, transaction-form-ux), so adding a new prefill code path there
+  // would risk a merge conflict. open()'s "add" branch never touches the sof
+  // <select> itself, so setting its value right after open() is enough, and
+  // it stays a fully editable dropdown -- not locked to this account.
+  function openAddTransactionForAccount() {
+    TransactionForm.open();
+    const sofEl = document.getElementById('txf-f-sof');
+    if (sofEl && currentAccount) sofEl.value = currentAccount;
+  }
+
   /* ---------------- pull-to-refresh (account detail transaction list) ----------------
      Pointer Events (not touchstart/mousedown) unify touch + mouse, and are
      also what Chromium dispatches for Playwright's simulated mouse input --
@@ -1182,9 +1197,10 @@
 
   TransactionForm.mount(document.getElementById('txf-root'), {
     supportEditDelete: true,
-    showFab: false, // this screen's own "Reconcile" action is the primary CTA; adding
-                     // transactions here goes through the reconcile flow's "Add transaction",
-                     // not a floating-action-button duplicate of the Transactions page's.
+    showFab: false, // this screen has its own explicit "Add Transaction" header
+                     // button (issue #24) and the reconcile flow's own inline
+                     // "Add transaction" -- no need for a floating-action-button
+                     // duplicate of the Transactions page's.
     onSaved: () => { if (currentAccount) fetchAndRenderAccountDetail(currentAccount); },
     onDeleted: () => { if (currentAccount) fetchAndRenderAccountDetail(currentAccount); },
   });
