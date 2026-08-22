@@ -10,8 +10,6 @@
  */
 .swx-wrap {
   position: relative;
-  overflow: hidden;
-  border-radius: 12px;
   margin-bottom: 8px;
 }
 .swx-wrap .txn-row {
@@ -20,11 +18,23 @@
   margin-bottom: 0;
   touch-action: pan-y;
 }
+/* The row slides exactly REVEAL (76px, see swipe-actions.js) to fully
+   reveal an action -- the button itself is narrower than that (68px) and
+   sits flush against the wrap's OUTER edge (screen/list edge), so an 8px
+   gap opens up on its card-facing inner edge once fully revealed, instead
+   of the button butting straight up against the card. Previously this
+   button had no border-radius of its own and relied on `.swx-wrap`'s own
+   `overflow: hidden` + `border-radius` to clip its outer corners round --
+   which left the corners facing the card as hard right angles. Giving the
+   button its own border-radius on all four corners fixes that regardless
+   of the wrap (which no longer needs to clip anything).
+*/
 .swx-action {
   position: absolute;
   top: 0;
   bottom: 0;
-  width: 76px;
+  width: 68px;
+  border-radius: 12px;
   display: flex;
   flex-direction: column;
   align-items: center;
