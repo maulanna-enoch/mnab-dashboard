@@ -59,7 +59,6 @@
             <input id="txf-f-month" class="txf-field" type="month" />
           </div>
         </div>
-        <div class="txf-hint">Billing month defaults to the date's month — override for card statement cycles.</div>
 
         <label class="txf-field-label">Notes (optional)</label>
         <input id="txf-f-notes" class="txf-field" type="text" placeholder="e.g. Aolion Knight Joycon" />
@@ -176,8 +175,9 @@
     state.overlay.classList.add('open');
     const todayStr = todayISO();
     state.monthTouched = false;
+    const isEditOpen = !!(txn && state.options.supportEditDelete);
 
-    if (txn && state.options.supportEditDelete) {
+    if (isEditOpen) {
       state.editingRow = txn.rowNumber;
       state.sheetTitle.textContent = 'Edit transaction';
       state.payeeEl.value = txn.payee;
@@ -199,11 +199,22 @@
       state.dateInput.value = todayStr;
       state.monthInput.value = guessBillingMonth(todayStr);
       setToggle('txf-type-toggle', 'type', 'Expense');
-      setToggle('txf-status-toggle', 'status', 'Cleared');
+      // Default to Uncleared -- most transactions are logged before they've
+      // actually posted/cleared on the account, so Uncleared is the more
+      // accurate starting state. Cleared is still one tap away.
+      setToggle('txf-status-toggle', 'status', 'Uncleared');
       state.deleteLink.style.display = 'none';
     }
     updateAmountColor();
     resizeAmountInput();
+
+    // Autofocus the amount field for a new transaction so typing the amount
+    // can start immediately -- but not when editing an existing one, where
+    // jumping straight to the amount could be surprising / cause an
+    // accidental edit before the rest of the fields have been reviewed.
+    if (!isEditOpen) {
+      state.amountInput.focus();
+    }
   }
 
   function close() {

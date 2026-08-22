@@ -150,5 +150,4 @@
   cursor: pointer;
   padding: 4px;
 }
-.txf-hint { font-size: 10px; color: var(--muted); margin: -6px 0 10px; }
 .txf-error { color: #f87171; font-size: 0.9rem; }
