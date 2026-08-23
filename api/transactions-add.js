@@ -1,8 +1,28 @@
 const { getWriteSheetsClient, buildTransactionRow, dateToSerial } = require('./_lib/sheets');
 
+// Shared-secret guard (see issue #30): this endpoint is the write path a
+// Siri Shortcut (or any other out-of-app client) can hit directly, so it
+// needs *something* between it and the open internet -- not just its URL
+// being hard to guess. This is NOT strong auth: the same token also lives
+// in public/shared/transaction-form.js so the dashboard's own Add button
+// keeps working, and that file ships to every browser as plain JS. It only
+// raises the bar against blind/opportunistic traffic (scanners, stray bots
+// hitting the URL by chance) -- not against someone who actually inspects
+// this app's own client code. Set MNAB_WRITE_TOKEN in Vercel's project env
+// vars to the same value hardcoded in transaction-form.js's WRITE_TOKEN.
+function isAuthorized(req) {
+  const expected = process.env.MNAB_WRITE_TOKEN;
+  return !!expected && req.headers['x-mnab-token'] === expected;
+}
+
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Use POST' });
+    return;
+  }
+
+  if (!isAuthorized(req)) {
+    res.status(401).json({ error: 'Unauthorized' });
     return;
   }
 
