@@ -17,6 +17,15 @@
  * styles or ids.
  */
 (function (global) {
+  // Shared-secret guard for the write endpoints (see issue #30 / api/transactions-add.js).
+  // This is NOT a real secret -- it ships in this public JS file to every
+  // browser that loads the app, so anyone who inspects the page can read it.
+  // It exists only so the API isn't wide open to blind/opportunistic traffic
+  // (e.g. a scanner hitting the URL by chance); it does not stop someone who
+  // actually looks at this file. Must match MNAB_WRITE_TOKEN in Vercel's
+  // project env vars -- if you rotate one, rotate both and redeploy.
+  const WRITE_TOKEN = '8b10b1f409aa31c1f25bf2890f69480a31e2cbe5639b0f8e';
+
   const FORM_HTML = `
     <button class="txf-fab" id="txf-fab">+</button>
     <div class="txf-toast" id="txf-toast">Saved</div>
@@ -170,7 +179,12 @@
     }
   }
 
-  function open(txn) {
+  // opts.prefillAmount (add-mode only): pre-fills the Amount field with a raw
+  // digit string/number and focuses Payee instead of Amount once open -- used
+  // by the home page's ?amount= quick-add deep link (see issue #30) so a Siri
+  // Shortcut only has to prompt for the amount before handing off here.
+  function open(txn, opts) {
+    opts = opts || {};
     state.formError.style.display = 'none';
     state.overlay.classList.add('open');
     const todayStr = todayISO();
@@ -194,7 +208,9 @@
       state.editingRow = null;
       state.sheetTitle.textContent = 'Add transaction';
       state.payeeEl.value = '';
-      state.amountInput.value = '';
+      state.amountInput.value = opts.prefillAmount != null
+        ? formatAmountDisplay(digitsOnly(String(opts.prefillAmount)))
+        : '';
       state.notesEl.value = '';
       state.dateInput.value = todayStr;
       state.monthInput.value = guessBillingMonth(todayStr);
@@ -211,9 +227,15 @@
     // Autofocus the amount field for a new transaction so typing the amount
     // can start immediately -- but not when editing an existing one, where
     // jumping straight to the amount could be surprising / cause an
-    // accidental edit before the rest of the fields have been reviewed.
+    // accidental edit before the rest of the fields have been reviewed. If
+    // the amount arrived pre-filled (opts.prefillAmount), focus Payee next
+    // instead, since Amount is already done.
     if (!isEditOpen) {
-      state.amountInput.focus();
+      if (opts.prefillAmount != null) {
+        state.payeeEl.focus();
+      } else {
+        state.amountInput.focus();
+      }
     }
   }
 
@@ -247,7 +269,7 @@
       const body = isEdit ? { ...payload, rowNumber: state.editingRow } : payload;
       const res = await fetch(url, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'X-Mnab-Token': WRITE_TOKEN },
         body: JSON.stringify(body),
       });
       const data = await res.json();
