@@ -102,6 +102,21 @@
       supportEditDelete: false,
       onSaved: () => { window.location.href = '/transactions'; },
     });
+
+    // Quick-add deep link (see issue #30): a Siri Shortcut can ask for just
+    // the amount, then open "/?amount=<digits>" -- this opens the Add form
+    // pre-filled with that amount and focuses Payee next, so there's nothing
+    // left to type except the payee (and account, if it's not already the
+    // right default) before Save.
+    (function () {
+      const params = new URLSearchParams(window.location.search);
+      const amountParam = params.get('amount');
+      if (amountParam && /^\d+$/.test(amountParam)) {
+        TransactionForm.open(null, { prefillAmount: amountParam });
+        // Strip the query param so refreshing the page doesn't reopen the form.
+        history.replaceState(null, '', window.location.pathname);
+      }
+    })();
   </script>
 </body>
 </html>
