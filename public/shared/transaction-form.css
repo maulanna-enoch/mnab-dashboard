@@ -5,8 +5,12 @@
    to happen -- both pages just mount it. */
 
 .txf-fab {
+  /* Raised to clear shared/bottom-nav.js's fixed bar (issue #35) -- 72px
+     is the bar's own rest height (8px top padding + 22px icon + 4px gap +
+     ~13px label + 8px bottom padding) plus a ~17px visual gap, so this
+     stays right above the bar regardless of the safe-area inset. */
   position: fixed;
-  bottom: 24px;
+  bottom: calc(72px + env(safe-area-inset-bottom));
   right: max(16px, calc(50% - 210px + 16px));
   width: 56px;
   height: 56px;
@@ -19,12 +23,13 @@
   text-align: center;
   padding: 0;
   cursor: pointer;
-  z-index: 5;
+  z-index: 11;
 }
 
 .txf-toast {
+  /* Kept ~68px above the FAB, same relative gap as before it moved. */
   position: fixed;
-  bottom: 92px;
+  bottom: calc(140px + env(safe-area-inset-bottom));
   left: 50%;
   transform: translateX(-50%);
   background: #2a2e37;
