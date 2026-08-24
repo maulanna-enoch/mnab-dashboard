@@ -19,6 +19,7 @@ const {
   appendPlainTransactionRow,
   appendCardPaymentRows,
   tryFlipDiaryBilledToPaid,
+  getDiaryBilledAmount,
   deletePaymentRows,
   shiftMonth,
   updateAccountLastReconciled,
@@ -343,6 +344,29 @@ async function actionUndoPayment(body, res) {
   res.status(200).json(result);
 }
 
+// Read-only. Looks up the card's Diary "Billed" line for a given billing
+// month, so the Add Payment form can pre-fill the amount field with what's
+// actually owed instead of starting blank. See getDiaryBilledAmount's own
+// comment for why this stays a separate, non-writing lookup from the
+// pay-card action's own (write-triggering) Diary flip.
+async function actionBilledAmount(query, res) {
+  const cardAccount = query && query.cardAccount;
+  const monthStr = query && query.month;
+  if (!cardAccount || !monthStr) {
+    res.status(400).json({ error: 'cardAccount and month are required' });
+    return;
+  }
+  const month = parseISOMonth(monthStr);
+  if (!month) {
+    res.status(400).json({ error: 'Invalid billing month.' });
+    return;
+  }
+
+  const sheets = getSheetsClient();
+  const result = await getDiaryBilledAmount(sheets, { cardAccount, month });
+  res.status(200).json(result);
+}
+
 // Read-only. Returns one account's transactions (with reconciled status,
 // which the general transactions-list endpoint doesn't expose) plus
 // running-balance stats, for the Accounts > account detail screen. Folded
@@ -558,7 +582,8 @@ module.exports = async (req, res) => {
     if (req.method === 'GET') {
       if (action === 'last') return await actionLast(req.query, res);
       if (action === 'detail') return await actionDetail(req.query, res);
-      res.status(400).json({ error: 'Unknown or missing GET action. Use ?action=last or ?action=detail.' });
+      if (action === 'billed-amount') return await actionBilledAmount(req.query, res);
+      res.status(400).json({ error: 'Unknown or missing GET action. Use ?action=last, ?action=detail, or ?action=billed-amount.' });
       return;
     }
 
