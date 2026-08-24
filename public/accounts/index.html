@@ -146,7 +146,13 @@
     margin-bottom: 8px;
     cursor: pointer;
   }
-  .txn-row.reconciled { opacity: 0.55; }
+  /* Dim only the row's own content, not the row box itself -- the box's
+     background is what visually masks the swipe-reveal Delete/Clear
+     buttons (shared/swipe-actions.js) sitting positioned behind every row
+     at rest. Applying opacity to `.txn-row` directly made the whole
+     element (background included) translucent, letting those buttons
+     bleed through reconciled rows even when not swiped. */
+  .txn-row.reconciled > div { opacity: 0.55; }
   .txn-name { font-size: 0.9rem; }
   .txn-meta { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
   .txn-meta .uncleared { color: var(--uncleared); }
@@ -193,7 +199,13 @@
   }
   .switch.on::after { transform: translateX(16px); }
   .date-header.upcoming { color: var(--upcoming, #60a5fa); }
-  .txn-row.upcoming { border: 1px dashed rgba(96,165,250,0.4); background: rgba(96,165,250,0.06); }
+  /* Layer the blue tint over the opaque card color instead of replacing it
+     with a low-alpha background -- same bleed-through reasoning as
+     `.txn-row.reconciled` above: a translucent row background lets the
+     swipe-reveal action buttons behind it show through at rest. The two
+     gradient stops paint as a flat color; compositing it over `var(--card)`
+     keeps the resulting box fully opaque. */
+  .txn-row.upcoming { border: 1px dashed rgba(96,165,250,0.4); background: linear-gradient(rgba(96,165,250,0.06), rgba(96,165,250,0.06)), var(--card); }
   .txn-meta .upcoming-tag { color: var(--upcoming, #60a5fa); }
 
   /* -- account detail: everything above the Upcoming toggle (back link,
@@ -308,7 +320,7 @@
 
 <!-- ============ SCREEN: ACCOUNTS LIST ============ -->
 <div class="wrap" id="screen-accounts">
-  <a class="back-link" href="/">← Home</a>
+  <a class="back-link" href="/">← Accounts</a>
   <h1>Accounts</h1>
   <div id="accounts-loading" class="loading">Loading accounts…</div>
   <div id="accounts-error" class="error" style="display:none;"></div>
