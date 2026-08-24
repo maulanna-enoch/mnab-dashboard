@@ -17,6 +17,11 @@ const {
   unmarkRowsReconciled,
   appendAdjustmentRow,
   appendPlainTransactionRow,
+  appendCardPaymentRows,
+  tryFlipDiaryBilledToPaid,
+  getDiaryBilledAmount,
+  deletePaymentRows,
+  shiftMonth,
   updateAccountLastReconciled,
   clearAccountLastReconciled,
   logReconciliation,
@@ -245,6 +250,123 @@ async function actionAddTransaction(body, res) {
   res.status(200).json({ ok: true });
 }
 
+// New: "Add Payment" on a credit card's account detail page (besides
+// Reconcile). Mirrors Payments.gs's "Log Credit Card Payment" macro --
+// writes two Transfer=TRUE legs (see appendCardPaymentRows) so the mobile
+// app's payments carry the same reconciliation-accuracy/aggregation
+// semantics as a desktop-logged one. `month` defaults to the same
+// billing-month heuristic used everywhere else in this app, MINUS one month
+// -- a payment made now is normally paying down the PRIOR closed statement,
+// not the one still accruing.
+async function actionPayCard(body, res) {
+  const { cardAccount, cashAccount, amount, date: dateStr, month: monthStr } = body || {};
+
+  if (!cardAccount) {
+    res.status(400).json({ error: 'cardAccount is required.' });
+    return;
+  }
+  if (!cashAccount) {
+    res.status(400).json({ error: 'cashAccount is required.' });
+    return;
+  }
+  if (String(cardAccount).trim().toLowerCase() === String(cashAccount).trim().toLowerCase()) {
+    res.status(400).json({ error: 'The card and the paying account must be different.' });
+    return;
+  }
+  const numAmount = Number(amount);
+  if (Number.isNaN(numAmount) || numAmount <= 0) {
+    res.status(400).json({ error: 'Amount must be a positive number.' });
+    return;
+  }
+  const date = parseISODate(dateStr);
+  if (!date) {
+    res.status(400).json({ error: 'Invalid payment date.' });
+    return;
+  }
+  const month = monthStr ? parseISOMonth(monthStr) : shiftMonth(billingMonthForDate(date), -1);
+  if (!month) {
+    res.status(400).json({ error: 'Invalid billing month.' });
+    return;
+  }
+
+  const sheets = getWriteSheetsClient();
+  const { accounts } = await fetchAccountsForReconcile(sheets);
+  const card = findAccount(accounts, cardAccount);
+  if (!card) {
+    res.status(404).json({ error: `Account "${cardAccount}" not found.` });
+    return;
+  }
+  const cash = findAccount(accounts, cashAccount);
+  if (!cash) {
+    res.status(404).json({ error: `Account "${cashAccount}" not found.` });
+    return;
+  }
+
+  const result = await appendCardPaymentRows(sheets, {
+    cardAccount: card.name,
+    cashAccount: cash.name,
+    amount: numAmount,
+    date,
+    month,
+  });
+
+  // Best-effort only -- never let a Diary-matching quirk fail a payment
+  // that's already been written. See tryFlipDiaryBilledToPaid's own
+  // comment for the matching rules/assumptions.
+  let diaryFlip = { flipped: false };
+  try {
+    diaryFlip = await tryFlipDiaryBilledToPaid(sheets, { cardAccount: card.name, month, amountPaid: numAmount });
+  } catch (err) {
+    console.error('Diary Billed->Paid flip failed (non-fatal):', err);
+  }
+
+  res.status(200).json({ ok: true, ...result, diaryFlipped: !!diaryFlip.flipped });
+}
+
+// New: "Undo payment" -- deletes both legs of a card payment written by
+// actionPayCard, keyed on the shared "Payment ID" column rather than a
+// rowNumber (a payment's two rows live on two different accounts, and
+// either leg could have shifted row position since it was logged).
+async function actionUndoPayment(body, res) {
+  const { paymentId } = body || {};
+  if (!paymentId) {
+    res.status(400).json({ error: 'paymentId is required' });
+    return;
+  }
+
+  const sheets = getWriteSheetsClient();
+  const result = await deletePaymentRows(sheets, paymentId);
+  if (!result.deletedCount) {
+    res.status(404).json({ error: 'Could not find any transactions for this payment -- they may already have been removed.' });
+    return;
+  }
+
+  res.status(200).json(result);
+}
+
+// Read-only. Looks up the card's Diary "Billed" line for a given billing
+// month, so the Add Payment form can pre-fill the amount field with what's
+// actually owed instead of starting blank. See getDiaryBilledAmount's own
+// comment for why this stays a separate, non-writing lookup from the
+// pay-card action's own (write-triggering) Diary flip.
+async function actionBilledAmount(query, res) {
+  const cardAccount = query && query.cardAccount;
+  const monthStr = query && query.month;
+  if (!cardAccount || !monthStr) {
+    res.status(400).json({ error: 'cardAccount and month are required' });
+    return;
+  }
+  const month = parseISOMonth(monthStr);
+  if (!month) {
+    res.status(400).json({ error: 'Invalid billing month.' });
+    return;
+  }
+
+  const sheets = getSheetsClient();
+  const result = await getDiaryBilledAmount(sheets, { cardAccount, month });
+  res.status(200).json(result);
+}
+
 // Read-only. Returns one account's transactions (with reconciled status,
 // which the general transactions-list endpoint doesn't expose) plus
 // running-balance stats, for the Accounts > account detail screen. Folded
@@ -315,6 +437,8 @@ async function actionDetail(query, res) {
       reconciled: r.isReconciled,
       amount: r.displayAmount,
       notes: r.notes,
+      transfer: r.isTransfer,
+      paymentId: r.paymentId,
     })),
     stats: {
       clearedTotal: Math.round(clearedTotal * 100) / 100,
@@ -458,7 +582,8 @@ module.exports = async (req, res) => {
     if (req.method === 'GET') {
       if (action === 'last') return await actionLast(req.query, res);
       if (action === 'detail') return await actionDetail(req.query, res);
-      res.status(400).json({ error: 'Unknown or missing GET action. Use ?action=last or ?action=detail.' });
+      if (action === 'billed-amount') return await actionBilledAmount(req.query, res);
+      res.status(400).json({ error: 'Unknown or missing GET action. Use ?action=last, ?action=detail, or ?action=billed-amount.' });
       return;
     }
 
@@ -476,10 +601,14 @@ module.exports = async (req, res) => {
         return await actionAddAdjustment(req.body, res);
       case 'add-transaction':
         return await actionAddTransaction(req.body, res);
+      case 'pay-card':
+        return await actionPayCard(req.body, res);
+      case 'undo-payment':
+        return await actionUndoPayment(req.body, res);
       case 'undo':
         return await actionUndo(req.body, res);
       default:
-        res.status(400).json({ error: 'Unknown or missing action. Use one of: calculate, confirm, add-adjustment, add-transaction, undo.' });
+        res.status(400).json({ error: 'Unknown or missing action. Use one of: calculate, confirm, add-adjustment, add-transaction, pay-card, undo-payment, undo.' });
     }
   } catch (err) {
     console.error(err);

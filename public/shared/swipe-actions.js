@@ -58,13 +58,24 @@
 
   // `isCleared` picks which icon/label the right-swipe reveals: a currently
   // Cleared transaction offers to mark it Uncleared, and vice versa.
-  function rowHTML(rowNumber, rowClassName, innerHtml, isCleared) {
+  //
+  // `isPayment` (optional, used by the account detail page for a credit
+  // card's "Add Payment" legs -- see api/reconcile.js's Transfer/Payment ID
+  // columns) swaps the left-swipe slot from "Delete" to "Undo" -- a payment
+  // leg has a matching leg on another account that a plain single-row
+  // delete would silently orphan, so the label/icon reflect that this
+  // removes both sides, not just this row. handleActionTap below decides
+  // the actual confirm wording/callback off the row's own `transfer` flag
+  // (not this rendering flag), so the two always agree.
+  function rowHTML(rowNumber, rowClassName, innerHtml, isCleared, isPayment) {
     const clearIcon = isCleared ? UNDO_ICON : CHECK_ICON;
     const clearLabel = isCleared ? 'Uncleared' : 'Clear';
+    const removeIcon = isPayment ? UNDO_ICON : TRASH_ICON;
+    const removeLabel = isPayment ? 'Undo' : 'Delete';
     return `
       <div class="swx-wrap" data-row="${rowNumber}">
         <div class="swx-action swx-clear">${clearIcon}<span class="swx-action-label">${clearLabel}</span></div>
-        <div class="swx-action swx-delete">${TRASH_ICON}<span class="swx-action-label">Delete</span></div>
+        <div class="swx-action swx-delete">${removeIcon}<span class="swx-action-label">${removeLabel}</span></div>
         <div class="${rowClassName}">${innerHtml}</div>
       </div>
     `;
@@ -126,8 +137,18 @@
     if (!txn) { closeOpen(entry, true); return; }
 
     if (actionEl.classList.contains('swx-delete')) {
-      if (!confirm('Delete this transaction?')) return;
-      runBusyAction(entry, wrap, actionEl, entry.options.onDelete, txn, 'Deleting…');
+      // `txn.transfer` (from api/reconcile.js's actionDetail) is the source
+      // of truth for whether this row is one leg of a card payment -- not
+      // the button's own rendered icon/label -- so this always agrees with
+      // rowHTML's `isPayment` rendering above. The caller's onDelete is
+      // expected to branch on this same flag to call the right endpoint
+      // (transactions-delete vs. reconcile's undo-payment).
+      const isPayment = !!txn.transfer;
+      const message = isPayment
+        ? 'Undo this card payment? This removes BOTH the charge on the card and the matching entry on the paying account.'
+        : 'Delete this transaction?';
+      if (!confirm(message)) return;
+      runBusyAction(entry, wrap, actionEl, entry.options.onDelete, txn, isPayment ? 'Undoing…' : 'Deleting…');
     } else {
       // The label already baked into the button by rowHTML() tells us which
       // direction this toggle goes -- "Uncleared" means it's currently

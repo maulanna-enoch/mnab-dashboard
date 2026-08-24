@@ -20,13 +20,6 @@
   }
   * { box-sizing: border-box; }
   html, body {
-    /* Mobile Safari rubber-bands (and, on some versions, treats a downward
-       drag while already scrolled to the top as its own native gesture) --
-       both fight visually with our own pull-to-refresh drag below. `contain`
-       stops the overscroll from chaining up to the browser's own handling
-       once JS has claimed the gesture, without disabling normal scrolling.
-       Supported Safari 16+ (effectively all real iOS devices by now); older
-       Safari just falls back to the native bounce, same as before this. */
     overscroll-behavior-y: contain;
   }
   body {
@@ -58,7 +51,6 @@
   .error { color: #f87171; font-size: 0.9rem; }
   .loading { color: var(--muted); font-size: 0.85rem; text-align: center; padding: 24px 0; }
 
-  /* -- accounts list -- */
   .acct-row {
     display: flex;
     justify-content: space-between;
@@ -86,7 +78,6 @@
   }
   .section-label:first-of-type { margin-top: 0; }
 
-  /* -- account detail header -- */
   .acct-header {
     background: var(--card);
     border-radius: 16px;
@@ -127,7 +118,6 @@
     cursor: pointer;
   }
 
-  /* -- reused transaction list styling (from transactions/index.html) -- */
   .date-header {
     font-size: 0.7rem;
     color: var(--muted);
@@ -146,23 +136,15 @@
     margin-bottom: 8px;
     cursor: pointer;
   }
-  /* Dim only the row's own content, not the row box itself -- the box's
-     background is what visually masks the swipe-reveal Delete/Clear
-     buttons (shared/swipe-actions.js) sitting positioned behind every row
-     at rest. Applying opacity to `.txn-row` directly made the whole
-     element (background included) translucent, letting those buttons
-     bleed through reconciled rows even when not swiped. */
   .txn-row.reconciled > div { opacity: 0.55; }
   .txn-name { font-size: 0.9rem; }
   .txn-meta { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
   .txn-meta .uncleared { color: var(--uncleared); }
   .txn-meta .reconciled-tag { color: var(--accent); }
+  .txn-meta .transfer-tag { color: var(--upcoming); }
   .txn-amount { font-size: 0.9rem; white-space: nowrap; }
   .txn-amount.income { color: var(--accent); }
 
-  /* -- future-transactions toggle (same behavior as transactions/index.html's
-     "Upcoming" toggle) -- lives outside #detail-txn-pull so it stays pinned
-     during the pull-to-refresh drag, same as .acct-header. -- */
   .upcoming-toggle {
     display: flex;
     align-items: center;
@@ -199,22 +181,9 @@
   }
   .switch.on::after { transform: translateX(16px); }
   .date-header.upcoming { color: var(--upcoming, #60a5fa); }
-  /* Layer the blue tint over the opaque card color instead of replacing it
-     with a low-alpha background -- same bleed-through reasoning as
-     `.txn-row.reconciled` above: a translucent row background lets the
-     swipe-reveal action buttons behind it show through at rest. The two
-     gradient stops paint as a flat color; compositing it over `var(--card)`
-     keeps the resulting box fully opaque. */
   .txn-row.upcoming { border: 1px dashed rgba(96,165,250,0.4); background: linear-gradient(rgba(96,165,250,0.06), rgba(96,165,250,0.06)), var(--card); }
   .txn-meta .upcoming-tag { color: var(--upcoming, #60a5fa); }
 
-  /* -- account detail: everything above the Upcoming toggle (back link,
-     title, balance header) stays pinned while the transaction list below it
-     scrolls -- sticks to the top of the viewport once scrolled that far, own
-     opaque background so the list doesn't show through as it passes
-     underneath. Body itself stays the scroll container (no separate
-     overflow:auto region), so window.scrollY-based pull-to-refresh logic
-     below is unaffected. -- */
   .detail-sticky {
     position: sticky;
     top: 0;
@@ -222,10 +191,6 @@
     background: var(--bg);
   }
 
-  /* -- pull-to-refresh (account detail transaction list only; .acct-header
-     stays pinned above this since it's outside #detail-txn-pull) -- the
-     indicator lives in normal flow at height:0 and grows as you drag, which
-     is what actually pushes the list down -- no separate transform needed. */
   .txn-pull-wrap { position: relative; overscroll-behavior-y: contain; touch-action: pan-y; }
   .pull-indicator {
     display: flex;
@@ -248,7 +213,6 @@
   }
   @keyframes pull-spin { to { transform: rotate(360deg); } }
 
-  /* -- bottom sheet, matching the app's existing txf-overlay/txf-sheet pattern -- */
   .rc-overlay {
     position: fixed;
     inset: 0;
@@ -314,11 +278,12 @@
   }
   .rc-toggle-btn.active { border-color: var(--accent); color: var(--text); }
   .rc-log-entry { font-size: 12.5px; }
+
+  #pay-amount, #pay-amount-currency { color: var(--negative); }
 </style>
 </head>
 <body>
 
-<!-- ============ SCREEN: ACCOUNTS LIST ============ -->
 <div class="wrap" id="screen-accounts">
   <a class="back-link" href="/">← Accounts</a>
   <h1>Accounts</h1>
@@ -332,11 +297,7 @@
   </div>
 </div>
 
-<!-- ============ SCREEN: ACCOUNT DETAIL ============ -->
 <div class="wrap" id="screen-detail" style="display:none;">
-  <!-- Everything in here (back link, title, balance header, Upcoming
-       toggle) stays pinned to the top of the viewport as the transaction
-       list below scrolls -- see .detail-sticky. -->
   <div class="detail-sticky">
     <a class="back-link" onclick="goto('accounts')">← Accounts</a>
     <h1 id="detail-title">Account</h1>
@@ -356,6 +317,7 @@
         <div class="acct-header-meta" id="detail-meta"></div>
         <div class="acct-header-actions">
           <button class="btn btn-primary" onclick="openReconcile()">Reconcile</button>
+          <button class="btn btn-secondary" id="detail-pay-btn" style="display:none;" onclick="openPayCard()">Add Payment</button>
         </div>
         <div class="last-recon-link" onclick="openUndo()">View / undo last reconciliation</div>
       </div>
@@ -377,7 +339,6 @@
 
 <div id="txf-root"></div>
 
-<!-- ============ RECONCILE BOTTOM SHEET ============ -->
 <div class="rc-overlay" id="rc-overlay">
   <div class="rc-sheet">
     <div class="rc-sheet-header">
@@ -385,7 +346,6 @@
       <div class="rc-sheet-close" onclick="closeReconcile()">✕</div>
     </div>
 
-    <!-- Single form: as-of date + statement amount together, one button -->
     <div class="rc-step">
       <label class="rc-field-label">As-of / statement date</label>
       <input type="date" class="rc-field" id="rc-asof-date">
@@ -394,18 +354,15 @@
       <button class="btn btn-primary btn-block" style="margin-top:12px;" onclick="rcCalculate()">Calculate system total</button>
     </div>
 
-    <!-- Book balance result -->
     <div id="rc-result-box" class="rc-result-box" style="display:none;">
       <div class="rc-row"><b>Book balance (through <span id="rc-result-date"></span>)</b><b id="rc-result-sum"></b></div>
       <p class="rc-hint">Every Cleared transaction on this account through this date, reconciled or not — compare this against what your bank/card statement shows.</p>
       <div class="rc-row"><span>New since <span id="rc-since-label"></span></span><span id="rc-matched-count"></span></div>
     </div>
 
-    <!-- Compare result -->
     <div id="rc-compare-box" class="rc-result-box" style="display:none;"></div>
     <div id="rc-actions" class="rc-actions" style="display:none;"></div>
 
-    <!-- add-transaction inline form -->
     <div id="rc-add-form" style="display:none; margin-top:12px; padding:12px; border-radius:10px; background:rgba(255,255,255,0.03); border:1px solid #2a2e37;">
       <label class="rc-field-label">Name</label>
       <input type="text" class="rc-field" id="rc-add-name" placeholder="e.g. Grab to office">
@@ -429,8 +386,47 @@
   </div>
 </div>
 
-<!-- ============ CONFIRM / ALERT MODAL (replaces native confirm()/alert(),
-     which sandboxed previews like this one often block silently) ============ -->
+<div class="rc-overlay" id="pay-overlay">
+  <div class="rc-sheet">
+    <div class="rc-sheet-header">
+      <div class="rc-sheet-title">Add Payment — <span id="pay-account-name"></span></div>
+      <div class="rc-sheet-close" onclick="closePayCard()">✕</div>
+    </div>
+
+    <label class="txf-amount-block" for="pay-amount">
+      <div class="txf-amount-label">Amount</div>
+      <div class="txf-amount-row">
+        <span class="txf-amount-currency" id="pay-amount-currency">Rp</span>
+        <input id="pay-amount" class="txf-amount-input" type="text" inputmode="numeric" placeholder="0" />
+      </div>
+      <div class="txf-amount-rule"></div>
+    </label>
+    <p class="rc-hint" id="pay-amount-hint" style="text-align:center; margin-top:-10px;">&nbsp;</p>
+
+    <label class="rc-field-label">Paying from (cash account)</label>
+    <select class="rc-field" id="pay-cash-account"></select>
+
+    <div class="txf-row-2">
+      <div>
+        <label class="rc-field-label">Payment date</label>
+        <input type="date" class="rc-field" id="pay-date">
+      </div>
+      <div>
+        <label class="rc-field-label">Billing month</label>
+        <input type="month" class="rc-field" id="pay-month">
+      </div>
+    </div>
+    <p class="rc-hint">Billing month is pre-filled to the usual guess for the payment date, minus one month — a payment made now is normally paying down the prior closed statement, not the one still accruing. Still fully editable.</p>
+
+    <p class="rc-hint">Logs two linked transactions — an expense on the cash account above and an income on <span id="pay-account-name-2"></span> — both flagged as a transfer, same as a desktop-logged payment. Excluded from spend/income totals. If this card has a Billed Diary line for this billing month, it's marked Paid automatically once the payment covers it.</p>
+
+    <div class="rc-actions-row" style="margin-top:14px;">
+      <button class="btn btn-ghost" onclick="closePayCard()">Cancel</button>
+      <button class="btn btn-primary" onclick="savePayCard()">Save payment</button>
+    </div>
+  </div>
+</div>
+
 <div class="rc-overlay" id="modal-overlay" style="z-index: 30;">
   <div class="rc-sheet" style="border-radius:16px; margin: 0 16px;">
     <div class="rc-sheet-title" id="modal-title" style="margin-bottom:8px;"></div>
@@ -442,7 +438,6 @@
   </div>
 </div>
 
-<!-- ============ UNDO BOTTOM SHEET ============ -->
 <div class="rc-overlay" id="undo-overlay">
   <div class="rc-sheet">
     <div class="rc-sheet-header">
@@ -456,23 +451,6 @@
 <script src="/shared/transaction-form.js"></script>
 <script src="/shared/swipe-actions.js"></script>
 <script>
-  /* ============================================================
-     Wired to the real backend:
-       GET  /api/accounts-list
-       GET  /api/transactions-list
-       All reconciliation actions are consolidated into ONE serverless
-       function (api/reconcile.js), dispatched by `action` -- Vercel's
-       Hobby plan caps a deployment at 12 Serverless Functions total, so
-       six-plus separate reconcile-*.js files would break every deploy.
-       GET  /api/reconcile?action=detail&name=...
-       POST /api/reconcile  { action: 'calculate', account, asOfDate }
-       POST /api/reconcile  { action: 'confirm', account, asOfDate, statementAmount }
-       POST /api/reconcile  { action: 'add-adjustment', account, asOfDate, statementAmount }
-       POST /api/reconcile  { action: 'add-transaction', account, name, type, date, amount, month }
-       GET  /api/reconcile?action=last&account=...
-       POST /api/reconcile  { action: 'undo', account }
-     ============================================================ */
-
   async function apiGet(url) {
     const res = await fetch(url);
     const data = await res.json().catch(() => ({}));
@@ -497,13 +475,6 @@
     return new Date().toISOString().slice(0, 10);
   }
 
-  /* ---------------- custom confirm/alert modal ----------------
-     Sandboxed preview environments (like this one) frequently swallow
-     native window.confirm()/alert() calls without showing anything --
-     that's why "Add adjustment" looked like it did nothing. Using an
-     in-page modal instead so it's actually visible everywhere, including
-     the real deployed app on mobile Safari/Chrome where a native confirm()
-     is also not a great look inside a bottom sheet anyway. */
   function showAlert(message, title) {
     document.getElementById('modal-title').textContent = title || 'Notice';
     document.getElementById('modal-message').textContent = message;
@@ -537,22 +508,7 @@
     window.scrollTo(0, 0);
   }
 
-  /* ---------------- accounts list ---------------- */
-
-  // Running balance shown here = sum of Total across ALL of that account's
-  // transactions, cleared AND uncleared. This is a NEW figure for the
-  // mobile view -- Reconcile.gs's "book balance" is cleared-only and is
-  // used purely as the reconciliation comparison figure, not as a
-  // day-to-day running balance (confirmed with user).
-  //
-  // Derived client-side from the same two endpoints the rest of the app
-  // already uses (accounts-list, transactions-list) -- "total" here mirrors
-  // buildTransactionRow's own convention (Total = Expense - Income), which
-  // isn't itself in transactions-list's response, just type + amount.
   function accountStats(accountName, transactions) {
-    // Running balance = only transactions through today -- same cutoff the
-    // account detail screen's "Upcoming" toggle uses (issue: running
-    // balance shouldn't include upcoming/future-dated transactions).
     const todayStr = TransactionForm.todayISO();
     const rows = transactions.filter((t) => t.sof === accountName && (!t.date || t.date <= todayStr));
     const totalOf = (t) => (t.type === 'Income' ? -t.amount : t.amount);
@@ -590,13 +546,6 @@
     }
   }
 
-  // Relative "when was this last reconciled" label for the accounts list
-  // row, sourced from lastReconciledAt (the Reconciliations tab's Timestamp
-  // column -- when the action actually happened) rather than the account's
-  // "Last Reconciled Through" statement date. Compares local calendar days
-  // (getFullYear/getMonth/getDate), not toISOString/UTC day boundaries --
-  // see the toISOString timezone footgun noted elsewhere in this app for WIB
-  // (UTC+7) users.
   function lastReconciledLabel(iso) {
     if (!iso) return 'Never reconciled';
     const then = new Date(iso);
@@ -616,22 +565,8 @@
     accounts.forEach((a) => {
       const stats = accountStats(a.name, transactions);
       const isCredit = (a.type || '').toLowerCase().includes('credit');
-      // Same red/green language AND same sign direction for both account
-      // kinds -- no flip by type. accountStats' runningTotal follows the
-      // sheet-wide Total = Expense - Income convention, so a positive value
-      // always means net money leaving that account: on a credit card
-      // that's debt owed (bad/red); on a cash/bank account it's just as bad
-      // (spending outpacing income, balance trending down -- e.g. 0 income
-      // and any cleared expenses already makes this positive). A previous
-      // version of this flipped the direction for cash based on a literal
-      // reading of issue #11's text ("positive = healthy" for cash), which
-      // doesn't hold given how Total is actually computed here -- that
-      // showed 0-income/some-expenses accounts as green instead of red.
       const isBad = stats.runningTotal > 0;
       const balanceClass = isBad ? 'owed' : 'positive';
-      // Credit cards: drop the "owed" suffix on debt (the implied default
-      // state for a card, doesn't need spelling out) and append "CR" on the
-      // less-common in-credit state instead.
       const balanceSuffix = isCredit && !isBad ? ' CR' : '';
 
       const row = document.createElement('div');
@@ -651,12 +586,10 @@
     });
   }
 
-  /* ---------------- account detail ---------------- */
-
   let currentAccount = null;
-  let currentAccountMeta = null; // { name, type, lastReconciledThrough, lastReconciledStatement }
-  let currentAccountTxns = []; // full (unfiltered) rows from the last successful fetch
-  let showUpcomingDetail = false; // mirrors transactions/index.html's own showUpcoming toggle state
+  let currentAccountMeta = null;
+  let currentAccountTxns = [];
+  let showUpcomingDetail = false;
 
   const detailUpcomingToggleEl = document.getElementById('detail-upcoming-toggle');
   const detailUpcomingSwitchEl = document.getElementById('detail-upcoming-switch');
@@ -666,12 +599,6 @@
     renderDetailTxnList(currentAccountTxns);
   });
 
-  // Does the actual fetch + in-place DOM update for the detail screen, with
-  // no loading/error chrome of its own -- used both by the initial
-  // openAccountDetail() load (wrapped in loading/error UI below) AND by
-  // pull-to-refresh / TransactionForm's onSaved/onDeleted callbacks, which
-  // want a lightweight in-place refresh with no full-page loading flash.
-  // Throws on failure -- callers decide how to surface that.
   async function fetchAndRenderAccountDetail(name) {
     const data = await apiGet('/api/reconcile?action=detail&name=' + encodeURIComponent(name));
     currentAccountMeta = data.account;
@@ -680,23 +607,14 @@
     document.getElementById('detail-name').textContent = data.account.name;
     document.getElementById('detail-type').textContent = data.account.type || '';
 
-    // Same red/green language and CR-suffix convention as the accounts
-    // list (issue #11): no sign flip by account type -- a positive
-    // runningTotal always means money owed/leaving, so it's red on both
-    // cash and credit accounts. Credit cards specifically drop the "owed"
-    // suffix (implied default state for a card) and instead flag the
-    // less-common in-credit state with a trailing "CR" suffix (issue #13).
+    document.getElementById('detail-pay-btn').style.display = isCredit ? 'block' : 'none';
+
     const balEl = document.getElementById('detail-balance');
     const isBad = data.stats.runningTotal > 0;
     const creditSuffix = isCredit && !isBad ? ' CR' : '';
     balEl.textContent = formatIDR(Math.abs(data.stats.runningTotal)) + creditSuffix;
     balEl.className = 'acct-header-balance ' + (isCredit ? (isBad ? 'owed' : 'positive') : '');
 
-    // Cleared-amount + last-reconciled-through, each on their own line,
-    // replacing the old "x uncleared (Rp...)" line (issue #15). Cleared
-    // amount gets the same CR-suffix treatment as the header balance,
-    // based on its own sign (a card can be in credit on the cleared
-    // figure even while uncleared charges make the running total owed).
     const metaEl = document.getElementById('detail-meta');
     const clearedIsBad = data.stats.clearedTotal > 0;
     const clearedCreditSuffix = isCredit && !clearedIsBad ? ' CR' : '';
@@ -717,9 +635,6 @@
     const loadingEl = document.getElementById('detail-loading');
     const errorEl = document.getElementById('detail-error');
     const contentEl = document.getElementById('detail-content');
-    // Sibling of detail-content now (moved out so only the sticky header
-    // portion -- not the transaction list -- lives inside .detail-sticky),
-    // so it needs its own display toggle alongside contentEl's.
     const listEl = document.getElementById('detail-txn-pull');
     loadingEl.style.display = 'block';
     errorEl.style.display = 'none';
@@ -738,18 +653,6 @@
     }
   }
 
-  // Future-dated transactions (date > today) are hidden by default, same
-  // cutoff rule the Transactions page uses -- a scheduled/upcoming entry
-  // shouldn't read as if it already happened. Same "Upcoming" show/hide
-  // toggle as that page too (clarified after initial feedback: "same as the
-  // Transactions page" meant the whole toggle behavior, not just a hard
-  // filter) -- flipping it re-renders from currentAccountTxns, no refetch.
-  // Each visible row is tappable and opens the shared edit form via
-  // TransactionForm.open(), same flow as the Transactions page's row click.
-  // Rows carry data-row so the click handler can look the full transaction
-  // object back up in `rows` (needed for sof/notes/month, which aren't
-  // rendered but ARE required by TransactionForm.open() to avoid corrupting
-  // them on save -- see actionDetail in api/reconcile.js).
   function renderDetailTxnList(rows) {
     const listEl = document.getElementById('detail-txn-list');
     const todayStr = TransactionForm.todayISO();
@@ -781,6 +684,7 @@
       if (!t.isCleared) metaBits.push('<span class="uncleared">uncleared</span>');
       if (t.reconciled) metaBits.push('<span class="reconciled-tag">reconciled</span>');
       if (isUpcoming) metaBits.push('<span class="upcoming-tag">upcoming</span>');
+      if (t.transfer) metaBits.push('<span class="transfer-tag">payment</span>');
       const rowInner = `
           <div>
             <div class="txn-name">${t.payee}</div>
@@ -788,7 +692,7 @@
           </div>
           <div class="txn-amount ${isIncome ? 'income' : ''}">${amountText}</div>
       `;
-      html += SwipeActions.rowHTML(t.rowNumber, `txn-row ${t.reconciled ? 'reconciled' : ''} ${isUpcoming ? 'upcoming' : ''}`, rowInner, t.isCleared);
+      html += SwipeActions.rowHTML(t.rowNumber, `txn-row ${t.reconciled ? 'reconciled' : ''} ${isUpcoming ? 'upcoming' : ''}`, rowInner, t.isCleared, t.transfer);
     });
     listEl.innerHTML = html;
 
@@ -796,7 +700,12 @@
       row.addEventListener('click', () => {
         const rowNumber = parseInt(row.closest('.swx-wrap').dataset.row, 10);
         const txn = rows.find((t) => t.rowNumber === rowNumber);
-        if (txn) TransactionForm.open(txn);
+        if (!txn) return;
+        if (txn.transfer) {
+          openUndoPaymentMenu(txn);
+        } else {
+          TransactionForm.open(txn);
+        }
       });
     });
 
@@ -808,10 +717,15 @@
     });
   }
 
-  // Swipe-left delete on the account detail list -- same endpoint as the
-  // shared form's own Delete link, then an in-place refresh (no full-page
-  // loading flash), same as pull-to-refresh and the form's onDeleted.
   async function deleteDetailTxnViaSwipe(txn) {
+    if (txn.transfer) {
+      if (!txn.paymentId) {
+        throw new Error('This payment predates Payment ID tracking and can\'t be auto-undone -- delete each leg manually instead.');
+      }
+      await apiPost('/api/reconcile', { action: 'undo-payment', paymentId: txn.paymentId });
+      await fetchAndRenderAccountDetail(currentAccount);
+      return;
+    }
     const res = await fetch('/api/transactions-delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -822,11 +736,6 @@
     await fetchAndRenderAccountDetail(currentAccount);
   }
 
-  // Swipe-right clear/unclear toggle -- transactions-update rewrites the
-  // whole row, so every other field is resent unchanged; only `cleared`
-  // flips. `t.isCleared` (boolean, from /api/reconcile's detail action) is
-  // the source of truth here rather than `t.cleared` (the sheet's raw
-  // string), since it's already normalized.
   async function toggleDetailTxnClearedViaSwipe(txn) {
     const res = await fetch('/api/transactions-update', {
       method: 'POST',
@@ -848,15 +757,9 @@
     await fetchAndRenderAccountDetail(currentAccount);
   }
 
-  /* ---------------- pull-to-refresh (account detail transaction list) ----------------
-     Pointer Events (not touchstart/mousedown) unify touch + mouse, and are
-     also what Chromium dispatches for Playwright's simulated mouse input --
-     so this is testable headlessly without a real touch device. Scoped to
-     #detail-txn-pull only: .acct-header (back arrow, name, balance, actions)
-     lives outside this wrapper and never moves. */
   const PULL_THRESHOLD = 64;
   const PULL_MAX = 100;
-  let pull = null; // { startY, pointerId, dragging, refreshing }
+  let pull = null;
 
   function setupPullToRefresh() {
     const wrapEl = document.getElementById('detail-txn-pull');
@@ -870,8 +773,6 @@
 
     function onPointerDown(e) {
       if (pull && pull.refreshing) return;
-      // Only start the gesture from the very top of the page -- otherwise
-      // this would hijack an ordinary downward scroll mid-list.
       if (window.scrollY > 0) return;
       pull = { startX: e.clientX, startY: e.clientY, pointerId: e.pointerId, dragging: false, refreshing: false };
     }
@@ -880,9 +781,6 @@
       if (!pull || pull.refreshing || pull.pointerId !== e.pointerId) return;
       const dy = e.clientY - pull.startY;
       const dx = e.clientX - pull.startX;
-      // A predominantly-horizontal move is a row swipe (see shared/
-      // swipe-actions.js), not a pull-to-refresh -- bail so the two
-      // gestures don't fight over the same pointer.
       if (dy <= 0 || window.scrollY > 0 || Math.abs(dx) > Math.abs(dy)) {
         if (pull.dragging) { pull.dragging = false; setPull(0, true); }
         return;
@@ -909,10 +807,6 @@
       try {
         await fetchAndRenderAccountDetail(currentAccount);
       } catch (err) {
-        // Leave the existing list as-is on a failed refresh -- no dedicated
-        // error UI here since the pull gesture itself already communicates
-        // "try again" (unlike the full-page load, this isn't the only way
-        // to see this account's data).
       }
       pull = null;
       setPull(0, true);
@@ -931,9 +825,7 @@
     wrapEl.addEventListener('pointercancel', onPointerCancel);
   }
 
-  /* ---------------- reconcile flow (mirrors Reconcile.gs step for step) ---------------- */
-
-  let rcState = null; // { account, asOfDate, cumulativeSum, matchedCount, sinceDateLabel, sinceDateIso }
+  let rcState = null;
 
   function openReconcile() {
     const account = currentAccountMeta;
@@ -960,12 +852,6 @@
     document.querySelectorAll('#rc-overlay button').forEach((b) => { b.disabled = busy; });
   }
 
-  // Merges what the sheet macro splits into "Calculate" then "Compare" --
-  // here both the as-of date and statement amount are entered together, so
-  // one tap does rc_getSystemTotal()'s cumulative-sum math AND the
-  // match/mismatch comparison in a single step. Also the re-entry point
-  // after "Add transaction" loops back in (same as the macro's
-  // keepStatementAmount behavior), just re-running this whole function.
   async function rcCalculate() {
     const asOfDate = document.getElementById('rc-asof-date').value;
     if (!asOfDate) { showAlert('Pick a date.'); return; }
@@ -1067,7 +953,7 @@
           rcSetBusy(false);
           showAlert(`Reconciled. ${r.matchedCount} transaction(s) marked, Accounts tab updated.`, 'Done');
           closeReconcile();
-          openAccountDetail(currentAccount); // refresh detail view with new state
+          openAccountDetail(currentAccount);
         } catch (err) {
           rcSetBusy(false);
           showAlert(err.message, 'Reconcile failed');
@@ -1104,15 +990,6 @@
     );
   }
 
-  // Rough default only, mirrors guessBillingMonth() in Reconcile.gs / the
-  // shared transaction-form's own guess -- EXCEPT fixed here: setting the
-  // month directly on a date with day > 28 can overflow into the month
-  // after next (e.g. Aug 31 -> setMonth(Sep) rolls to Oct 1, since
-  // September only has 30 days). Snapping to day 1 first before
-  // incrementing the month avoids that. Reconcile.gs's own two copies of
-  // this function (client dialog + billingMonthForDate) and
-  // shared/transaction-form.js's guessBillingMonth all have the original
-  // unguarded version -- worth fixing there too, separately from this PR.
   function guessBillingMonth(dateStr) {
     const d = new Date(dateStr + 'T00:00:00');
     if (d.getDate() > 12) {
@@ -1129,10 +1006,6 @@
     document.getElementById('rc-add-type-income').classList.toggle('active', type === 'Income');
   }
 
-  // Mirrors the sheet macro's addMonthTouched behavior: Billing month
-  // re-guesses off Date as long as the user hasn't manually edited it
-  // themselves; once they touch it directly, their value sticks even if
-  // Date changes again afterward.
   let addMonthTouched = false;
   document.getElementById('rc-add-month').addEventListener('input', () => { addMonthTouched = true; });
   document.getElementById('rc-add-date').addEventListener('change', () => {
@@ -1195,10 +1068,6 @@
       });
       rcSetBusy(false);
       rcHideAddForm();
-      // rc-statement-amount and rc-asof-date still hold what was typed
-      // before "Add transaction" was opened, so this just re-runs the whole
-      // calculate+compare step against the now-larger transaction set --
-      // same loop-until-it-matches behavior as the sheet macro.
       rcCalculate();
     } catch (err) {
       rcSetBusy(false);
@@ -1206,7 +1075,160 @@
     }
   }
 
-  /* ---------------- undo last reconciliation ---------------- */
+  let cashAccountsCache = null;
+  async function getCashAccounts() {
+    if (cashAccountsCache) return cashAccountsCache;
+    const data = await apiGet('/api/accounts-list');
+    cashAccountsCache = data.accounts.filter((a) => !(a.type || '').toLowerCase().includes('credit'));
+    return cashAccountsCache;
+  }
+
+  function monthMinusOne(monthStr) {
+    const [y, m] = monthStr.split('-').map(Number);
+    const d = new Date(Date.UTC(y, m - 1, 1));
+    d.setUTCMonth(d.getUTCMonth() - 1);
+    return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
+  }
+
+  function digitsOnly(str) {
+    return (str || '').replace(/[^\d]/g, '');
+  }
+  function formatAmountDisplay(digits) {
+    return digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  }
+  function resizePayAmountInput() {
+    const el = document.getElementById('pay-amount');
+    el.style.width = (el.value.length + 1) + 'ch';
+  }
+
+  let payMonthTouched = false;
+  let payAmountTouched = false;
+  let payAmountRequestId = 0;
+
+  document.getElementById('pay-amount').addEventListener('input', () => {
+    const el = document.getElementById('pay-amount');
+    el.value = formatAmountDisplay(digitsOnly(el.value));
+    resizePayAmountInput();
+    payAmountTouched = true;
+  });
+  document.getElementById('pay-month').addEventListener('input', () => {
+    payMonthTouched = true;
+    refreshPrefillAmount();
+  });
+  document.getElementById('pay-date').addEventListener('change', () => {
+    if (!payMonthTouched) {
+      document.getElementById('pay-month').value = monthMinusOne(guessBillingMonth(document.getElementById('pay-date').value));
+      refreshPrefillAmount();
+    }
+  });
+
+  async function refreshPrefillAmount() {
+    if (payAmountTouched) return;
+    const monthStr = document.getElementById('pay-month').value;
+    if (!currentAccount || !monthStr) return;
+    const requestId = ++payAmountRequestId;
+    const hintEl = document.getElementById('pay-amount-hint');
+    try {
+      const data = await apiGet('/api/reconcile?action=billed-amount&cardAccount=' + encodeURIComponent(currentAccount) + '&month=' + encodeURIComponent(monthStr));
+      if (requestId !== payAmountRequestId || payAmountTouched) return;
+      if (data.found) {
+        const el = document.getElementById('pay-amount');
+        el.value = formatAmountDisplay(digitsOnly(String(Math.round(data.amount))));
+        resizePayAmountInput();
+        hintEl.textContent = `Pre-filled from ${currentAccount}'s Billed statement for ${monthStr}. Editable.`;
+      } else {
+        hintEl.textContent = ' ';
+      }
+    } catch (err) {
+    }
+  }
+
+  async function openPayCard() {
+    document.getElementById('pay-account-name').textContent = currentAccount;
+    document.getElementById('pay-account-name-2').textContent = currentAccount;
+    payAmountTouched = false;
+    document.getElementById('pay-amount').value = '';
+    document.getElementById('pay-amount-hint').textContent = ' ';
+    resizePayAmountInput();
+    const todayStr = todayISO();
+    document.getElementById('pay-date').value = todayStr;
+    payMonthTouched = false;
+    document.getElementById('pay-month').value = monthMinusOne(guessBillingMonth(todayStr));
+
+    const cashSelect = document.getElementById('pay-cash-account');
+    cashSelect.innerHTML = '<option value="">Loading…</option>';
+    document.getElementById('pay-overlay').classList.add('open');
+    document.getElementById('pay-amount').focus();
+    refreshPrefillAmount();
+    try {
+      const cashAccounts = await getCashAccounts();
+      cashSelect.innerHTML = cashAccounts.length
+        ? cashAccounts.map((a) => `<option value="${a.name}">${a.name}</option>`).join('')
+        : '<option value="">No cash/bank accounts found</option>';
+    } catch (err) {
+      cashSelect.innerHTML = '<option value="">Error loading accounts</option>';
+    }
+  }
+  function closePayCard() {
+    document.getElementById('pay-overlay').classList.remove('open');
+  }
+  function paySetBusy(busy) {
+    document.querySelectorAll('#pay-overlay button').forEach((b) => { b.disabled = busy; });
+  }
+
+  async function savePayCard() {
+    const amountDigits = digitsOnly(document.getElementById('pay-amount').value);
+    const amount = Number(amountDigits);
+    const cashAccount = document.getElementById('pay-cash-account').value;
+    const dateStr = document.getElementById('pay-date').value;
+    const monthStr = document.getElementById('pay-month').value;
+
+    if (!amountDigits || isNaN(amount) || amount <= 0) { showAlert('Enter a positive amount.'); return; }
+    if (!cashAccount) { showAlert('Choose which account is paying.'); return; }
+    if (!dateStr) { showAlert('Pick a payment date.'); return; }
+    if (!monthStr) { showAlert('Pick a billing month.'); return; }
+
+    paySetBusy(true);
+    try {
+      const r = await apiPost('/api/reconcile', {
+        action: 'pay-card',
+        cardAccount: currentAccount,
+        cashAccount,
+        amount,
+        date: dateStr,
+        month: monthStr,
+      });
+      paySetBusy(false);
+      closePayCard();
+      const flipNote = r.diaryFlipped ? ` ${currentAccount}'s Diary bill for ${monthStr} was marked Paid.` : '';
+      showAlert(`Payment logged on both ${currentAccount} and ${cashAccount}.${flipNote}`, 'Payment saved');
+      openAccountDetail(currentAccount);
+    } catch (err) {
+      paySetBusy(false);
+      showAlert(err.message, 'Payment failed');
+    }
+  }
+
+  function openUndoPaymentMenu(txn) {
+    showConfirm(
+      `"${txn.payee}" is one leg of a card payment. Undoing it removes BOTH this entry and its matching entry on the other account.`,
+      () => doUndoPayment(txn),
+      { title: 'Card payment', confirmLabel: 'Undo Payment', cancelLabel: 'Close', danger: true }
+    );
+  }
+  async function doUndoPayment(txn) {
+    if (!txn.paymentId) {
+      showAlert('This payment predates Payment ID tracking and can\'t be auto-undone -- delete each leg manually instead.', 'Cannot undo');
+      return;
+    }
+    try {
+      const r = await apiPost('/api/reconcile', { action: 'undo-payment', paymentId: txn.paymentId });
+      showAlert(`Removed ${r.deletedCount} transaction(s).`, 'Payment undone');
+      await fetchAndRenderAccountDetail(currentAccount);
+    } catch (err) {
+      showAlert(err.message, 'Undo failed');
+    }
+  }
 
   async function openUndo() {
     document.getElementById('undo-account-name').textContent = currentAccount;
@@ -1275,23 +1297,10 @@
 
   TransactionForm.mount(document.getElementById('txf-root'), {
     supportEditDelete: true,
-    // Same green "+" FAB as the home page and Transactions page (issue #24)
-    // -- showFab defaults to true, so nothing to pass here.
     onSaved: () => { if (currentAccount) fetchAndRenderAccountDetail(currentAccount); },
     onDeleted: () => { if (currentAccount) fetchAndRenderAccountDetail(currentAccount); },
   });
 
-  // Pre-select this account in the shared form's Account (SOF) field when
-  // the FAB is used to add a transaction while viewing an account. Attached
-  // as an extra listener on the FAB itself -- registered here, after mount()
-  // above has already built it -- rather than inside TransactionForm's own
-  // open()/mount(), so the shared module stays untouched and its FAB keeps
-  // behaving identically on the pages that don't have a "current account"
-  // (home, Transactions). Listeners on the same element fire in the order
-  // they were added, so this runs right after the shared module's own click
-  // handler has already opened the blank "add" form; that handler never
-  // touches the sof <select> on add, so this is safe. Still a fully
-  // editable dropdown afterward -- not locked to this account.
   document.getElementById('txf-fab').addEventListener('click', () => {
     const sofEl = document.getElementById('txf-f-sof');
     if (sofEl && currentAccount) sofEl.value = currentAccount;

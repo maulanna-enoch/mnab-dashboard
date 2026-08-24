@@ -183,6 +183,13 @@ async function fetchTransactionsForReconcile(sheets) {
     // human-facing figure (falls back to abs(Total) if there's no separate
     // Amount column) for rendering individual transaction rows.
     const displayAmount = 'Amount' in map ? Number(row[map['Amount']]) || 0 : Math.abs(Number(row[map[amountHeader]]) || 0);
+    // Transfer / Payment ID: self-provisioned columns (see
+    // getOrCreateTransactionsColumn below), same pattern as Reconciled /
+    // Reconciled Date -- may not exist yet on a sheet that's never had a
+    // mobile-logged card payment, so both reads are defensive (map[...] is
+    // undefined -> row[undefined] is undefined -> falls through cleanly).
+    const transferRaw = map['Transfer'] !== undefined ? row[map['Transfer']] : undefined;
+    const paymentIdRaw = map['Payment ID'] !== undefined ? row[map['Payment ID']] : undefined;
     return {
       rowNumber: i + 2,
       sof: sofRaw ? String(sofRaw).trim() : '',
@@ -197,6 +204,8 @@ async function fetchTransactionsForReconcile(sheets) {
       reconciledDate: typeof reconciledDateSerial === 'number' ? serialToDate(reconciledDateSerial) : null,
       payee: payeeHeader ? row[map[payeeHeader]] : '',
       notes: map['Notes'] !== undefined ? (row[map['Notes']] || '') : '',
+      isTransfer: transferRaw === true || transferRaw === 'TRUE' || transferRaw === 'true',
+      paymentId: paymentIdRaw ? String(paymentIdRaw).trim() : null,
     };
   });
 
@@ -331,6 +340,271 @@ async function appendPlainTransactionRow(sheets, map, amountHeader, payeeHeader,
     insertDataOption: 'INSERT_ROWS',
     requestBody: { values: [row] },
   });
+}
+
+// Growing a sheet's *data* (values.update/append) does NOT grow its
+// underlying grid -- the grid has its own fixed rowCount/columnCount, and
+// writing to a cell outside that grid fails outright ("Range ... exceeds
+// grid limits"), it doesn't auto-expand. Self-provisioning a brand new
+// column can walk right off the edge of a grid that happens to be sized to
+// exactly fit the existing headers (as this transactions tab's was: 16
+// columns, A:P, with no spare column for this PR's new "Payment ID").
+// Widen the grid first via an appendDimension batchUpdate -- the same
+// spreadsheets.batchUpdate surface getOrCreateLogSheet already uses to add
+// a whole new tab -- so the header write below always lands inside it.
+async function ensureSheetColumnCount(sheets, spreadsheetId, sheetName, requiredColumnCount) {
+  const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties' });
+  const sheet = (meta.data.sheets || []).find((s) => s.properties.title === sheetName);
+  if (!sheet) throw new Error(`Sheet "${sheetName}" not found`);
+  const currentColumnCount = (sheet.properties.gridProperties && sheet.properties.gridProperties.columnCount) || 0;
+  if (currentColumnCount >= requiredColumnCount) return;
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [{
+        appendDimension: {
+          sheetId: sheet.properties.sheetId,
+          dimension: 'COLUMNS',
+          length: requiredColumnCount - currentColumnCount,
+        },
+      }],
+    },
+  });
+}
+
+// Ensures `headerName` exists on the transactions tab's header row,
+// appending it as a new self-provisioned column (same pattern as the
+// Reconciled / Reconciled Date columns Reconcile.gs auto-added on its own
+// first run -- see "Self-provisioned columns" in the project's onboarding
+// doc) if it isn't there yet. Returns a possibly-updated header map;
+// callers must use the returned map, not the one they passed in.
+async function getOrCreateTransactionsColumn(sheets, map, headerName) {
+  if (headerName in map) return map;
+  const spreadsheetId = process.env.SHEET_ID;
+  const nextIndex = Object.keys(map).length ? Math.max(...Object.values(map)) + 1 : 0;
+  await ensureSheetColumnCount(sheets, spreadsheetId, RECONCILE_SHEETS.transactions, nextIndex + 1);
+  await sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `${RECONCILE_SHEETS.transactions}!${columnLetter(nextIndex)}1`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[headerName]] },
+  });
+  return { ...map, [headerName]: nextIndex };
+}
+
+function generatePaymentId() {
+  return `pay_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function shiftMonth(date, deltaMonths) {
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + deltaMonths, 1));
+}
+
+// Mirrors Payments.gs's "Log Credit Card Payment" macro (see
+// claude/MNAB-project-state.md): writes TWO Transfer-tagged legs for one
+// card payment -- an Expense on the paying (cash) account and an Income on
+// the card -- so both accounts' balances reflect the payment while the
+// existing Diary SUMIF/reconciliation math still excludes it from
+// spend/income aggregation via the sheet's own "<>TRUE" Transfer criteria,
+// same as a desktop-logged payment. A shared, self-provisioned "Payment ID"
+// column links the two rows so undo-payment can find and delete both later
+// -- transactions have no other reliable shared key once dates/amounts/
+// payees can be edited independently after the fact. Does NOT itself flip
+// the card's Diary "Billed" row to "Paid" -- see tryFlipDiaryBilledToPaid
+// below, called separately by actionPayCard after this succeeds.
+async function appendCardPaymentRows(sheets, { cardAccount, cashAccount, amount, date, month }) {
+  const spreadsheetId = process.env.SHEET_ID;
+  let map = await getHeaderMap(sheets, spreadsheetId, RECONCILE_SHEETS.transactions);
+  requireColumns(map, 'transactions', ['SOF', 'Date', 'Cleared']);
+  const amountHeader = 'Total' in map ? 'Total' : 'Amount';
+  if (!(amountHeader in map)) throw new Error('transactions tab needs a "Total" or "Amount" column.');
+  const payeeHeader = 'Payee' in map ? 'Payee' : ('Name' in map ? 'Name' : null);
+
+  map = await getOrCreateTransactionsColumn(sheets, map, 'Transfer');
+  map = await getOrCreateTransactionsColumn(sheets, map, 'Payment ID');
+
+  const paymentId = generatePaymentId();
+  const dateSerial = dateToSerial(date);
+  const monthSerial = dateToSerial(month);
+
+  function buildLeg(sof, type, payeeText) {
+    const width = Math.max(...Object.values(map)) + 1;
+    const row = new Array(width).fill('');
+    if (payeeHeader) row[map[payeeHeader]] = payeeText;
+    if ('Income/Expense' in map) row[map['Income/Expense']] = type;
+    row[map['SOF']] = sof;
+    row[map['Date']] = dateSerial;
+    if ('Month' in map) row[map['Month']] = monthSerial;
+    row[map['Cleared']] = 'Cleared';
+    const expense = type === 'Expense' ? amount : 0;
+    const income = type === 'Income' ? amount : 0;
+    if ('Amount' in map) row[map['Amount']] = amount;
+    if ('Expense' in map) row[map['Expense']] = expense;
+    if ('Income' in map) row[map['Income']] = income;
+    if (amountHeader === 'Total' && 'Total' in map) row[map['Total']] = expense - income;
+    if ('Notes' in map) row[map['Notes']] = 'Card payment';
+    row[map['Transfer']] = true;
+    row[map['Payment ID']] = paymentId;
+    return row;
+  }
+
+  const cashLeg = buildLeg(cashAccount, 'Expense', `Payment to ${cardAccount}`);
+  const cardLeg = buildLeg(cardAccount, 'Income', `Payment from ${cashAccount}`);
+  const width = Math.max(...Object.values(map)) + 1;
+  const range = `${RECONCILE_SHEETS.transactions}!A:${columnLetter(width - 1)}`;
+
+  // Two sequential appends (rather than one two-row append) so each
+  // response's updatedRange cleanly yields that leg's own row number --
+  // mirrors appendAdjustmentRow's single-row-append-then-parse pattern.
+  const cashResp = await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range,
+    valueInputOption: 'RAW',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: { values: [cashLeg] },
+  });
+  const cashRowNumber = parseInt(cashResp.data.updates.updatedRange.match(/(\d+)(?::|$)/)[1], 10);
+
+  const cardResp = await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range,
+    valueInputOption: 'RAW',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: { values: [cardLeg] },
+  });
+  const cardRowNumber = parseInt(cardResp.data.updates.updatedRange.match(/(\d+)(?::|$)/)[1], 10);
+
+  return { paymentId, cashRowNumber, cardRowNumber };
+}
+
+// Shared read of the Diary tab, used by both tryFlipDiaryBilledToPaid (a
+// write) and getDiaryBilledAmount (read-only, for the Add Payment form's
+// amount pre-fill) below. Deliberately just a fetch + light validation, with
+// no matching/write logic of its own, so neither of those two callers ends
+// up routed through the other -- each stays a single, independent read of
+// this same snapshot, avoiding any call-back-into-each-other cycle between
+// the write path and the read-only lookup as this file grows. Returns null
+// (never throws) if the sheet or its required columns aren't there.
+async function fetchDiarySheet(sheets) {
+  const spreadsheetId = process.env.SHEET_ID;
+  const sheetName = 'Diary';
+  let map;
+  try {
+    map = await getHeaderMap(sheets, spreadsheetId, sheetName);
+  } catch (err) {
+    return null;
+  }
+  if (!('Name' in map) || !('Month' in map)) return null;
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${sheetName}!A2:Z`,
+    valueRenderOption: 'UNFORMATTED_VALUE',
+  });
+  return { spreadsheetId, sheetName, map, values: response.data.values || [] };
+}
+
+// Pure matcher over a fetchDiarySheet() result -- Name == cardAccount
+// (Diary's bill rows are named after the card, same as any other budget
+// line item there) + Month, and an optional Status filter (case-insensitive).
+function findDiaryRowMatch(diarySheet, { cardAccount, month, status }) {
+  if (!diarySheet) return null;
+  const { map, values } = diarySheet;
+  if (status && !('Status' in map)) return null;
+  const monthSerial = dateToSerial(month);
+
+  for (let i = 0; i < values.length; i++) {
+    const row = values[i];
+    const name = row[map['Name']];
+    if (!name || String(name).trim().toLowerCase() !== cardAccount.trim().toLowerCase()) continue;
+    if (row[map['Month']] !== monthSerial) continue;
+    if (status && String(row[map['Status']] || '').trim().toLowerCase() !== status.toLowerCase()) continue;
+    return { rowNumber: i + 2, row };
+  }
+  return null;
+}
+
+// Best-effort mirror of Payments.gs's other behavior (see
+// claude/MNAB-project-state.md and GitHub issue #8): if this card has a
+// Diary line item for the billing month being paid, currently "Billed", and
+// the payment covers it (amountPaid >= that row's Expense amount - 0.5,
+// matching this project's documented "whole-statement-only" assumption --
+// no partial-payment tracking), flip its Status to "Paid". Matches by Name
+// == cardAccount + Month + Status=Billed (see findDiaryRowMatch above).
+//
+// Deliberately silent/non-fatal on anything that doesn't match cleanly (no
+// Diary sheet, missing columns, no matching row, wrong status) -- this is a
+// nice-to-have convenience, not something a guess-gone-wrong should ever be
+// allowed to block the actual payment write, which already happened by the
+// time this runs. Returns { flipped, reason? } so the caller can surface it.
+async function tryFlipDiaryBilledToPaid(sheets, { cardAccount, month, amountPaid }) {
+  const diarySheet = await fetchDiarySheet(sheets);
+  if (!diarySheet) return { flipped: false, reason: 'no-diary-sheet' };
+  if (!('Status' in diarySheet.map)) return { flipped: false, reason: 'missing-columns' };
+
+  const match = findDiaryRowMatch(diarySheet, { cardAccount, month, status: 'Billed' });
+  if (!match) return { flipped: false, reason: 'no-match' };
+
+  const billedAmount = 'Expense' in diarySheet.map ? Number(match.row[diarySheet.map['Expense']]) || 0 : 0;
+  if (amountPaid < billedAmount - 0.5) return { flipped: false, reason: 'amount-below-billed' };
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: diarySheet.spreadsheetId,
+    range: `${diarySheet.sheetName}!${columnLetter(diarySheet.map['Status'])}${match.rowNumber}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [['Paid']] },
+  });
+  return { flipped: true, rowNumber: match.rowNumber };
+}
+
+// Read-only counterpart used by the Add Payment form to pre-fill the amount
+// field with what's actually billed for the selected month, instead of
+// starting blank. Finds the card's Diary "Billed" line for that month and
+// returns its Expense amount. Kept deliberately separate from (not routed
+// through) tryFlipDiaryBilledToPaid above -- this never writes, has no
+// amountPaid/already-covered guard, and can safely be called on every
+// open/month-change without side effects; the two only share the
+// fetch/match helpers, not each other.
+async function getDiaryBilledAmount(sheets, { cardAccount, month }) {
+  const diarySheet = await fetchDiarySheet(sheets);
+  if (!diarySheet) return { found: false };
+  if (!('Expense' in diarySheet.map)) return { found: false };
+
+  const match = findDiaryRowMatch(diarySheet, { cardAccount, month, status: 'Billed' });
+  if (!match) return { found: false };
+
+  const amount = Number(match.row[diarySheet.map['Expense']]) || 0;
+  return { found: true, amount };
+}
+
+// Finds every transactions-tab row tagged with `paymentId` and deletes them
+// (highest row number first, so deleting one doesn't shift the row number of
+// another still pending deletion in the same batch). Works even if only one
+// leg is still findable (e.g. the other was already removed by hand) --
+// callers surface `deletedCount` so the UI can say so.
+async function deletePaymentRows(sheets, paymentId) {
+  const spreadsheetId = process.env.SHEET_ID;
+  const map = await getHeaderMap(sheets, spreadsheetId, RECONCILE_SHEETS.transactions);
+  if (!('Payment ID' in map)) return { deletedCount: 0 };
+
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${RECONCILE_SHEETS.transactions}!A2:Z`,
+    valueRenderOption: 'UNFORMATTED_VALUE',
+  });
+  const values = response.data.values || [];
+  const paymentIdCol = map['Payment ID'];
+  const rowNumbers = [];
+  values.forEach((row, i) => {
+    if (String(row[paymentIdCol] || '').trim() === String(paymentId).trim()) rowNumbers.push(i + 2);
+  });
+
+  rowNumbers.sort((a, b) => b - a);
+  for (const rowNumber of rowNumbers) {
+    await deleteSheetRow(sheets, RECONCILE_SHEETS.transactions, rowNumber);
+  }
+
+  return { deletedCount: rowNumbers.length };
 }
 
 async function updateAccountLastReconciled(sheets, accountsMap, rowNumber, asOfDate, statementAmount) {
@@ -529,6 +803,11 @@ module.exports = {
   unmarkRowsReconciled,
   appendAdjustmentRow,
   appendPlainTransactionRow,
+  appendCardPaymentRows,
+  tryFlipDiaryBilledToPaid,
+  getDiaryBilledAmount,
+  deletePaymentRows,
+  shiftMonth,
   updateAccountLastReconciled,
   clearAccountLastReconciled,
   logReconciliation,
