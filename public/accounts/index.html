@@ -6,6 +6,7 @@
 <title>Accounts · MNAB</title>
 <link rel="stylesheet" href="/shared/transaction-form.css" />
 <link rel="stylesheet" href="/shared/swipe-actions.css" />
+<link rel="stylesheet" href="/shared/bottom-nav.css" />
 <style>
   :root {
     color-scheme: light dark;
@@ -28,7 +29,7 @@
     background: var(--bg);
     color: var(--text);
     min-height: 100vh;
-    padding: 24px 16px 100px;
+    padding: 24px 16px calc(140px + env(safe-area-inset-bottom));
   }
   .wrap { max-width: 420px; margin: 0 auto; position: relative; }
 
@@ -285,7 +286,6 @@
 <body>
 
 <div class="wrap" id="screen-accounts">
-  <a class="back-link" href="/">← Accounts</a>
   <h1>Accounts</h1>
   <div id="accounts-loading" class="loading">Loading accounts…</div>
   <div id="accounts-error" class="error" style="display:none;"></div>
@@ -338,6 +338,7 @@
 </div>
 
 <div id="txf-root"></div>
+<div id="bnv-root"></div>
 
 <div class="rc-overlay" id="rc-overlay">
   <div class="rc-sheet">
@@ -450,6 +451,7 @@
 
 <script src="/shared/transaction-form.js"></script>
 <script src="/shared/swipe-actions.js"></script>
+<script src="/shared/bottom-nav.js"></script>
 <script>
   async function apiGet(url) {
     const res = await fetch(url);
@@ -1305,6 +1307,8 @@
     const sofEl = document.getElementById('txf-f-sof');
     if (sofEl && currentAccount) sofEl.value = currentAccount;
   });
+
+  BottomNav.mount(document.getElementById('bnv-root'), { active: 'accounts' });
 
   setupPullToRefresh();
   loadAccountsList();
