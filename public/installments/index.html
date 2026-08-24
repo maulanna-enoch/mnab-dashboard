@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
 <title>Installments & Bills · MNAB</title>
+<link rel="stylesheet" href="/shared/bottom-nav.css" />
 <style>
   :root {
     color-scheme: light dark;
@@ -23,16 +24,7 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 24px 16px;
-  }
-  .back-link {
-    align-self: flex-start;
-    max-width: 420px;
-    width: 100%;
-    margin: 0 auto 8px;
-    color: var(--muted);
-    text-decoration: none;
-    font-size: 0.85rem;
+    padding: 24px 16px calc(140px + env(safe-area-inset-bottom));
   }
   h1 {
     font-size: 1.1rem;
@@ -159,7 +151,6 @@
 </style>
 </head>
 <body>
-  <a class="back-link" href="/">← Home</a>
   <h1>Installments & Bills</h1>
 
   <div class="card">
@@ -184,6 +175,12 @@
 
   <button class="refresh" onclick="load()">Refresh</button>
 
+  <div id="bnv-root"></div>
+
+  <script src="/shared/bottom-nav.js"></script>
+  <script>
+    BottomNav.mount(document.getElementById('bnv-root'), { active: 'bills' });
+  </script>
   <script>
     function formatIDR(value) {
       return new Intl.NumberFormat('id-ID', {
