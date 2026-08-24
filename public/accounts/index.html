@@ -157,6 +157,7 @@
   .txn-meta { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
   .txn-meta .uncleared { color: var(--uncleared); }
   .txn-meta .reconciled-tag { color: var(--accent); }
+  .txn-meta .transfer-tag { color: var(--upcoming); }
   .txn-amount { font-size: 0.9rem; white-space: nowrap; }
   .txn-amount.income { color: var(--accent); }
 
@@ -356,6 +357,7 @@
         <div class="acct-header-meta" id="detail-meta"></div>
         <div class="acct-header-actions">
           <button class="btn btn-primary" onclick="openReconcile()">Reconcile</button>
+          <button class="btn btn-secondary" id="detail-pay-btn" style="display:none;" onclick="openPayCard()">Add Payment</button>
         </div>
         <div class="last-recon-link" onclick="openUndo()">View / undo last reconciliation</div>
       </div>
@@ -429,6 +431,39 @@
   </div>
 </div>
 
+<!-- ============ ADD PAYMENT BOTTOM SHEET (credit card accounts only) ============
+     Logs a card payment as two Transfer=TRUE legs (Expense on the paying
+     cash account, Income on the card) -- see api/reconcile.js's
+     actionPayCard / appendCardPaymentRows for the write side. -->
+<div class="rc-overlay" id="pay-overlay">
+  <div class="rc-sheet">
+    <div class="rc-sheet-header">
+      <div class="rc-sheet-title">Add Payment — <span id="pay-account-name"></span></div>
+      <div class="rc-sheet-close" onclick="closePayCard()">✕</div>
+    </div>
+
+    <label class="rc-field-label">Amount</label>
+    <input type="text" inputmode="numeric" class="rc-field" id="pay-amount" placeholder="e.g. 5000000">
+
+    <label class="rc-field-label">Payment date</label>
+    <input type="date" class="rc-field" id="pay-date">
+
+    <label class="rc-field-label">Billing month</label>
+    <input type="month" class="rc-field" id="pay-month">
+    <p class="rc-hint">Pre-filled to the usual billing-month guess for the payment date, minus one month — a payment made now is normally paying down the prior closed statement, not the one still accruing. Still fully editable.</p>
+
+    <label class="rc-field-label">Paying from (cash account)</label>
+    <select class="rc-field" id="pay-cash-account"></select>
+
+    <p class="rc-hint">Logs two linked transactions — an expense on the cash account above and an income on <span id="pay-account-name-2"></span> — both flagged as a transfer, same as a desktop-logged payment. Excluded from spend/income totals. If this card has a Billed Diary line for this billing month, it's marked Paid automatically once the payment covers it.</p>
+
+    <div class="rc-actions-row" style="margin-top:14px;">
+      <button class="btn btn-ghost" onclick="closePayCard()">Cancel</button>
+      <button class="btn btn-primary" onclick="savePayCard()">Save payment</button>
+    </div>
+  </div>
+</div>
+
 <!-- ============ CONFIRM / ALERT MODAL (replaces native confirm()/alert(),
      which sandboxed previews like this one often block silently) ============ -->
 <div class="rc-overlay" id="modal-overlay" style="z-index: 30;">
@@ -469,6 +504,8 @@
        POST /api/reconcile  { action: 'confirm', account, asOfDate, statementAmount }
        POST /api/reconcile  { action: 'add-adjustment', account, asOfDate, statementAmount }
        POST /api/reconcile  { action: 'add-transaction', account, name, type, date, amount, month }
+       POST /api/reconcile  { action: 'pay-card', cardAccount, cashAccount, amount, date, month }
+       POST /api/reconcile  { action: 'undo-payment', paymentId }
        GET  /api/reconcile?action=last&account=...
        POST /api/reconcile  { action: 'undo', account }
      ============================================================ */
@@ -680,6 +717,10 @@
     document.getElementById('detail-name').textContent = data.account.name;
     document.getElementById('detail-type').textContent = data.account.type || '';
 
+    // Add Payment only makes sense from a credit card's own detail page --
+    // paying "from" a cash account happens there, not the other way around.
+    document.getElementById('detail-pay-btn').style.display = isCredit ? 'block' : 'none';
+
     // Same red/green language and CR-suffix convention as the accounts
     // list (issue #11): no sign flip by account type -- a positive
     // runningTotal always means money owed/leaving, so it's red on both
@@ -781,6 +822,7 @@
       if (!t.isCleared) metaBits.push('<span class="uncleared">uncleared</span>');
       if (t.reconciled) metaBits.push('<span class="reconciled-tag">reconciled</span>');
       if (isUpcoming) metaBits.push('<span class="upcoming-tag">upcoming</span>');
+      if (t.transfer) metaBits.push('<span class="transfer-tag">payment</span>');
       const rowInner = `
           <div>
             <div class="txn-name">${t.payee}</div>
@@ -788,15 +830,24 @@
           </div>
           <div class="txn-amount ${isIncome ? 'income' : ''}">${amountText}</div>
       `;
-      html += SwipeActions.rowHTML(t.rowNumber, `txn-row ${t.reconciled ? 'reconciled' : ''} ${isUpcoming ? 'upcoming' : ''}`, rowInner, t.isCleared);
+      html += SwipeActions.rowHTML(t.rowNumber, `txn-row ${t.reconciled ? 'reconciled' : ''} ${isUpcoming ? 'upcoming' : ''}`, rowInner, t.isCleared, t.transfer);
     });
     listEl.innerHTML = html;
 
+    // Tapping a card-payment leg opens the Undo Payment menu instead of the
+    // normal edit sheet -- editing just one leg's amount/date would desync
+    // it from its matching leg on the other account, so this steers the
+    // user toward the all-or-nothing undo instead.
     listEl.querySelectorAll('.txn-row').forEach((row) => {
       row.addEventListener('click', () => {
         const rowNumber = parseInt(row.closest('.swx-wrap').dataset.row, 10);
         const txn = rows.find((t) => t.rowNumber === rowNumber);
-        if (txn) TransactionForm.open(txn);
+        if (!txn) return;
+        if (txn.transfer) {
+          openUndoPaymentMenu(txn);
+        } else {
+          TransactionForm.open(txn);
+        }
       });
     });
 
@@ -810,8 +861,20 @@
 
   // Swipe-left delete on the account detail list -- same endpoint as the
   // shared form's own Delete link, then an in-place refresh (no full-page
-  // loading flash), same as pull-to-refresh and the form's onDeleted.
+  // loading flash), same as pull-to-refresh and the form's onDeleted. A
+  // card-payment leg (txn.transfer) routes to undo-payment instead, which
+  // deletes BOTH legs by their shared Payment ID rather than just this row
+  // -- see swipe-actions.js's handleActionTap, which already shows the
+  // "Undo this card payment?" confirm copy for these rows.
   async function deleteDetailTxnViaSwipe(txn) {
+    if (txn.transfer) {
+      if (!txn.paymentId) {
+        throw new Error('This payment predates Payment ID tracking and can\'t be auto-undone -- delete each leg manually instead.');
+      }
+      await apiPost('/api/reconcile', { action: 'undo-payment', paymentId: txn.paymentId });
+      await fetchAndRenderAccountDetail(currentAccount);
+      return;
+    }
     const res = await fetch('/api/transactions-delete', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1203,6 +1266,127 @@
     } catch (err) {
       rcSetBusy(false);
       showAlert(err.message, 'Add transaction failed');
+    }
+  }
+
+  /* ---------------- add payment (credit card accounts only) ----------------
+     Logs a card payment as two Transfer=TRUE legs via
+     POST /api/reconcile { action: 'pay-card', cardAccount, cashAccount,
+     amount, date, month }. See api/reconcile.js's actionPayCard /
+     appendCardPaymentRows for the write side and the shared "Payment ID"
+     column that links the two rows for later undo. */
+
+  let cashAccountsCache = null; // [{ name, type }], non-credit accounts only
+  async function getCashAccounts() {
+    if (cashAccountsCache) return cashAccountsCache;
+    const data = await apiGet('/api/accounts-list');
+    cashAccountsCache = data.accounts.filter((a) => !(a.type || '').toLowerCase().includes('credit'));
+    return cashAccountsCache;
+  }
+
+  // "YYYY-MM" one calendar month earlier.
+  function monthMinusOne(monthStr) {
+    const [y, m] = monthStr.split('-').map(Number);
+    const d = new Date(Date.UTC(y, m - 1, 1));
+    d.setUTCMonth(d.getUTCMonth() - 1);
+    return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
+  }
+
+  // Same "touched" convention as the reconcile add-transaction form and the
+  // shared TransactionForm: re-guesses the billing month off the payment
+  // date until the user edits Billing month themselves, then their value
+  // sticks even if the date changes again afterward.
+  let payMonthTouched = false;
+  document.getElementById('pay-month').addEventListener('input', () => { payMonthTouched = true; });
+  document.getElementById('pay-date').addEventListener('change', () => {
+    if (!payMonthTouched) {
+      document.getElementById('pay-month').value = monthMinusOne(guessBillingMonth(document.getElementById('pay-date').value));
+    }
+  });
+
+  async function openPayCard() {
+    document.getElementById('pay-account-name').textContent = currentAccount;
+    document.getElementById('pay-account-name-2').textContent = currentAccount;
+    document.getElementById('pay-amount').value = '';
+    const todayStr = todayISO();
+    document.getElementById('pay-date').value = todayStr;
+    payMonthTouched = false;
+    document.getElementById('pay-month').value = monthMinusOne(guessBillingMonth(todayStr));
+
+    const cashSelect = document.getElementById('pay-cash-account');
+    cashSelect.innerHTML = '<option value="">Loading…</option>';
+    document.getElementById('pay-overlay').classList.add('open');
+    try {
+      const cashAccounts = await getCashAccounts();
+      cashSelect.innerHTML = cashAccounts.length
+        ? cashAccounts.map((a) => `<option value="${a.name}">${a.name}</option>`).join('')
+        : '<option value="">No cash/bank accounts found</option>';
+    } catch (err) {
+      cashSelect.innerHTML = '<option value="">Error loading accounts</option>';
+    }
+  }
+  function closePayCard() {
+    document.getElementById('pay-overlay').classList.remove('open');
+  }
+  function paySetBusy(busy) {
+    document.querySelectorAll('#pay-overlay button').forEach((b) => { b.disabled = busy; });
+  }
+
+  async function savePayCard() {
+    const rawAmount = document.getElementById('pay-amount').value;
+    const amount = Number(String(rawAmount).replace(/[^0-9.-]/g, ''));
+    const dateStr = document.getElementById('pay-date').value;
+    const monthStr = document.getElementById('pay-month').value;
+    const cashAccount = document.getElementById('pay-cash-account').value;
+
+    if (isNaN(amount) || amount <= 0) { showAlert('Enter a positive amount.'); return; }
+    if (!dateStr) { showAlert('Pick a payment date.'); return; }
+    if (!monthStr) { showAlert('Pick a billing month.'); return; }
+    if (!cashAccount) { showAlert('Choose which account is paying.'); return; }
+
+    paySetBusy(true);
+    try {
+      const r = await apiPost('/api/reconcile', {
+        action: 'pay-card',
+        cardAccount: currentAccount,
+        cashAccount,
+        amount,
+        date: dateStr,
+        month: monthStr,
+      });
+      paySetBusy(false);
+      closePayCard();
+      const flipNote = r.diaryFlipped ? ` ${currentAccount}'s Diary bill for ${monthStr} was marked Paid.` : '';
+      showAlert(`Payment logged on both ${currentAccount} and ${cashAccount}.${flipNote}`, 'Payment saved');
+      openAccountDetail(currentAccount);
+    } catch (err) {
+      paySetBusy(false);
+      showAlert(err.message, 'Payment failed');
+    }
+  }
+
+  // Tapping a payment-leg row (see renderDetailTxnList) opens this instead
+  // of the normal edit sheet -- a single "Undo Payment" action rather than
+  // free-form editing, since editing one leg without its match would leave
+  // the two accounts out of sync.
+  function openUndoPaymentMenu(txn) {
+    showConfirm(
+      `"${txn.payee}" is one leg of a card payment. Undoing it removes BOTH this entry and its matching entry on the other account.`,
+      () => doUndoPayment(txn),
+      { title: 'Card payment', confirmLabel: 'Undo Payment', cancelLabel: 'Close', danger: true }
+    );
+  }
+  async function doUndoPayment(txn) {
+    if (!txn.paymentId) {
+      showAlert('This payment predates Payment ID tracking and can\'t be auto-undone -- delete each leg manually instead.', 'Cannot undo');
+      return;
+    }
+    try {
+      const r = await apiPost('/api/reconcile', { action: 'undo-payment', paymentId: txn.paymentId });
+      showAlert(`Removed ${r.deletedCount} transaction(s).`, 'Payment undone');
+      await fetchAndRenderAccountDetail(currentAccount);
+    } catch (err) {
+      showAlert(err.message, 'Undo failed');
     }
   }
 
