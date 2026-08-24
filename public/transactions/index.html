@@ -105,7 +105,12 @@
   }
   .switch.on::after { transform: translateX(16px); }
   .date-header.upcoming { color: var(--upcoming, #60a5fa); }
-  .txn-row.upcoming { border: 1px dashed rgba(96,165,250,0.4); background: rgba(96,165,250,0.06); }
+  /* Layer the blue tint over the opaque card color instead of replacing it
+     with a low-alpha background -- a translucent row background lets the
+     swipe-reveal action buttons (shared/swipe-actions.js) positioned behind
+     every row show through at rest. Compositing the tint over `var(--card)`
+     keeps the resulting box fully opaque. */
+  .txn-row.upcoming { border: 1px dashed rgba(96,165,250,0.4); background: linear-gradient(rgba(96,165,250,0.06), rgba(96,165,250,0.06)), var(--card); }
   .txn-meta .upcoming-tag { color: var(--upcoming, #60a5fa); }
 </style>
 </head>
