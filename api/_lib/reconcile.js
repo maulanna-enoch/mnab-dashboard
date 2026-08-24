@@ -342,6 +342,36 @@ async function appendPlainTransactionRow(sheets, map, amountHeader, payeeHeader,
   });
 }
 
+// Growing a sheet's *data* (values.update/append) does NOT grow its
+// underlying grid -- the grid has its own fixed rowCount/columnCount, and
+// writing to a cell outside that grid fails outright ("Range ... exceeds
+// grid limits"), it doesn't auto-expand. Self-provisioning a brand new
+// column can walk right off the edge of a grid that happens to be sized to
+// exactly fit the existing headers (as this transactions tab's was: 16
+// columns, A:P, with no spare column for this PR's new "Payment ID").
+// Widen the grid first via an appendDimension batchUpdate -- the same
+// spreadsheets.batchUpdate surface getOrCreateLogSheet already uses to add
+// a whole new tab -- so the header write below always lands inside it.
+async function ensureSheetColumnCount(sheets, spreadsheetId, sheetName, requiredColumnCount) {
+  const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties' });
+  const sheet = (meta.data.sheets || []).find((s) => s.properties.title === sheetName);
+  if (!sheet) throw new Error(`Sheet "${sheetName}" not found`);
+  const currentColumnCount = (sheet.properties.gridProperties && sheet.properties.gridProperties.columnCount) || 0;
+  if (currentColumnCount >= requiredColumnCount) return;
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [{
+        appendDimension: {
+          sheetId: sheet.properties.sheetId,
+          dimension: 'COLUMNS',
+          length: requiredColumnCount - currentColumnCount,
+        },
+      }],
+    },
+  });
+}
+
 // Ensures `headerName` exists on the transactions tab's header row,
 // appending it as a new self-provisioned column (same pattern as the
 // Reconciled / Reconciled Date columns Reconcile.gs auto-added on its own
@@ -352,6 +382,7 @@ async function getOrCreateTransactionsColumn(sheets, map, headerName) {
   if (headerName in map) return map;
   const spreadsheetId = process.env.SHEET_ID;
   const nextIndex = Object.keys(map).length ? Math.max(...Object.values(map)) + 1 : 0;
+  await ensureSheetColumnCount(sheets, spreadsheetId, RECONCILE_SHEETS.transactions, nextIndex + 1);
   await sheets.spreadsheets.values.update({
     spreadsheetId,
     range: `${RECONCILE_SHEETS.transactions}!${columnLetter(nextIndex)}1`,
