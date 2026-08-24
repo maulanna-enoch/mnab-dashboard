@@ -446,39 +446,40 @@ async function appendCardPaymentRows(sheets, { cardAccount, cashAccount, amount,
   return { paymentId, cashRowNumber, cardRowNumber };
 }
 
-// Best-effort mirror of Payments.gs's other behavior (see
-// claude/MNAB-project-state.md and GitHub issue #8): if this card has a
-// Diary line item for the billing month being paid, currently "Billed", and
-// the payment covers it (amountPaid >= that row's Expense amount - 0.5,
-// matching this project's documented "whole-statement-only" assumption --
-// no partial-payment tracking), flip its Status to "Paid". Matches by Name
-// == cardAccount (Diary's bill rows are named after the card, same as any
-// other budget line item there) + Month + Status=Billed.
-//
-// Deliberately silent/non-fatal on anything that doesn't match cleanly (no
-// Diary sheet, missing columns, no matching row, wrong status) -- this is a
-// nice-to-have convenience, not something a guess-gone-wrong should ever be
-// allowed to block the actual payment write, which already happened by the
-// time this runs. Returns { flipped, reason? } so the caller can surface it.
-async function tryFlipDiaryBilledToPaid(sheets, { cardAccount, month, amountPaid }) {
+// Shared read of the Diary tab, used by both tryFlipDiaryBilledToPaid (a
+// write) and getDiaryBilledAmount (read-only, for the Add Payment form's
+// amount pre-fill) below. Deliberately just a fetch + light validation, with
+// no matching/write logic of its own, so neither of those two callers ends
+// up routed through the other -- each stays a single, independent read of
+// this same snapshot, avoiding any call-back-into-each-other cycle between
+// the write path and the read-only lookup as this file grows. Returns null
+// (never throws) if the sheet or its required columns aren't there.
+async function fetchDiarySheet(sheets) {
   const spreadsheetId = process.env.SHEET_ID;
   const sheetName = 'Diary';
   let map;
   try {
     map = await getHeaderMap(sheets, spreadsheetId, sheetName);
   } catch (err) {
-    return { flipped: false, reason: 'no-diary-sheet' };
+    return null;
   }
-  if (!('Name' in map) || !('Month' in map) || !('Status' in map)) {
-    return { flipped: false, reason: 'missing-columns' };
-  }
+  if (!('Name' in map) || !('Month' in map)) return null;
 
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: `${sheetName}!A2:Z`,
     valueRenderOption: 'UNFORMATTED_VALUE',
   });
-  const values = response.data.values || [];
+  return { spreadsheetId, sheetName, map, values: response.data.values || [] };
+}
+
+// Pure matcher over a fetchDiarySheet() result -- Name == cardAccount
+// (Diary's bill rows are named after the card, same as any other budget
+// line item there) + Month, and an optional Status filter (case-insensitive).
+function findDiaryRowMatch(diarySheet, { cardAccount, month, status }) {
+  if (!diarySheet) return null;
+  const { map, values } = diarySheet;
+  if (status && !('Status' in map)) return null;
   const monthSerial = dateToSerial(month);
 
   for (let i = 0; i < values.length; i++) {
@@ -486,20 +487,63 @@ async function tryFlipDiaryBilledToPaid(sheets, { cardAccount, month, amountPaid
     const name = row[map['Name']];
     if (!name || String(name).trim().toLowerCase() !== cardAccount.trim().toLowerCase()) continue;
     if (row[map['Month']] !== monthSerial) continue;
-    if (String(row[map['Status']] || '').trim().toLowerCase() !== 'billed') continue;
-
-    const billedAmount = 'Expense' in map ? Number(row[map['Expense']]) || 0 : 0;
-    if (amountPaid < billedAmount - 0.5) continue;
-
-    await sheets.spreadsheets.values.update({
-      spreadsheetId,
-      range: `${sheetName}!${columnLetter(map['Status'])}${i + 2}`,
-      valueInputOption: 'RAW',
-      requestBody: { values: [['Paid']] },
-    });
-    return { flipped: true, rowNumber: i + 2 };
+    if (status && String(row[map['Status']] || '').trim().toLowerCase() !== status.toLowerCase()) continue;
+    return { rowNumber: i + 2, row };
   }
-  return { flipped: false, reason: 'no-match' };
+  return null;
+}
+
+// Best-effort mirror of Payments.gs's other behavior (see
+// claude/MNAB-project-state.md and GitHub issue #8): if this card has a
+// Diary line item for the billing month being paid, currently "Billed", and
+// the payment covers it (amountPaid >= that row's Expense amount - 0.5,
+// matching this project's documented "whole-statement-only" assumption --
+// no partial-payment tracking), flip its Status to "Paid". Matches by Name
+// == cardAccount + Month + Status=Billed (see findDiaryRowMatch above).
+//
+// Deliberately silent/non-fatal on anything that doesn't match cleanly (no
+// Diary sheet, missing columns, no matching row, wrong status) -- this is a
+// nice-to-have convenience, not something a guess-gone-wrong should ever be
+// allowed to block the actual payment write, which already happened by the
+// time this runs. Returns { flipped, reason? } so the caller can surface it.
+async function tryFlipDiaryBilledToPaid(sheets, { cardAccount, month, amountPaid }) {
+  const diarySheet = await fetchDiarySheet(sheets);
+  if (!diarySheet) return { flipped: false, reason: 'no-diary-sheet' };
+  if (!('Status' in diarySheet.map)) return { flipped: false, reason: 'missing-columns' };
+
+  const match = findDiaryRowMatch(diarySheet, { cardAccount, month, status: 'Billed' });
+  if (!match) return { flipped: false, reason: 'no-match' };
+
+  const billedAmount = 'Expense' in diarySheet.map ? Number(match.row[diarySheet.map['Expense']]) || 0 : 0;
+  if (amountPaid < billedAmount - 0.5) return { flipped: false, reason: 'amount-below-billed' };
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: diarySheet.spreadsheetId,
+    range: `${diarySheet.sheetName}!${columnLetter(diarySheet.map['Status'])}${match.rowNumber}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [['Paid']] },
+  });
+  return { flipped: true, rowNumber: match.rowNumber };
+}
+
+// Read-only counterpart used by the Add Payment form to pre-fill the amount
+// field with what's actually billed for the selected month, instead of
+// starting blank. Finds the card's Diary "Billed" line for that month and
+// returns its Expense amount. Kept deliberately separate from (not routed
+// through) tryFlipDiaryBilledToPaid above -- this never writes, has no
+// amountPaid/already-covered guard, and can safely be called on every
+// open/month-change without side effects; the two only share the
+// fetch/match helpers, not each other.
+async function getDiaryBilledAmount(sheets, { cardAccount, month }) {
+  const diarySheet = await fetchDiarySheet(sheets);
+  if (!diarySheet) return { found: false };
+  if (!('Expense' in diarySheet.map)) return { found: false };
+
+  const match = findDiaryRowMatch(diarySheet, { cardAccount, month, status: 'Billed' });
+  if (!match) return { found: false };
+
+  const amount = Number(match.row[diarySheet.map['Expense']]) || 0;
+  return { found: true, amount };
 }
 
 // Finds every transactions-tab row tagged with `paymentId` and deletes them
@@ -730,6 +774,7 @@ module.exports = {
   appendPlainTransactionRow,
   appendCardPaymentRows,
   tryFlipDiaryBilledToPaid,
+  getDiaryBilledAmount,
   deletePaymentRows,
   shiftMonth,
   updateAccountLastReconciled,
