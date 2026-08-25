@@ -51,7 +51,12 @@
   display: none;
   align-items: flex-end;
   justify-content: center;
-  z-index: 10;
+  /* Above shared/bottom-nav.js's .bnv-bar (z-index: 10) -- otherwise the
+     nav bar, mounted after #txf-root in every host page's DOM, paints on
+     top of this overlay at equal z-index and obstructs the sheet's Save
+     button, which sits flush against the bottom of the viewport (issue:
+     nav interrupts transaction form / save button obstructed). */
+  z-index: 12;
 }
 .txf-overlay.open { display: flex; }
 .txf-sheet {
@@ -61,7 +66,11 @@
   overflow-y: auto;
   background: var(--card);
   border-radius: 16px 16px 0 0;
-  padding: 18px 16px 24px;
+  /* Bottom padding includes the safe-area inset, same as .txf-fab/.txf-toast
+     and every page body below -- without it the sheet's bottom edge (and
+     the Save button inside it) sits flush against the device's bottom
+     edge/home indicator with no breathing room. */
+  padding: 18px 16px calc(24px + env(safe-area-inset-bottom));
 }
 .txf-sheet-header {
   display: flex;
