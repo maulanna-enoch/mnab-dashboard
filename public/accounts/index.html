@@ -243,6 +243,10 @@
   .rc-field-label { font-size: 11px; color: var(--muted); font-weight: 600; margin: 12px 0 4px; display: block; }
   .rc-field {
     width: 100%;
+    /* see the matching comment on .txf-field in shared/transaction-form.css --
+       same iOS Safari date/month overflow fix, for the CC payment sheet's
+       #pay-date/#pay-month which use this class instead of .txf-field. */
+    min-width: 0;
     background: var(--bg);
     color: var(--text);
     border: 1px solid #374151;
