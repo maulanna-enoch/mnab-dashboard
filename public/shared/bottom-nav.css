@@ -1,0 +1,32 @@
+/* Shared bottom tab bar -- see bottom-nav.js. Every class here is prefixed
+   bnv- so it can't collide with a host page's own styles. */
+.bnv-bar {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  background: #14161b;
+  border-top: 1px solid #2a2e37;
+  padding: 8px 4px calc(8px + env(safe-area-inset-bottom));
+  z-index: 10;
+}
+.bnv-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 44px;
+  color: var(--muted, #9ca3af);
+  text-decoration: none;
+}
+.bnv-label {
+  font-size: 10.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.bnv-tab.bnv-active {
+  color: var(--accent, #22c55e);
+}
