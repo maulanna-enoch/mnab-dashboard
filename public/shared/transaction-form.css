@@ -130,6 +130,25 @@
 .txf-amount-rule { height: 1px; background: #374151; margin-top: 8px; }
 .txf-row-2 { display: flex; gap: 10px; }
 .txf-row-2 > div { flex: 1; min-width: 0; }
+
+/* iOS Safari can render the native date/month picker's internal text wider
+   than the input's own box inside a flex row, pushing the input past its
+   container and overflowing horizontally. Doesn't reproduce in Safari or
+   Brave on Mac. Forcing the shadow "datetime-edit" part to block level
+   keeps it inside the input's declared width. Scoped to the fields that hit
+   this -- the shared Add/Edit form's Date/Billing month here, plus the CC
+   payment sheet's Payment date/Billing month in accounts/index.html, which
+   also loads this stylesheet -- rather than applied to every date/month
+   input on the site.
+   Ref: https://github.com/twbs/bootstrap/issues/34433#issuecomment-1232800429 */
+#txf-f-date::-webkit-datetime-edit,
+#txf-f-month::-webkit-datetime-edit,
+#pay-date::-webkit-datetime-edit,
+#pay-month::-webkit-datetime-edit {
+  display: block;
+  padding: 0;
+}
+
 .txf-save-btn {
   width: 100%;
   padding: 12px;
