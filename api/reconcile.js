@@ -19,6 +19,7 @@ const {
   appendPlainTransactionRow,
   appendCardPaymentRows,
   tryFlipDiaryBilledToPaid,
+  tryFlipDiaryPaidToBilled,
   getDiaryBilledAmount,
   deletePaymentRows,
   shiftMonth,
@@ -335,13 +336,25 @@ async function actionUndoPayment(body, res) {
   }
 
   const sheets = getWriteSheetsClient();
-  const result = await deletePaymentRows(sheets, paymentId);
-  if (!result.deletedCount) {
+  const { deletedCount, cardAccount, month } = await deletePaymentRows(sheets, paymentId);
+  if (!deletedCount) {
     res.status(404).json({ error: 'Could not find any transactions for this payment -- they may already have been removed.' });
     return;
   }
 
-  res.status(200).json(result);
+  // Best-effort only, same contract as actionPayCard's forward flip above --
+  // never let a Diary-matching quirk fail an undo that's already happened.
+  // See tryFlipDiaryPaidToBilled's own comment (GitHub issue #37).
+  let diaryFlip = { flipped: false };
+  if (cardAccount && month) {
+    try {
+      diaryFlip = await tryFlipDiaryPaidToBilled(sheets, { cardAccount, month });
+    } catch (err) {
+      console.error('Diary Paid->Billed flip failed (non-fatal):', err);
+    }
+  }
+
+  res.status(200).json({ deletedCount, diaryFlipped: !!diaryFlip.flipped });
 }
 
 // Read-only. Looks up the card's Diary "Billed" line for a given billing

@@ -1223,7 +1223,8 @@
     }
     try {
       const r = await apiPost('/api/reconcile', { action: 'undo-payment', paymentId: txn.paymentId });
-      showAlert(`Removed ${r.deletedCount} transaction(s).`, 'Payment undone');
+      const flipNote = r.diaryFlipped ? ' Its Diary bill was marked Billed again.' : '';
+      showAlert(`Removed ${r.deletedCount} transaction(s).${flipNote}`, 'Payment undone');
       await fetchAndRenderAccountDetail(currentAccount);
     } catch (err) {
       showAlert(err.message, 'Undo failed');

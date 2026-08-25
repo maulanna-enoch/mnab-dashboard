@@ -557,6 +557,34 @@ async function tryFlipDiaryBilledToPaid(sheets, { cardAccount, month, amountPaid
   return { flipped: true, rowNumber: match.rowNumber };
 }
 
+// Reverse of tryFlipDiaryBilledToPaid above, for undo-payment (GitHub issue
+// #37): actionPayCard's forward flip marks a Diary "Billed" line "Paid" once
+// a payment covers it, but undoing that payment left the Diary line stuck on
+// "Paid" with no corresponding transaction anymore. Matches by Name ==
+// cardAccount + Month + Status=Paid (mirrors findDiaryRowMatch's other
+// direction) and flips it back to "Billed". No amount check here -- unlike
+// the forward flip, there's no partial-undo case to guard against; if the
+// payment that caused the flip is being removed, the bill is unambiguously
+// billed-but-unpaid again. Same best-effort/non-fatal contract as
+// tryFlipDiaryBilledToPaid: never let a Diary-matching quirk block the
+// undo, which already happened by the time this runs.
+async function tryFlipDiaryPaidToBilled(sheets, { cardAccount, month }) {
+  const diarySheet = await fetchDiarySheet(sheets);
+  if (!diarySheet) return { flipped: false, reason: 'no-diary-sheet' };
+  if (!('Status' in diarySheet.map)) return { flipped: false, reason: 'missing-columns' };
+
+  const match = findDiaryRowMatch(diarySheet, { cardAccount, month, status: 'Paid' });
+  if (!match) return { flipped: false, reason: 'no-match' };
+
+  await sheets.spreadsheets.values.update({
+    spreadsheetId: diarySheet.spreadsheetId,
+    range: `${diarySheet.sheetName}!${columnLetter(diarySheet.map['Status'])}${match.rowNumber}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [['Billed']] },
+  });
+  return { flipped: true, rowNumber: match.rowNumber };
+}
+
 // Read-only counterpart used by the Add Payment form to pre-fill the amount
 // field with what's actually billed for the selected month, instead of
 // starting blank. Finds the card's Diary "Billed" line for that month and
@@ -582,10 +610,18 @@ async function getDiaryBilledAmount(sheets, { cardAccount, month }) {
 // another still pending deletion in the same batch). Works even if only one
 // leg is still findable (e.g. the other was already removed by hand) --
 // callers surface `deletedCount` so the UI can say so.
+//
+// Also surfaces `cardAccount`/`month` (read off the Income leg -- see
+// appendCardPaymentRows's buildLeg calls, the card side is always the
+// 'Income' type) before anything is deleted, so the caller can pass them to
+// tryFlipDiaryPaidToBilled (GitHub issue #37) without the client having to
+// know or resend them. Both come back null if the Income leg isn't found or
+// the sheet is missing the columns needed to read it -- same
+// silent-degrade contract as the rest of this file's Diary-adjacent code.
 async function deletePaymentRows(sheets, paymentId) {
   const spreadsheetId = process.env.SHEET_ID;
   const map = await getHeaderMap(sheets, spreadsheetId, RECONCILE_SHEETS.transactions);
-  if (!('Payment ID' in map)) return { deletedCount: 0 };
+  if (!('Payment ID' in map)) return { deletedCount: 0, cardAccount: null, month: null };
 
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
@@ -595,8 +631,16 @@ async function deletePaymentRows(sheets, paymentId) {
   const values = response.data.values || [];
   const paymentIdCol = map['Payment ID'];
   const rowNumbers = [];
+  let cardAccount = null;
+  let month = null;
   values.forEach((row, i) => {
-    if (String(row[paymentIdCol] || '').trim() === String(paymentId).trim()) rowNumbers.push(i + 2);
+    if (String(row[paymentIdCol] || '').trim() !== String(paymentId).trim()) return;
+    rowNumbers.push(i + 2);
+    const isCardLeg = 'Income/Expense' in map && row[map['Income/Expense']] === 'Income';
+    if (isCardLeg && !cardAccount) {
+      if ('SOF' in map && row[map['SOF']]) cardAccount = String(row[map['SOF']]);
+      if ('Month' in map && typeof row[map['Month']] === 'number') month = serialToDate(row[map['Month']]);
+    }
   });
 
   rowNumbers.sort((a, b) => b - a);
@@ -604,7 +648,7 @@ async function deletePaymentRows(sheets, paymentId) {
     await deleteSheetRow(sheets, RECONCILE_SHEETS.transactions, rowNumber);
   }
 
-  return { deletedCount: rowNumbers.length };
+  return { deletedCount: rowNumbers.length, cardAccount, month };
 }
 
 async function updateAccountLastReconciled(sheets, accountsMap, rowNumber, asOfDate, statementAmount) {
@@ -805,6 +849,7 @@ module.exports = {
   appendPlainTransactionRow,
   appendCardPaymentRows,
   tryFlipDiaryBilledToPaid,
+  tryFlipDiaryPaidToBilled,
   getDiaryBilledAmount,
   deletePaymentRows,
   shiftMonth,
