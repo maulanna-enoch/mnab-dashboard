@@ -69,6 +69,19 @@
 .txf-field-label { font-size: 11px; color: var(--muted); }
 .txf-field {
   width: 100%;
+  /* iOS Safari gives native <input type="date">/<input type="month">
+     controls an intrinsic content width and, as a flex item, they default
+     to min-width: auto -- so width: 100% alone doesn't make them shrink,
+     and inside .txf-row-2 they can push past their column and overflow
+     horizontally. min-width: 0 here (on the input itself, not just its
+     .txf-row-2 wrapper div, which already had it) lets it actually shrink
+     to fit. Doesn't reproduce in Safari/Brave on Mac -- Chromium/Blink
+     don't have this quirk either, so this can't be verified in this
+     sandbox; needs an on-device iPhone check.
+     Ref: https://github.com/Sandersland/character_sheet/issues/235 (PR #241
+     there fixed the same bug this same way). Supersedes the ineffective
+     ::-webkit-datetime-edit attempt from PR #41 (issue #39). */
+  min-width: 0;
   background: var(--bg);
   color: var(--text);
   border: 1px solid #374151;
