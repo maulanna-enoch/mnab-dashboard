@@ -127,6 +127,13 @@ anything — safe to run repeatedly against real labeled email while
 checking the output looks right. Once you're happy, flip `DRY_RUN` to
 `false` in the script.
 
+While `DRY_RUN` is `true`, this also picks up threads already tagged
+`mnab/imported` — including any you marked in step 5 — so you can test
+the parser against your whole backlog, not just new mail. That inclusion
+only applies during dry runs; once `DRY_RUN` is `false`, already-imported
+threads go back to being excluded, so step 5's backlog stays skipped for
+real.
+
 ### 7. Install the trigger
 
 Once `DRY_RUN` is off, run `installEmailImportTrigger` once. From then
@@ -148,7 +155,10 @@ silently dropped either way.
 - It only ever **appends** new rows — nothing here edits or deletes
   existing rows in `transactions`.
 - While `DRY_RUN` is `true`, threads are never re-labeled as processed,
-  so re-running is repeatable for testing.
+  so re-running is repeatable for testing — and threads already labeled
+  `mnab/imported` are included rather than skipped, so dry runs can test
+  against your full backlog, not just new mail. Only live runs
+  (`DRY_RUN = false`) exclude already-imported threads.
 - A failed-transaction email still produces a row (so you have a record
   something was attempted), but with `Amount`/`Expense`/`Income`/`Total`
   all `0` and the payee prefixed `[FAILED TRANSFER]` — it can't affect
