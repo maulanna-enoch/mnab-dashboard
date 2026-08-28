@@ -90,7 +90,35 @@ In the Apps Script editor, pick `processMnabEmails` from the function
 dropdown and click **Run** once. Approve the Gmail + Sheets access it
 asks for.
 
-### 5. Dry-run it first
+### 5. Skip the backlog, if you have one
+
+**Only needed if a label already has old email under it** — e.g. you
+reused a label you'd already been using for a while, so it's got hundreds
+of pre-existing messages. If your labels are freshly created with nothing
+under them yet, skip straight to step 6.
+
+The script has no concept of "old" vs "new" mail — it imports anything
+carrying a known label that isn't already tagged `mnab/imported`. Pointed
+at a label with an existing backlog, it would try to import every single
+one of those old messages as a transaction the first time it runs.
+
+Run `markExistingMnabEmailsAsAlreadyImported` (same function dropdown,
+**Run** once) to fix this. It applies the `mnab/imported` label to every
+thread the normal import would currently match — same search, same label
+— but never reads a message or writes a row to the sheet. After it runs,
+only mail arriving under the label from that point on gets imported.
+
+It's capped at 100 threads per run (a Gmail limit). Check the execution
+log — if it says it hit that cap, just run it again until it logs 0
+remaining. It's also safe to run more than once regardless: once a thread
+is labeled `mnab/imported`, it stops matching and won't be touched again.
+
+This step deliberately ignores `DRY_RUN` — it never writes rows or reads
+message content either way, only applies a Gmail label, so it does real
+(if easily-reversible-by-hand) label changes even while `DRY_RUN` is
+still `true`.
+
+### 6. Dry-run it first
 
 The script ships with `DRY_RUN = true`. With that on, running
 `processMnabEmails` logs exactly what row it *would* write (**View →
@@ -99,13 +127,13 @@ anything — safe to run repeatedly against real labeled email while
 checking the output looks right. Once you're happy, flip `DRY_RUN` to
 `false` in the script.
 
-### 6. Install the trigger
+### 7. Install the trigger
 
 Once `DRY_RUN` is off, run `installEmailImportTrigger` once. From then
 on, `processMnabEmails` runs automatically every 5 minutes — no more
 manual runs needed.
 
-### 7. (Optional) Enable the AI fallback
+### 8. (Optional) Enable the AI fallback
 
 **Project Settings (gear icon) → Script Properties → Add script
 property**, key `ANTHROPIC_API_KEY`, value = an Anthropic API key.
@@ -125,6 +153,11 @@ silently dropped either way.
   something was attempted), but with `Amount`/`Expense`/`Income`/`Total`
   all `0` and the payee prefixed `[FAILED TRANSFER]` — it can't affect
   your balance.
+- `markExistingMnabEmailsAsAlreadyImported` (step 5 above) is the one
+  exception to all of the above: it ignores `DRY_RUN` and does make a real
+  change (applying the `mnab/imported` label) even before you've flipped
+  `DRY_RUN` off, since that's the entire point of it. It never touches the
+  sheet or reads message content, though — only Gmail labels.
 
 ## What's next
 
