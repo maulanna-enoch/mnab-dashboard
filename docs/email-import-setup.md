@@ -19,10 +19,10 @@ if you need to recover the source).
 
 ## How it works, in short
 
-Each bank/e-wallet gets a nested Gmail label (`mnab/mandiri`, `mnab/ocbc`,
-...) under a parent `mnab` label. A Gmail filter per sender applies both
-labels automatically. An Apps Script trigger polls for labeled mail every
-5 minutes, and for each message:
+Each bank/e-wallet gets its own Gmail label (`mnab/mandiri`, `mnab/ocbc`,
+...). A Gmail filter per sender applies that one label. An Apps Script
+trigger polls for mail carrying any of the known labels every 5 minutes,
+and for each message:
 
 1. **Detects which email template** the sender used (some banks send more
    than one structurally different layout — confirmed with OCBC, which
@@ -50,26 +50,29 @@ labels automatically. An Apps Script trigger polls for labeled mail every
 ### 1. Create the Gmail labels
 
 In Gmail: **Settings → See all settings → Labels → Create new label.**
-Create:
+Create one label per bank you want to support — just the specific label,
+no separate parent label needed:
 
-- `mnab`
 - `mnab/mandiri`
 - `mnab/ocbc`
 
-(Nested-looking labels like `mnab/mandiri` are just ordinary Gmail labels
-with a `/` in the name — Gmail displays them nested, but there's nothing
-special to configure.)
+(A label named `mnab/mandiri` is just an ordinary Gmail label with a `/`
+in the name — Gmail nests it under an "mnab" grouping in the sidebar for
+display purposes only. There's no real `mnab` label to create separately,
+and the script doesn't need one either.)
 
-### 2. Create a filter per bank
+### 2. Create one filter per bank
 
 **Settings → Filters and Blocked Addresses → Create a new filter.**
-Match on the sender, then under "Apply the label" pick **both** the
-parent and the specific child label:
+Match on the sender, then under "Apply the label" pick that bank's single
+label. (Gmail's filter UI only allows one label per rule anyway, so this
+is also the only thing that's actually possible — no need to juggle
+multiple labels per filter.)
 
-| Bank | Match | Labels to apply |
+| Bank | Match | Label to apply |
 |---|---|---|
-| Mandiri (Livin') | `from:(noreply.livin@bankmandiri.co.id)` | `mnab`, `mnab/mandiri` |
-| OCBC | `from:(notifikasi@ocbc.id)` | `mnab`, `mnab/ocbc` |
+| Mandiri (Livin') | `from:(noreply.livin@bankmandiri.co.id)` | `mnab/mandiri` |
+| OCBC | `from:(notifikasi@ocbc.id)` | `mnab/ocbc` |
 
 Add a new row here (new filter + new label) any time a new bank/e-wallet
 needs to be supported — no other setup changes with it.
@@ -92,7 +95,7 @@ asks for.
 The script ships with `DRY_RUN = true`. With that on, running
 `processMnabEmails` logs exactly what row it *would* write (**View →
 Logs**, or Ctrl+Enter) without touching the sheet or re-labeling
-anything — safe to run repeatedly against real `mnab`-labeled email while
+anything — safe to run repeatedly against real labeled email while
 checking the output looks right. Once you're happy, flip `DRY_RUN` to
 `false` in the script.
 
