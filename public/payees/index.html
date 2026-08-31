@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>Payees · MNAB</title>
+<link rel="icon" type="image/png" href="/favicon.png" />
+<link rel="stylesheet" href="/shared/bottom-nav.css" />
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0f1115;
+    --card: #1a1d24;
+    --text: #f4f4f5;
+    --muted: #9ca3af;
+    --accent: #22c55e;
+    --negative: #e24b4a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 24px 16px calc(100px + env(safe-area-inset-bottom));
+  }
+  .wrap { max-width: 420px; margin: 0 auto; }
+  .back-link {
+    display: block;
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 0.85rem;
+    margin-bottom: 4px;
+    cursor: pointer;
+  }
+  h1 {
+    font-size: 1.1rem;
+    font-weight: 500;
+    color: var(--muted);
+    margin: 0 0 16px;
+    text-align: center;
+  }
+  .sub { font-size: 0.85rem; color: var(--muted); }
+  .error { color: #f87171; font-size: 0.9rem; }
+  .loading { color: var(--muted); font-size: 0.85rem; text-align: center; padding: 24px 0; }
+
+  .backfill-btn {
+    width: 100%;
+    padding: 10px;
+    border-radius: 10px;
+    border: 1px dashed #374151;
+    background: transparent;
+    color: var(--muted);
+    font-size: 0.8rem;
+    margin-bottom: 16px;
+    cursor: pointer;
+  }
+  .backfill-btn:disabled { opacity: 0.5; }
+  .backfill-hint { font-size: 0.72rem; color: var(--muted); text-align: center; margin: -10px 0 16px; }
+
+  .payee-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--card);
+    border-radius: 14px;
+    padding: 14px 16px;
+    margin-bottom: 8px;
+    cursor: pointer;
+  }
+  .payee-name { font-size: 0.9rem; }
+  .payee-status { display: flex; align-items: center; gap: 6px; font-size: 0.72rem; color: var(--muted); margin-top: 3px; }
+  .payee-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
+  .payee-dot.set { background: var(--accent); }
+  .payee-coords { text-align: right; font-size: 0.72rem; color: var(--muted); }
+
+  .field-label { font-size: 11px; color: var(--muted); font-weight: 600; margin: 12px 0 4px; display: block; }
+  .field {
+    width: 100%;
+    background: var(--card);
+    color: var(--text);
+    border: 1px solid #374151;
+    border-radius: 8px;
+    padding: 9px 10px;
+    font-size: 14px;
+  }
+  .hint { font-size: 10.5px; color: var(--muted); margin: 6px 0 0; line-height: 1.4; }
+  .btn {
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: none;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .btn-primary { background: var(--accent); color: #0f1115; flex: 1; }
+  .btn-ghost { background: transparent; color: var(--muted); border: 1px solid #374151; }
+  .btn:disabled { opacity: 0.5; cursor: default; }
+  .actions-row { display: flex; gap: 8px; margin-top: 16px; }
+  .actions-row .btn { flex: 1; }
+</style>
+</head>
+<body>
+
+<div class="wrap" id="screen-list">
+  <a class="back-link" href="/accounts">← Accounts</a>
+  <h1>Payees</h1>
+  <button class="backfill-btn" id="backfill-btn">Import payees from transaction history</button>
+  <p class="backfill-hint">Adds any payee from your past transactions that isn't listed below yet. Safe to run again any time -- never touches a payee that already has a row.</p>
+
+  <div id="payees-loading" class="loading">Loading…</div>
+  <div id="payees-error" class="error" style="display:none;"></div>
+  <div id="payee-list"></div>
+</div>
+
+<div class="wrap" id="screen-detail" style="display:none;">
+  <a class="back-link" onclick="gotoList()">← Payees</a>
+  <h1 id="detail-title">Payee</h1>
+
+  <label class="field-label">Latitude</label>
+  <input type="text" inputmode="decimal" class="field" id="edit-lat" placeholder="e.g. -6.2088" />
+  <label class="field-label">Longitude</label>
+  <input type="text" inputmode="decimal" class="field" id="edit-lon" placeholder="e.g. 106.8456" />
+  <p class="hint">
+    Raw coordinates only -- no address lookup. In Google Maps, long-press the
+    spot to drop a pin; the two numbers shown are latitude then longitude --
+    copy them in here.
+  </p>
+  <p class="hint">
+    This is a manual override. Day to day, a payee's location updates on its
+    own from the location-pin toggle on the transaction form when you save
+    a transaction near them -- use this page to fix a coordinate that
+    drifted, or to set one for a payee (like a recurring online biller)
+    you'll never actually be standing at.
+  </p>
+  <div id="detail-error" class="error" style="display:none; margin-top:8px;"></div>
+
+  <div class="actions-row">
+    <button class="btn btn-ghost" id="clear-btn">Clear location</button>
+    <button class="btn btn-primary" id="save-btn">Save</button>
+  </div>
+</div>
+
+<div id="bnv-root"></div>
+
+<script src="/shared/bottom-nav.js"></script>
+<script>
+  async function apiGet(url) {
+    const res = await fetch(url);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    return data;
+  }
+  async function apiPost(url, body) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    return data;
+  }
+
+  let payees = [];
+  let currentPayee = null;
+
+  function goto(id) {
+    ['list', 'detail'].forEach((s) => {
+      document.getElementById('screen-' + s).style.display = 'none';
+    });
+    document.getElementById('screen-' + id).style.display = 'block';
+    window.scrollTo(0, 0);
+  }
+  function gotoList() { goto('list'); loadPayees(); }
+
+  function renderList() {
+    const listEl = document.getElementById('payee-list');
+    if (!payees.length) {
+      listEl.innerHTML = '<p class="sub">No payees yet -- add a transaction, or use "Import payees from transaction history" above.</p>';
+      return;
+    }
+    listEl.innerHTML = payees.map((p) => {
+      const hasCoords = p.lat != null && p.lon != null;
+      const coordsText = hasCoords ? `${p.lat.toFixed(4)}, ${p.lon.toFixed(4)}` : '';
+      return `
+        <div class="payee-row" data-name="${p.name}">
+          <div>
+            <div class="payee-name">${p.name}</div>
+            <div class="payee-status"><span class="payee-dot ${hasCoords ? 'set' : ''}"></span>${hasCoords ? 'Location set' : 'No location'}</div>
+          </div>
+          <div class="payee-coords">${coordsText}</div>
+        </div>
+      `;
+    }).join('');
+
+    listEl.querySelectorAll('.payee-row').forEach((row) => {
+      row.addEventListener('click', () => openDetail(row.dataset.name));
+    });
+  }
+
+  async function loadPayees() {
+    const loadingEl = document.getElementById('payees-loading');
+    const errorEl = document.getElementById('payees-error');
+    loadingEl.style.display = 'block';
+    errorEl.style.display = 'none';
+    try {
+      const data = await apiGet('/api/payees-list');
+      payees = data.payees || [];
+      renderList();
+      loadingEl.style.display = 'none';
+    } catch (err) {
+      loadingEl.style.display = 'none';
+      errorEl.textContent = 'Couldn\'t load payees: ' + err.message;
+      errorEl.style.display = 'block';
+    }
+  }
+
+  function openDetail(name) {
+    currentPayee = payees.find((p) => p.name === name);
+    if (!currentPayee) return;
+    document.getElementById('detail-title').textContent = currentPayee.name;
+    document.getElementById('edit-lat').value = currentPayee.lat != null ? currentPayee.lat : '';
+    document.getElementById('edit-lon').value = currentPayee.lon != null ? currentPayee.lon : '';
+    document.getElementById('detail-error').style.display = 'none';
+    goto('detail');
+  }
+
+  function setDetailBusy(busy) {
+    document.querySelectorAll('#screen-detail button').forEach((b) => { b.disabled = busy; });
+  }
+
+  async function saveDetail() {
+    if (!currentPayee) return;
+    const lat = document.getElementById('edit-lat').value.trim();
+    const lon = document.getElementById('edit-lon').value.trim();
+    const errorEl = document.getElementById('detail-error');
+    errorEl.style.display = 'none';
+
+    if (!lat || !lon) {
+      errorEl.textContent = 'Enter both latitude and longitude, or use "Clear location" instead.';
+      errorEl.style.display = 'block';
+      return;
+    }
+
+    setDetailBusy(true);
+    try {
+      await apiPost('/api/payees-list', { action: 'set-coords', name: currentPayee.name, lat, lon });
+      setDetailBusy(false);
+      gotoList();
+    } catch (err) {
+      setDetailBusy(false);
+      errorEl.textContent = err.message;
+      errorEl.style.display = 'block';
+    }
+  }
+
+  async function clearDetail() {
+    if (!currentPayee) return;
+    if (!confirm(`Clear the saved location for "${currentPayee.name}"?`)) return;
+    setDetailBusy(true);
+    try {
+      await apiPost('/api/payees-list', { action: 'set-coords', name: currentPayee.name, lat: null, lon: null });
+      setDetailBusy(false);
+      gotoList();
+    } catch (err) {
+      setDetailBusy(false);
+      const errorEl = document.getElementById('detail-error');
+      errorEl.textContent = err.message;
+      errorEl.style.display = 'block';
+    }
+  }
+
+  async function runBackfill() {
+    const btn = document.getElementById('backfill-btn');
+    btn.disabled = true;
+    btn.textContent = 'Importing…';
+    try {
+      const r = await apiPost('/api/payees-list', { action: 'backfill' });
+      btn.textContent = 'Import payees from transaction history';
+      btn.disabled = false;
+      alert(`Added ${r.added} new payee(s) from transaction history.`);
+      loadPayees();
+    } catch (err) {
+      btn.textContent = 'Import payees from transaction history';
+      btn.disabled = false;
+      alert('Import failed: ' + err.message);
+    }
+  }
+
+  document.getElementById('save-btn').addEventListener('click', saveDetail);
+  document.getElementById('clear-btn').addEventListener('click', clearDetail);
+  document.getElementById('backfill-btn').addEventListener('click', runBackfill);
+
+  // Not one of BottomNav's four tabs -- 'payees' matches nothing in its TABS
+  // list, so this just leaves every tab unhighlighted rather than requiring
+  // a change to the shared 4-tab bar for a secondary/override page.
+  BottomNav.mount(document.getElementById('bnv-root'), { active: 'payees' });
+
+  loadPayees();
+</script>
+</body>
+</html>
