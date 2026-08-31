@@ -236,12 +236,118 @@ function buildTransactionRow({ payee, type, sof, dateSerial, monthSerial, cleare
   return [payee, type, sof, dateSerial, monthSerial, cleared, amount, expense, income, total, notes || ''];
 }
 
+// See issue #52. `Payees` is a brand-new tab (not one auto-provisioned by
+// legacy Apps Script), so -- like Accounts/transactions/etc. -- it uses a
+// plain fixed A:D range rather than header-name lookup; header-name lookup
+// in this codebase is reserved for columns Reconcile.gs bolted on after the
+// fact in an unpredictable order (see MNAB-project-state.md).
+//
+// Columns: Payee, Lat, Lon, Updated At (Updated At is an audit trail for
+// coordinate edits only -- it's never read back for logic).
+const PAYEES_RANGE = 'Payees!A2:D';
+
+function normalizePayeeName(name) {
+  return String(name || '').trim().toLowerCase();
+}
+
+// `sheetsClient` is optional -- pass the write client when a caller already
+// has one open (e.g. mid-upsert) so the read-then-write stays on one
+// authenticated client; falls back to the read-only client otherwise.
+async function fetchPayeeRows(sheetsClient) {
+  const sheets = sheetsClient || getSheetsClient();
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId: process.env.SHEET_ID,
+    range: PAYEES_RANGE,
+    valueRenderOption: 'UNFORMATTED_VALUE',
+  });
+
+  const rows = response.data.values || [];
+  const result = [];
+  rows.forEach((row, i) => {
+    const name = (row[0] || '').toString().trim();
+    if (!name) return;
+    const lat = row[1] === '' || row[1] === undefined ? null : Number(row[1]);
+    const lon = row[2] === '' || row[2] === undefined ? null : Number(row[2]);
+    result.push({
+      rowNumber: i + 2,
+      name,
+      lat: Number.isFinite(lat) ? lat : null,
+      lon: Number.isFinite(lon) ? lon : null,
+      updatedAt: row[3] || '',
+    });
+  });
+  return result;
+}
+
+function findPayeeRow(rows, name) {
+  const key = normalizePayeeName(name);
+  return rows.find((r) => normalizePayeeName(r.name) === key) || null;
+}
+
+// Ensures a `Payees` row exists for `name` -- appends one (existence-only,
+// blank coordinates) if it's not there yet. If `lat`/`lon` are both finite
+// numbers, also (over)writes that row's coordinates, stamping `Updated At`.
+// This one function backs both call sites: transactions-add.js's automatic
+// per-save upsert (existence always; coords only when captured AND the
+// location-pin toggle was left on) and the Payees page's manual-override
+// "Save" action (coords always; existence as a side effect for a
+// never-transacted payee being pre-seeded).
+async function upsertPayee(writeSheetsClient, { name, lat, lon }) {
+  const trimmedName = String(name || '').trim();
+  if (!trimmedName) return;
+
+  const hasCoords = Number.isFinite(lat) && Number.isFinite(lon);
+  const rows = await fetchPayeeRows(writeSheetsClient);
+  const existing = findPayeeRow(rows, trimmedName);
+
+  if (existing) {
+    if (!hasCoords) return; // row already exists, no coordinate to write -- nothing to do
+    await writeSheetsClient.spreadsheets.values.update({
+      spreadsheetId: process.env.SHEET_ID,
+      range: `Payees!B${existing.rowNumber}:D${existing.rowNumber}`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [[lat, lon, new Date().toISOString()]] },
+    });
+    return;
+  }
+
+  const row = hasCoords
+    ? [trimmedName, lat, lon, new Date().toISOString()]
+    : [trimmedName, '', '', ''];
+  await writeSheetsClient.spreadsheets.values.append({
+    spreadsheetId: process.env.SHEET_ID,
+    range: 'Payees!A:D',
+    valueInputOption: 'RAW',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: { values: [row] },
+  });
+}
+
+// Manual "Clear location" action on the Payees page. No-op if the payee
+// has no row at all (nothing to clear).
+async function clearPayeeCoords(writeSheetsClient, name) {
+  const rows = await fetchPayeeRows(writeSheetsClient);
+  const existing = findPayeeRow(rows, name);
+  if (!existing) return;
+  await writeSheetsClient.spreadsheets.values.update({
+    spreadsheetId: process.env.SHEET_ID,
+    range: `Payees!B${existing.rowNumber}:D${existing.rowNumber}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [['', '', '']] },
+  });
+}
+
 module.exports = {
   fetchInstallmentRows,
   fetchDiaryRows,
   fetchAccountRows,
   fetchTransactionRows,
   buildTransactionRow,
+  fetchPayeeRows,
+  findPayeeRow,
+  upsertPayee,
+  clearPayeeCoords,
+  normalizePayeeName,
   getSheetsClient,
   getWriteSheetsClient,
   getSheetGridId,
