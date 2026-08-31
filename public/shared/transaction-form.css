@@ -108,14 +108,22 @@
 /* Payee field + its location-pin toggle (issue #52). The toggle is hidden
    by default (transaction-form.js only reveals it once geolocation actually
    returns a position) and reflects whether saving this transaction will
-   also update this payee's stored coordinate. */
+   also update this payee's stored coordinate. .txf-loc-control wraps the
+   toggle plus the distance-to-payee label (issue #52 follow-up) so the
+   label reads as attached to the pin icon rather than floating loose. */
 .txf-payee-row { display: flex; align-items: flex-start; gap: 8px; }
 .txf-payee-row .txf-payee-input { flex: 1; }
-.txf-loc-toggle {
+.txf-loc-control {
   flex-shrink: 0;
+  margin: 4px 0 10px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.txf-loc-toggle {
   width: 36px;
   height: 36px;
-  margin: 4px 0 10px;
   border-radius: 8px;
   border: 1px solid #374151;
   background: var(--bg);
@@ -126,6 +134,14 @@
   cursor: pointer;
 }
 .txf-loc-toggle.active { border-color: var(--accent); color: var(--accent); background: rgba(34,197,94,0.1); }
+.txf-loc-dist {
+  font-size: 9.5px;
+  font-weight: 600;
+  color: var(--accent);
+  line-height: 1;
+  min-height: 10px;
+  white-space: nowrap;
+}
 .txf-loc-hint { font-size: 10.5px; color: var(--muted); margin: -6px 0 10px; }
 
 /* The whole card is the tap target, not just the shrink-wrapped <input> --

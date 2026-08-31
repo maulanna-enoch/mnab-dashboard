@@ -73,6 +73,11 @@ payees that aren't already listed, never touches existing rows.
 - **Payees** (reachable from the Accounts page) is the manual-override
   path: fix a coordinate that drifted, or pre-set one for a payee you'll
   never actually be standing at (e.g. a recurring online biller).
+- Whenever the device position is known and the typed/selected payee
+  already has a stored coordinate, a small distance (e.g. `80m` or
+  `11.9km`) appears right under the location-pin toggle — purely
+  informational, no color-coding by distance. It stays blank for a
+  brand-new payee or one with no location on file yet.
 
 ## What this deliberately does NOT do (see issue #52 for the reasoning)
 
