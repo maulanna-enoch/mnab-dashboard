@@ -14,6 +14,7 @@ const {
   sumClearedTransactions,
   sumCumulativeClearedTransactions,
   markRowsReconciled,
+  markRowsCleared,
   unmarkRowsReconciled,
   appendAdjustmentRow,
   appendPlainTransactionRow,
@@ -249,6 +250,50 @@ async function actionAddTransaction(body, res) {
   });
 
   res.status(200).json({ ok: true });
+}
+
+// New: "Clear existing transactions" option in the reconcile mismatch flow --
+// alongside "Add adjustment" and "Add transaction", this lets the user
+// resolve a variance by marking something *already logged* on this account
+// (just not yet Cleared) as Cleared, rather than inserting a plug row or a
+// brand-new transaction. Mirrors actionAddTransaction's contract: a plain
+// write, the client re-runs `calculate` afterward to see the updated book
+// balance.
+async function actionClearTransactions(body, res) {
+  const { account: accountName, rowNumbers } = body || {};
+  if (!accountName) {
+    res.status(400).json({ error: 'account is required.' });
+    return;
+  }
+  if (!Array.isArray(rowNumbers) || !rowNumbers.length) {
+    res.status(400).json({ error: 'Select at least one transaction to clear.' });
+    return;
+  }
+  const cleanRowNumbers = [...new Set(rowNumbers.map((n) => Number(n)))].filter((n) => Number.isInteger(n) && n > 1);
+  if (!cleanRowNumbers.length) {
+    res.status(400).json({ error: 'No valid transactions selected.' });
+    return;
+  }
+
+  const sheets = getWriteSheetsClient();
+  const { map: txnMap, rows: txnRows } = await fetchTransactionsForReconcile(sheets);
+
+  // Validate against the current sheet state rather than trusting whatever
+  // the client had cached -- guards against a row that was edited, deleted,
+  // or already cleared elsewhere (e.g. another tab) since the reconcile
+  // sheet was opened, and against clearing a wrong-account row by mistake.
+  const rowsByNumber = new Map(txnRows.map((r) => [r.rowNumber, r]));
+  const badRow = cleanRowNumbers.find((n) => {
+    const r = rowsByNumber.get(n);
+    return !r || !r.sof || r.sof.toLowerCase() !== String(accountName).toLowerCase() || r.isCleared;
+  });
+  if (badRow !== undefined) {
+    res.status(409).json({ error: 'One or more selected transactions are no longer uncleared on this account -- refresh and try again.' });
+    return;
+  }
+
+  await markRowsCleared(sheets, txnMap, cleanRowNumbers);
+  res.status(200).json({ ok: true, clearedCount: cleanRowNumbers.length });
 }
 
 // New: "Add Payment" on a credit card's account detail page (besides
@@ -614,6 +659,8 @@ module.exports = async (req, res) => {
         return await actionAddAdjustment(req.body, res);
       case 'add-transaction':
         return await actionAddTransaction(req.body, res);
+      case 'clear-transactions':
+        return await actionClearTransactions(req.body, res);
       case 'pay-card':
         return await actionPayCard(req.body, res);
       case 'undo-payment':
@@ -621,7 +668,7 @@ module.exports = async (req, res) => {
       case 'undo':
         return await actionUndo(req.body, res);
       default:
-        res.status(400).json({ error: 'Unknown or missing action. Use one of: calculate, confirm, add-adjustment, add-transaction, pay-card, undo-payment, undo.' });
+        res.status(400).json({ error: 'Unknown or missing action. Use one of: calculate, confirm, add-adjustment, add-transaction, clear-transactions, pay-card, undo-payment, undo.' });
     }
   } catch (err) {
     console.error(err);
