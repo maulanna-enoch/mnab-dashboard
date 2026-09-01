@@ -41,9 +41,20 @@ and for each message:
    parser can't (only if an API key is configured — see below). If even
    that fails, the row still gets written, flagged `[NEEDS REVIEW]`, so
    nothing is ever silently dropped.
-5. Writes the row as `Pending = TRUE`. Nothing here marks anything
-   `Cleared` or `Reconciled` — that's still entirely a manual step, same
-   as today.
+5. Writes the row as `Pending = TRUE`, stamped with that email's Gmail
+   message ID (a new `Email Message ID` column). Nothing here marks
+   anything `Cleared` or `Reconciled` — that's still entirely a manual
+   step, same as today.
+
+Two things guard against the same email ending up as two rows — see
+"Duplicate protection" below for the full explanation:
+
+- Only one run of the importer can ever be doing work at a time (a script
+  lock), so an overlapping trigger/manual run can't race a slow one.
+- Every message's ID is checked against that new `Email Message ID`
+  column before it's processed, regardless of whether its thread got
+  labeled — so even a run that crashes partway through can't leave behind
+  a duplicate on its next attempt.
 
 ## One-time setup
 
@@ -147,6 +158,41 @@ property**, key `ANTHROPIC_API_KEY`, value = an Anthropic API key.
 Without this, emails the deterministic parser can't handle land as a
 flagged `[NEEDS REVIEW]` row instead of attempting AI extraction — never
 silently dropped either way.
+
+## Duplicate protection
+
+The `mnab/imported` thread label (used throughout this guide) is the
+first line of defense against re-importing the same email, but it's
+thread-level, not message-level — two things could historically slip
+past it and land as two rows for one real transaction:
+
+1. **Overlapping runs.** If a run takes long enough for the next
+   5-minute trigger to fire before it finishes (or a manual run overlaps
+   the trigger), both could find the same not-yet-labeled thread and
+   both write a row for it. Fixed with a script-wide lock: `processMnabEmails`
+   grabs it at the start and holds it for the whole run, so only one
+   execution is ever doing real work at a time. A run that can't get the
+   lock within 30 seconds just logs that and exits — it runs again
+   normally on the next trigger.
+2. **A run that crashes between writing a row and labeling its thread**
+   (Apps Script's 6-minute execution cap, a thrown error, a transient
+   quota error). The thread is left unlabeled, so the next run would
+   otherwise pick the same message back up and write it again. Fixed
+   with a message-level guard: every row is stamped with that email's
+   Gmail message ID in a new `Email Message ID` column (auto-provisioned
+   the same way `Pending` is), and every message's ID is checked against
+   that column before it's processed — independent of whether its thread
+   ever got labeled. This check runs during `DRY_RUN` too, so a preview
+   run accurately shows "already imported, skipped" rather than a
+   would-be duplicate.
+
+This only prevents *new* duplicates going forward — it can't retroactively
+catch anything already duplicated by an earlier version of the script,
+since those older rows were written before the `Email Message ID` column
+existed and were never stamped. If you suspect old duplicate rows are
+already sitting in `transactions`, they'll need a manual look (matching
+Payee/Amount/Date), or ask for a one-off script to help surface likely
+candidates.
 
 ## Safety notes
 
