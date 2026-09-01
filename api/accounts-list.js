@@ -14,7 +14,11 @@ module.exports = async (req, res) => {
       ...a,
       lastReconciledAt: lastReconciledByName[String(a.name).trim().toLowerCase()] || null,
     }));
-    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
+    // No caching: lastReconciledAt (and the balances shown alongside it) must
+    // reflect the current sheet state every time the accounts page opens --
+    // an s-maxage here previously let Vercel's edge cache serve up to a few
+    // minutes of stale post-reconciliation data.
+    res.setHeader('Cache-Control', 'no-store');
     res.status(200).json({ accounts: accountsWithReconciled, updatedAt: new Date().toISOString() });
   } catch (err) {
     console.error(err);
