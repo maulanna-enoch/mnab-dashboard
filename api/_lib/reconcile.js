@@ -263,6 +263,26 @@ async function markRowsReconciled(sheets, map, rowNumbers, asOfDate) {
   });
 }
 
+// Marks a set of transactions-tab rows Cleared (only the Cleared column --
+// leaves Reconciled/Reconciled Date untouched). Used by the reconcile
+// mismatch flow's "clear existing transactions" option: instead of adding a
+// brand-new transaction or a plug adjustment row, the user can pick
+// something already logged but not yet cleared and clear it in place, then
+// let the client re-run `calculate` to see the updated book balance. Mirrors
+// markRowsReconciled's batchUpdate-of-single-cells shape.
+async function markRowsCleared(sheets, map, rowNumbers) {
+  if (!rowNumbers.length) return;
+  const clearedCol = columnLetter(map['Cleared']);
+  const data = rowNumbers.map((r) => ({
+    range: `${RECONCILE_SHEETS.transactions}!${clearedCol}${r}`,
+    values: [['Cleared']],
+  }));
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId: process.env.SHEET_ID,
+    requestBody: { valueInputOption: 'RAW', data },
+  });
+}
+
 async function unmarkRowsReconciled(sheets, map, rowNumbers) {
   if (!rowNumbers.length) return;
   const reconciledCol = columnLetter(map['Reconciled']);
@@ -844,6 +864,7 @@ module.exports = {
   sumClearedTransactions,
   sumCumulativeClearedTransactions,
   markRowsReconciled,
+  markRowsCleared,
   unmarkRowsReconciled,
   appendAdjustmentRow,
   appendPlainTransactionRow,
