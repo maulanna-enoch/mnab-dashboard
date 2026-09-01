@@ -127,6 +127,7 @@
   <script src="/shared/transaction-form.js"></script>
   <script src="/shared/swipe-actions.js"></script>
   <script src="/shared/bottom-nav.js"></script>
+  <script src="/shared/keyboard-nav.js"></script>
   <script>
     function formatIDR(value) {
       return new Intl.NumberFormat('id-ID', {
@@ -168,6 +169,7 @@
     });
 
     BottomNav.mount(document.getElementById('bnv-root'), { active: 'transactions' });
+    KeyboardNav.mount();
 
     async function loadTransactions() {
       const listEl = document.getElementById('list');

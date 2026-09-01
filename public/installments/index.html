@@ -178,8 +178,10 @@
   <div id="bnv-root"></div>
 
   <script src="/shared/bottom-nav.js"></script>
+  <script src="/shared/keyboard-nav.js"></script>
   <script>
     BottomNav.mount(document.getElementById('bnv-root'), { active: 'bills' });
+    KeyboardNav.mount();
   </script>
   <script>
     function formatIDR(value) {
