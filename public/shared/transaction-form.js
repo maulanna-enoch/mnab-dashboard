@@ -541,6 +541,27 @@
     state.saveBtn.addEventListener('click', handleSave);
     state.deleteLink.addEventListener('click', handleDelete);
 
+    // "N" hardware-keyboard shortcut (issue #60): pressing N opens Add
+    // transaction, but only while focus isn't in a text field -- an on-screen
+    // (soft) keyboard's key taps land on the focused input as normal
+    // 'input'/'change' events, not as global 'keydown' events with a plain
+    // key value, so this can't misfire while actually typing "n" into a
+    // field on a phone. It's meant for an external/hardware keyboard where
+    // nothing text-editable has focus. Skipped entirely on pages that hide
+    // the FAB (showFab: false) and while the sheet is already open.
+    document.addEventListener('keydown', (e) => {
+      if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (e.key !== 'n' && e.key !== 'N') return;
+      if (state.fab.style.display === 'none') return;
+      if (state.overlay.classList.contains('open')) return;
+      const t = e.target;
+      const tag = t && t.tagName;
+      const isTextField = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable);
+      if (isTextField) return;
+      e.preventDefault();
+      open(null);
+    });
+
     loadAccounts();
     loadPayees();
   }
