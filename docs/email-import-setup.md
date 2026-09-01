@@ -19,10 +19,10 @@ if you need to recover the source).
 
 ## How it works, in short
 
-Each bank/e-wallet gets a nested Gmail label (`mnab/mandiri`, `mnab/ocbc`,
-...) under a parent `mnab` label. A Gmail filter per sender applies both
-labels automatically. An Apps Script trigger polls for labeled mail every
-5 minutes, and for each message:
+Each bank/e-wallet gets its own Gmail label (`mnab/mandiri`, `mnab/ocbc`,
+...). A Gmail filter per sender applies that one label. An Apps Script
+trigger polls for mail carrying any of the known labels every 5 minutes,
+and for each message:
 
 1. **Detects which email template** the sender used (some banks send more
    than one structurally different layout — confirmed with OCBC, which
@@ -50,26 +50,29 @@ labels automatically. An Apps Script trigger polls for labeled mail every
 ### 1. Create the Gmail labels
 
 In Gmail: **Settings → See all settings → Labels → Create new label.**
-Create:
+Create one label per bank you want to support — just the specific label,
+no separate parent label needed:
 
-- `mnab`
 - `mnab/mandiri`
 - `mnab/ocbc`
 
-(Nested-looking labels like `mnab/mandiri` are just ordinary Gmail labels
-with a `/` in the name — Gmail displays them nested, but there's nothing
-special to configure.)
+(A label named `mnab/mandiri` is just an ordinary Gmail label with a `/`
+in the name — Gmail nests it under an "mnab" grouping in the sidebar for
+display purposes only. There's no real `mnab` label to create separately,
+and the script doesn't need one either.)
 
-### 2. Create a filter per bank
+### 2. Create one filter per bank
 
 **Settings → Filters and Blocked Addresses → Create a new filter.**
-Match on the sender, then under "Apply the label" pick **both** the
-parent and the specific child label:
+Match on the sender, then under "Apply the label" pick that bank's single
+label. (Gmail's filter UI only allows one label per rule anyway, so this
+is also the only thing that's actually possible — no need to juggle
+multiple labels per filter.)
 
-| Bank | Match | Labels to apply |
+| Bank | Match | Label to apply |
 |---|---|---|
-| Mandiri (Livin') | `from:(noreply.livin@bankmandiri.co.id)` | `mnab`, `mnab/mandiri` |
-| OCBC | `from:(notifikasi@ocbc.id)` | `mnab`, `mnab/ocbc` |
+| Mandiri (Livin') | `from:(noreply.livin@bankmandiri.co.id)` | `mnab/mandiri` |
+| OCBC | `from:(notifikasi@ocbc.id)` | `mnab/ocbc` |
 
 Add a new row here (new filter + new label) any time a new bank/e-wallet
 needs to be supported — no other setup changes with it.
@@ -87,22 +90,57 @@ In the Apps Script editor, pick `processMnabEmails` from the function
 dropdown and click **Run** once. Approve the Gmail + Sheets access it
 asks for.
 
-### 5. Dry-run it first
+### 5. Skip the backlog, if you have one
+
+**Only needed if a label already has old email under it** — e.g. you
+reused a label you'd already been using for a while, so it's got hundreds
+of pre-existing messages. If your labels are freshly created with nothing
+under them yet, skip straight to step 6.
+
+The script has no concept of "old" vs "new" mail — it imports anything
+carrying a known label that isn't already tagged `mnab/imported`. Pointed
+at a label with an existing backlog, it would try to import every single
+one of those old messages as a transaction the first time it runs.
+
+Run `markExistingMnabEmailsAsAlreadyImported` (same function dropdown,
+**Run** once) to fix this. It applies the `mnab/imported` label to every
+thread the normal import would currently match — same search, same label
+— but never reads a message or writes a row to the sheet. After it runs,
+only mail arriving under the label from that point on gets imported.
+
+It's capped at 100 threads per run (a Gmail limit). Check the execution
+log — if it says it hit that cap, just run it again until it logs 0
+remaining. It's also safe to run more than once regardless: once a thread
+is labeled `mnab/imported`, it stops matching and won't be touched again.
+
+This step deliberately ignores `DRY_RUN` — it never writes rows or reads
+message content either way, only applies a Gmail label, so it does real
+(if easily-reversible-by-hand) label changes even while `DRY_RUN` is
+still `true`.
+
+### 6. Dry-run it first
 
 The script ships with `DRY_RUN = true`. With that on, running
 `processMnabEmails` logs exactly what row it *would* write (**View →
 Logs**, or Ctrl+Enter) without touching the sheet or re-labeling
-anything — safe to run repeatedly against real `mnab`-labeled email while
+anything — safe to run repeatedly against real labeled email while
 checking the output looks right. Once you're happy, flip `DRY_RUN` to
 `false` in the script.
 
-### 6. Install the trigger
+While `DRY_RUN` is `true`, this also picks up threads already tagged
+`mnab/imported` — including any you marked in step 5 — so you can test
+the parser against your whole backlog, not just new mail. That inclusion
+only applies during dry runs; once `DRY_RUN` is `false`, already-imported
+threads go back to being excluded, so step 5's backlog stays skipped for
+real.
+
+### 7. Install the trigger
 
 Once `DRY_RUN` is off, run `installEmailImportTrigger` once. From then
 on, `processMnabEmails` runs automatically every 5 minutes — no more
 manual runs needed.
 
-### 7. (Optional) Enable the AI fallback
+### 8. (Optional) Enable the AI fallback
 
 **Project Settings (gear icon) → Script Properties → Add script
 property**, key `ANTHROPIC_API_KEY`, value = an Anthropic API key.
@@ -117,11 +155,19 @@ silently dropped either way.
 - It only ever **appends** new rows — nothing here edits or deletes
   existing rows in `transactions`.
 - While `DRY_RUN` is `true`, threads are never re-labeled as processed,
-  so re-running is repeatable for testing.
+  so re-running is repeatable for testing — and threads already labeled
+  `mnab/imported` are included rather than skipped, so dry runs can test
+  against your full backlog, not just new mail. Only live runs
+  (`DRY_RUN = false`) exclude already-imported threads.
 - A failed-transaction email still produces a row (so you have a record
   something was attempted), but with `Amount`/`Expense`/`Income`/`Total`
   all `0` and the payee prefixed `[FAILED TRANSFER]` — it can't affect
   your balance.
+- `markExistingMnabEmailsAsAlreadyImported` (step 5 above) is the one
+  exception to all of the above: it ignores `DRY_RUN` and does make a real
+  change (applying the `mnab/imported` label) even before you've flipped
+  `DRY_RUN` off, since that's the entire point of it. It never touches the
+  sheet or reads message content, though — only Gmail labels.
 
 ## What's next
 
