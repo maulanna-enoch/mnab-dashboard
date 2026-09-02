@@ -152,7 +152,14 @@
     .txt-filter-clear:hover { color: var(--text); border-color: #3a3f4b; }
 
     .txt-table-wrap { display: block; }
-    .txt-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    /* table-layout: fixed + the <colgroup> widths below are what make the
+       one-line-by-default rule actually hold: Date/Account/Amount get a
+       fixed px width sized for their realistic content (no ellipsis --
+       these should stay fully visible per issue feedback, not truncate),
+       Payee gets a fixed 15%, and Notes (no width set) soaks up whatever's
+       left, with Payee/Notes the only two columns that ellipsis-truncate
+       when content doesn't fit. */
+    .txt-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 0.85rem; }
     .txt-table th {
       text-align: left;
       color: var(--muted);
@@ -168,14 +175,17 @@
     .txt-table th:hover { color: var(--text); }
     .txt-table th .txt-sort-arrow { margin-left: 3px; opacity: 0.6; }
     .txt-table th.txt-sorted .txt-sort-arrow { opacity: 1; }
-    .txt-table td { padding: 8px 10px; border-top: 1px solid #22262f; }
-    .txt-table td.txt-amount { text-align: right; white-space: nowrap; }
+    .txt-table td { padding: 8px 10px; border-top: 1px solid #22262f; white-space: nowrap; }
+    .txt-table td.txt-amount { text-align: right; }
+    .txt-table td.txt-truncate,
+    .txt-table th.txt-truncate { overflow: hidden; text-overflow: ellipsis; }
+    .txt-table td.txt-status-col,
+    .txt-table th.txt-status-col { text-align: center; padding-left: 4px; padding-right: 4px; }
     .txt-table tbody tr { cursor: pointer; }
     .txt-table tbody tr:hover { background: var(--card); }
     .txt-table .txt-amount.income { color: var(--accent); }
-    .txt-table .txt-uncleared { color: var(--uncleared); }
     .txt-table .txt-upcoming-row td { color: var(--upcoming, #60a5fa); }
-    .txt-empty-row td { color: var(--muted); text-align: center; padding: 20px 10px; }
+    .txt-empty-row td { color: var(--muted); text-align: center; padding: 20px 10px; white-space: normal; }
   }
 </style>
 </head>
@@ -210,15 +220,22 @@
 
     <div class="txt-table-wrap">
       <table class="txt-table" id="txt-table">
+        <colgroup>
+          <col style="width: 90px" />   <!-- Date -->
+          <col style="width: 15%" />    <!-- Payee -->
+          <col style="width: 140px" />  <!-- Account -->
+          <col style="width: 110px" />  <!-- Amount -->
+          <col style="width: 34px" />   <!-- Status (C) -->
+          <col />                        <!-- Notes: takes the rest -->
+        </colgroup>
         <thead>
           <tr>
             <th data-sort="date">Date <span class="txt-sort-arrow"></span></th>
-            <th data-sort="payee">Payee <span class="txt-sort-arrow"></span></th>
+            <th data-sort="payee" class="txt-truncate">Payee <span class="txt-sort-arrow"></span></th>
             <th data-sort="sof">Account <span class="txt-sort-arrow"></span></th>
-            <th data-sort="type">Type <span class="txt-sort-arrow"></span></th>
             <th data-sort="amount">Amount <span class="txt-sort-arrow"></span></th>
-            <th data-sort="cleared">Status <span class="txt-sort-arrow"></span></th>
-            <th>Notes</th>
+            <th data-sort="cleared" class="txt-status-col" title="Cleared">C <span class="txt-sort-arrow"></span></th>
+            <th class="txt-truncate">Notes</th>
           </tr>
         </thead>
         <tbody id="txt-table-body"></tbody>
@@ -344,24 +361,28 @@
       txtUpdateSortIndicators();
 
       if (!rows.length) {
-        txtTableBodyEl.innerHTML = '<tr class="txt-empty-row"><td colspan="7">No transactions match.</td></tr>';
+        txtTableBodyEl.innerHTML = '<tr class="txt-empty-row"><td colspan="6">No transactions match.</td></tr>';
         return;
       }
 
+      // Income vs. expense is already conveyed by the amount's color (see
+      // .txt-amount.income) -- no separate Type column, though Type is still
+      // filterable via the filter bar above the table.
       txtTableBodyEl.innerHTML = rows.map((t) => {
         const isIncome = t.type === 'Income';
         const isUpcoming = t.date > todayStr;
         const amountText = (isIncome ? '+' : '') + formatIDR(t.amount);
-        const statusHtml = t.cleared === 'Cleared' ? 'Cleared' : '<span class="txt-uncleared">Uncleared</span>';
+        const statusHtml = t.cleared === 'Cleared' ? '☑️' : '';
+        const payee = t.payee || '';
+        const notes = t.notes || '';
         return `
           <tr data-row="${t.rowNumber}" class="${isUpcoming ? 'txt-upcoming-row' : ''}">
             <td>${t.date || ''}</td>
-            <td>${t.payee || ''}</td>
+            <td class="txt-truncate" title="${payee.replace(/"/g, '&quot;')}">${payee}</td>
             <td>${t.sof || ''}</td>
-            <td>${t.type || ''}</td>
             <td class="txt-amount ${isIncome ? 'income' : ''}">${amountText}</td>
-            <td>${statusHtml}</td>
-            <td>${t.notes || ''}</td>
+            <td class="txt-status-col">${statusHtml}</td>
+            <td class="txt-truncate" title="${notes.replace(/"/g, '&quot;')}">${notes}</td>
           </tr>
         `;
       }).join('');
