@@ -251,6 +251,7 @@
 
   <script src="/shared/transaction-form.js"></script>
   <script src="/shared/bottom-nav.js"></script>
+  <script src="/shared/keyboard-nav.js"></script>
   <script>
     function formatIDR(value) {
       return new Intl.NumberFormat('id-ID', {
@@ -445,6 +446,7 @@
     });
 
     BottomNav.mount(document.getElementById('bnv-root'), { active: 'home' });
+    KeyboardNav.mount();
 
     // Quick-add deep link (see issue #30): a Siri Shortcut can ask for just
     // the amount, then open "/?amount=<digits>" -- this opens the Add form

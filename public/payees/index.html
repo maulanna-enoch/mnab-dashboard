@@ -145,6 +145,7 @@
 <div id="bnv-root"></div>
 
 <script src="/shared/bottom-nav.js"></script>
+<script src="/shared/keyboard-nav.js"></script>
 <script>
   async function apiGet(url) {
     const res = await fetch(url);
@@ -297,6 +298,7 @@
   // list, so this just leaves every tab unhighlighted rather than requiring
   // a change to the shared 4-tab bar for a secondary/override page.
   BottomNav.mount(document.getElementById('bnv-root'), { active: 'payees' });
+  KeyboardNav.mount();
 
   loadPayees();
 </script>
