@@ -17,19 +17,27 @@
    grid, master-detail panes, sidebar nav, wider charts) are expected to
    build their own layout on top of this, and may ignore or override
    --page-max-width entirely once a page's content is no longer a single
-   centered column. */
+   centered column.
+
+   --page-max-width matches its own breakpoint (768 at 768px, 1024 at
+   1024px) rather than staying narrower than it -- content over chrome:
+   let the column use the width that's actually available instead of
+   leaving deliberate side margins once there's room for them. Note this
+   cap sits inside body's own `padding: 24px 16px`, so real content width
+   is viewport minus 32px -- the cap only starts constraining once the
+   viewport is wider than (cap + 32px), same as before. */
 :root {
   --page-max-width: 420px;
 }
 
 @media (min-width: 768px) {
   :root {
-    --page-max-width: 640px;
+    --page-max-width: 768px;
   }
 }
 
 @media (min-width: 1024px) {
   :root {
-    --page-max-width: 800px;
+    --page-max-width: 1024px;
   }
 }

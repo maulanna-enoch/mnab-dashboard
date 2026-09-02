@@ -11,7 +11,16 @@
      stays right above the bar regardless of the safe-area inset. */
   position: fixed;
   bottom: calc(72px + env(safe-area-inset-bottom));
-  right: max(16px, calc(50% - 210px + 16px));
+  /* Pinned to the right edge of the centered content column (16px inset),
+     not the viewport -- half of --page-max-width (shared/responsive.css)
+     is how far the column's own right edge sits from center. This used to
+     hardcode 210px (half of the old fixed 420px cap); now that the column
+     itself widens at wider viewports (issue #66), the FAB has to widen
+     with it or it ends up stranded near the middle of a much wider column
+     instead of pinned to its actual right edge. Falls back to 210px if
+     --page-max-width isn't defined (host page forgot to link
+     responsive.css), matching the old hardcoded behavior. */
+  right: max(16px, calc(50% - (var(--page-max-width, 420px) / 2) + 16px));
   width: 56px;
   height: 56px;
   border-radius: 50%;
