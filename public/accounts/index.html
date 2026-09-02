@@ -312,6 +312,23 @@
     outline: 2px solid var(--accent);
     outline-offset: -2px;
   }
+
+  /* Keyboard-triggered clear/unclear (C) and delete (Backspace) busy state
+     -- see issue #63 follow-up. There's no button to swap a spinner into
+     (unlike the swipe actions), so this dims the whole row and swaps its
+     meta line for a spinner + "Clearing…"/"Deleting…" label instead, reusing
+     the .swx-spinner asset from shared/swipe-actions.css. Success needs no
+     cleanup here -- the row is replaced wholesale by the normal list
+     re-render -- only the error path reverts it explicitly. */
+  .txn-row.kbd-row-busy {
+    opacity: 0.6;
+    pointer-events: none;
+  }
+  .txn-row .kbd-busy-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
 </style>
 </head>
 <body>
@@ -649,6 +666,12 @@
   // (or may now be out of bounds).
   let acctHighlightIndex = -1;
   let txnHighlightIndex = -1;
+  // Guards the C (clear/unclear) and Backspace (delete) keyboard shortcuts
+  // against firing again while a previous one is still in flight -- the
+  // confirm dialog for Backspace already blocks re-triggering via the
+  // shared `.open` overlay check below, but the async gap AFTER it closes
+  // (and C has no dialog at all) isn't covered by that.
+  let kbdActionBusy = false;
 
   const detailUpcomingToggleEl = document.getElementById('detail-upcoming-toggle');
   const detailUpcomingSwitchEl = document.getElementById('detail-upcoming-switch');
@@ -1486,6 +1509,29 @@
     return currentAccountTxns.find((t) => t.rowNumber === rowNumber) || null;
   }
 
+  // Marks the highlighted row as busy (or reverts it) while a keyboard-
+  // triggered C/Backspace action is in flight, so a slow clear/delete
+  // doesn't look like the keypress was dropped. Swaps the row's meta line
+  // for a spinner + label the same way runBusyAction() in
+  // shared/swipe-actions.js does for the swipe buttons, just applied to the
+  // whole row instead of one action button -- there's nothing to swap text
+  // into here otherwise. `busy: false` restores the row's original meta
+  // markup; only called on error, since success replaces the row entirely
+  // via the normal list re-render.
+  function setRowKbdBusy(row, busy, label) {
+    if (!row) return;
+    row.classList.toggle('kbd-row-busy', busy);
+    const meta = row.querySelector('.txn-meta');
+    if (!meta) return;
+    if (busy) {
+      if (meta.dataset.kbdOrig === undefined) meta.dataset.kbdOrig = meta.innerHTML;
+      meta.innerHTML = `<span class="kbd-busy-meta"><span class="swx-spinner" aria-hidden="true"></span>${label}</span>`;
+    } else if (meta.dataset.kbdOrig !== undefined) {
+      meta.innerHTML = meta.dataset.kbdOrig;
+      delete meta.dataset.kbdOrig;
+    }
+  }
+
   // Backspace on a highlighted transaction -- always confirms first (via the
   // same showConfirm sheet used everywhere else on this page, rather than a
   // plain browser confirm()), then reuses deleteDetailTxnViaSwipe, which
@@ -1499,10 +1545,19 @@
     showConfirm(
       message,
       async () => {
+        // The confirm sheet is what's owned the keyboard up to now (via the
+        // shared `.open` check), so the row list hasn't changed underneath
+        // it -- txnHighlightIndex still points at the right row.
+        const row = txnRowEls()[txnHighlightIndex];
+        kbdActionBusy = true;
+        setRowKbdBusy(row, true, isPayment ? 'Undoing…' : 'Deleting…');
         try {
           await deleteDetailTxnViaSwipe(txn);
         } catch (err) {
+          setRowKbdBusy(row, false);
           showAlert(err.message, isPayment ? 'Undo failed' : 'Delete failed');
+        } finally {
+          kbdActionBusy = false;
         }
       },
       { title: isPayment ? 'Undo payment' : 'Delete transaction', confirmLabel: isPayment ? 'Undo Payment' : 'Delete', danger: true }
@@ -1572,12 +1627,20 @@
       else TransactionForm.open(txn);
     } else if (key === 'c') {
       const txn = currentHighlightedTxn();
-      if (!txn) return;
+      if (!txn || kbdActionBusy) return;
       e.preventDefault();
-      toggleDetailTxnClearedViaSwipe(txn).catch((err) => showAlert(err.message, 'Failed'));
+      const row = txnRowEls()[txnHighlightIndex];
+      kbdActionBusy = true;
+      setRowKbdBusy(row, true, txn.isCleared ? 'Unclearing…' : 'Clearing…');
+      toggleDetailTxnClearedViaSwipe(txn)
+        .catch((err) => {
+          setRowKbdBusy(row, false);
+          showAlert(err.message, 'Failed');
+        })
+        .finally(() => { kbdActionBusy = false; });
     } else if (e.key === 'Backspace') {
       const txn = currentHighlightedTxn();
-      if (!txn) return;
+      if (!txn || kbdActionBusy) return;
       e.preventDefault();
       handleKeyboardDeleteTxn(txn);
     }
