@@ -1,0 +1,35 @@
+/* Shared responsive breakpoint foundation (issue #66, part of epic #64).
+
+   MNAB was built mobile-first: every page hard-caps its content at
+   max-width: 420px (a phone-frame convention) while the bottom nav bar
+   (bottom-nav.css) is unconstrained and stretches full-width. On a laptop
+   that produces a narrow floating column of cards behind a full-width nav
+   bar.
+
+   --page-max-width is the single source of truth for that cap. Pages that
+   want to stop being stuck at phone width just switch their hard-coded
+   `max-width: 420px` to `max-width: var(--page-max-width)` -- no page needs
+   its own @media query to do that.
+
+   This file intentionally does NOT redesign any page's layout (no grids,
+   tables, or split panes) -- it only lets the existing single-column layout
+   breathe on a wider viewport. Sub-issues under #64 (data table, dashboard
+   grid, master-detail panes, sidebar nav, wider charts) are expected to
+   build their own layout on top of this, and may ignore or override
+   --page-max-width entirely once a page's content is no longer a single
+   centered column. */
+:root {
+  --page-max-width: 420px;
+}
+
+@media (min-width: 768px) {
+  :root {
+    --page-max-width: 640px;
+  }
+}
+
+@media (min-width: 1024px) {
+  :root {
+    --page-max-width: 800px;
+  }
+}

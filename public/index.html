@@ -6,6 +6,7 @@
 <title>MNAB</title>
 <link rel="icon" type="image/png" href="/favicon.png" />
 <link rel="stylesheet" href="/shared/transaction-form.css" />
+<link rel="stylesheet" href="/shared/responsive.css" />
 <link rel="stylesheet" href="/shared/bottom-nav.css" />
 <style>
   :root {
@@ -47,7 +48,7 @@
   }
   select#month {
     width: 100%;
-    max-width: 420px;
+    max-width: var(--page-max-width);
     background: var(--card);
     color: var(--text);
     border: 1px solid #374151;
@@ -58,7 +59,7 @@
   }
   .card {
     width: 100%;
-    max-width: 420px;
+    max-width: var(--page-max-width);
     background: var(--card);
     border-radius: 16px;
     padding: 24px;

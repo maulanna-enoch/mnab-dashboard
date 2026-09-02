@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
 <title>Payees · MNAB</title>
 <link rel="icon" type="image/png" href="/favicon.png" />
+<link rel="stylesheet" href="/shared/responsive.css" />
 <link rel="stylesheet" href="/shared/bottom-nav.css" />
 <style>
   :root {
@@ -25,7 +26,7 @@
     min-height: 100vh;
     padding: 24px 16px calc(100px + env(safe-area-inset-bottom));
   }
-  .wrap { max-width: 420px; margin: 0 auto; }
+  .wrap { max-width: var(--page-max-width); margin: 0 auto; }
   .back-link {
     display: block;
     color: var(--muted);
