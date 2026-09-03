@@ -156,7 +156,7 @@
        one-line-by-default rule actually hold: Date/Account/Amount get a
        fixed px width sized for their realistic content (no ellipsis --
        these should stay fully visible per issue feedback, not truncate),
-       Payee gets a fixed 15%, and Notes (no width set) soaks up whatever's
+       Payee gets a fixed 300px, and Notes (no width set) soaks up whatever's
        left, with Payee/Notes the only two columns that ellipsis-truncate
        when content doesn't fit. */
     .txt-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 0.85rem; }
@@ -222,7 +222,7 @@
       <table class="txt-table" id="txt-table">
         <colgroup>
           <col style="width: 90px" />   <!-- Date -->
-          <col style="width: 15%" />    <!-- Payee -->
+          <col style="width: 300px" />  <!-- Payee -->
           <col style="width: 140px" />  <!-- Account -->
           <col style="width: 110px" />  <!-- Amount -->
           <col style="width: 34px" />   <!-- Status (C) -->
