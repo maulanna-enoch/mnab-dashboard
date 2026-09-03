@@ -172,16 +172,60 @@ async function fetchDiaryRows() {
   });
 }
 
+// Reads the header row (row 1) of a tab and returns a { headerName: index0 }
+// map -- same pattern api/_lib/reconcile.js already uses for its own
+// self-provisioned columns (Reconciled, Reconciled Date, Transfer, Payment
+// ID), kept as its own copy here rather than shared to avoid touching that
+// already-working, self-contained module. Used for columns like `Pending`
+// (see EmailImport.gs / issue #38) that land at an unpredictable position
+// after the fixed A:K columns other functions in this file assume.
+async function getHeaderMap(sheets, spreadsheetId, sheetName) {
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `${sheetName}!1:1`,
+    valueRenderOption: 'UNFORMATTED_VALUE',
+  });
+  const headers = (response.data.values && response.data.values[0]) || [];
+  const map = {};
+  headers.forEach((h, i) => {
+    if (h !== undefined && h !== null && h !== '') map[String(h).trim()] = i;
+  });
+  return map;
+}
+
+function columnLetter(index0) {
+  let n = index0 + 1;
+  let letter = '';
+  while (n > 0) {
+    const rem = (n - 1) % 26;
+    letter = String.fromCharCode(65 + rem) + letter;
+    n = Math.floor((n - 1) / 26);
+  }
+  return letter;
+}
+
 async function fetchTransactionRows() {
   const sheets = getSheetsClient();
+  const spreadsheetId = process.env.SHEET_ID;
+
+  // `Pending` (see EmailImport.gs / issue #38) is a self-provisioned column
+  // that may not exist at all yet (a sheet that's never had EmailImport.gs
+  // run on it) and, once it does, lands somewhere after the fixed A:K
+  // columns below -- read by header name and defaulted to "not pending"
+  // when missing, same graceful-fallback convention as Reconciled/Transfer
+  // elsewhere in this app.
+  const headerMap = await getHeaderMap(sheets, spreadsheetId, 'transactions');
+  const pendingIdx = headerMap['Pending'];
+  const hasPendingColumn = pendingIdx !== undefined;
 
   // Columns: Payee, Income/Expense, SOF, Date, Month, Cleared, Amount,
   // Expense, Income, Total, Notes. rowNumber (1-based sheet row, accounting
   // for the header row) is included so edit/delete endpoints know which row
-  // to target.
+  // to target. Widened from A2:K to A2:Z so self-provisioned trailing
+  // columns like Pending are actually within the fetched range.
   const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: process.env.SHEET_ID,
-    range: 'transactions!A2:K',
+    spreadsheetId,
+    range: 'transactions!A2:Z',
     valueRenderOption: 'UNFORMATTED_VALUE',
   });
 
@@ -204,6 +248,8 @@ async function fetchTransactionRows() {
     const isCleared = clearedRaw.toLowerCase() === 'cleared';
     const amount = parseFloat(row[6]) || 0;
     const notes = row[10] || '';
+    const pendingRaw = hasPendingColumn ? row[pendingIdx] : undefined;
+    const isPending = pendingRaw === true || pendingRaw === 'TRUE' || pendingRaw === 'true';
 
     result.push({
       rowNumber: i + 2,
@@ -217,6 +263,7 @@ async function fetchTransactionRows() {
       isCleared,
       amount,
       notes,
+      isPending,
     });
   });
 
@@ -351,6 +398,8 @@ module.exports = {
   getSheetsClient,
   getWriteSheetsClient,
   getSheetGridId,
+  getHeaderMap,
+  columnLetter,
   serialToDate,
   dateToSerial,
   monthKey,
