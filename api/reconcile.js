@@ -497,6 +497,7 @@ async function actionDetail(query, res) {
       notes: r.notes,
       transfer: r.isTransfer,
       paymentId: r.paymentId,
+      pending: r.isPending,
     })),
     stats: {
       clearedTotal: Math.round(clearedTotal * 100) / 100,
