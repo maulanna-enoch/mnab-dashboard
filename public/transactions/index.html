@@ -20,6 +20,7 @@
     --uncleared: #f5b942;
     --negative: #e24b4a;
     --upcoming: #60a5fa;
+    --pending: #a78bfa;
   }
   * { box-sizing: border-box; }
   body {
@@ -61,6 +62,9 @@
   .txn-meta .uncleared { color: var(--uncleared); }
   .txn-amount { font-size: 0.9rem; white-space: nowrap; }
   .txn-amount.income { color: var(--accent); }
+  /* Wraps the amount and (for a Pending row) the Confirm button, right-
+     aligned under it -- see .txn-confirm-btn below. */
+  .txn-amount-block { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
   .sub { font-size: 0.85rem; color: var(--muted); }
   .error { color: #f87171; font-size: 0.9rem; }
 
@@ -108,6 +112,62 @@
      keeps the resulting box fully opaque. */
   .txn-row.upcoming { border: 1px dashed rgba(96,165,250,0.4); background: linear-gradient(rgba(96,165,250,0.06), rgba(96,165,250,0.06)), var(--card); }
   .txn-meta .upcoming-tag { color: var(--upcoming, #60a5fa); }
+
+  /* -- Pending transactions (issue #49) -- auto-imported rows (EmailImport.gs
+     / issue #38) not yet reviewed by the user. Pending styling is listed
+     after .upcoming above so it wins on a row that happens to be both
+     (reviewing an unconfirmed import is the more urgent state). Reuses the
+     "Upcoming" toggle switch's own #pending-switch override below so the two
+     toggles share one visual language. */
+  .txn-row.pending { border: 1px dashed rgba(167,139,250,0.45); background: linear-gradient(rgba(167,139,250,0.08), rgba(167,139,250,0.08)), var(--card); }
+  .txn-meta .pending-tag { color: var(--pending, #a78bfa); }
+
+  /* -- "Review Pending" mode button (issue #49 feedback follow-up) --
+     Deliberately NOT the on/off .switch control used for Upcoming: this
+     isn't a show/hide filter, it's a mode switch (browsing all
+     transactions vs. reviewing the pending ones), so it gets its own
+     button-shaped affordance that visibly changes shape/label when
+     active, rather than looking like a toggle that's merely "on". Hidden
+     entirely when there's nothing to review (see the pendingCount ||
+     showPendingOnly check in renderList()) -- unlike Upcoming, an empty
+     Pending queue isn't something worth a permanent row on screen. */
+  .pending-review-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    background: var(--card);
+    border: 1px dashed rgba(167,139,250,0.5);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    font-size: 12.5px;
+    font-family: inherit;
+    color: var(--pending, #a78bfa);
+    cursor: pointer;
+    text-align: left;
+  }
+  .pending-review-btn:hover { background: rgba(167,139,250,0.08); }
+  .pending-review-btn .prb-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--pending, #a78bfa); flex-shrink: 0; }
+  .pending-review-btn.active {
+    background: rgba(167,139,250,0.16);
+    border-style: solid;
+    color: var(--text);
+    font-weight: 600;
+  }
+  .txn-confirm-btn {
+    background: rgba(167,139,250,0.15);
+    color: var(--pending, #a78bfa);
+    border: 1px solid rgba(167,139,250,0.5);
+    border-radius: 6px;
+    padding: 3px 9px;
+    font-size: 0.7rem;
+    font-family: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .txn-confirm-btn:hover { background: rgba(167,139,250,0.25); }
+  .txn-confirm-btn:disabled { opacity: 0.6; cursor: default; }
 
   /* -- wide-viewport data table (issue #65, part of epic #64) --
      Below 1024px this is all display:none and the existing mobile card
@@ -186,6 +246,11 @@
     .txt-table tbody tr:hover { background: var(--card); }
     .txt-table .txt-amount.income { color: var(--accent); }
     .txt-table .txt-upcoming-row td { color: var(--upcoming, #60a5fa); }
+    /* Pending row tint (issue #49) -- listed after upcoming so it wins on a
+       row that's both (see the mobile-card CSS comment above for why). */
+    .txt-table .txt-pending-row td { background: rgba(167,139,250,0.08); }
+    .txt-table .txt-pending-row:hover td { background: rgba(167,139,250,0.14); }
+    .txt-table td.txt-pending-col { text-align: center; padding-left: 4px; padding-right: 4px; }
     .txt-empty-row td { color: var(--muted); text-align: center; padding: 20px 10px; white-space: normal; }
 
     /* -- inline cell editing (issue #77) -- click a cell to edit it in
@@ -210,6 +275,7 @@
     }
     .txt-open-btn:hover { color: var(--text); }
     .txt-open-btn:disabled { opacity: 0.3; cursor: default; }
+    .txt-table .txt-confirm-btn { padding: 2px 7px; font-size: 0.68rem; }
     .txt-cell-input {
       width: 100%;
       box-sizing: border-box;
@@ -245,6 +311,18 @@
       <div class="switch" id="upcoming-switch"></div>
     </div>
 
+    <!-- Pending transactions (issue #49): auto-imported by EmailImport.gs
+         (issue #38) and not yet reviewed. Shared by both the mobile card
+         list and the wide-viewport table below -- this button filters the
+         same `visible` array renderList() hands to both, same convention
+         as the Upcoming toggle above, but shaped as a mode switch (browse
+         all vs. review pending) rather than a show/hide filter -- see the
+         .pending-review-btn CSS comment above for why. Hidden by default;
+         renderList() shows it once there's something to review. -->
+    <button type="button" class="pending-review-btn" id="pending-toggle" style="display:none;">
+      <span class="prb-dot"></span><span id="pending-label">Review Pending</span>
+    </button>
+
     <div class="txt-filters" id="txt-filters">
       <input type="search" id="txt-f-search" placeholder="Search payee or notes" />
       <select id="txt-f-sof"><option value="">All accounts</option></select>
@@ -273,6 +351,7 @@
           <col style="width: 140px" />  <!-- Account -->
           <col style="width: 110px" />  <!-- Amount -->
           <col style="width: 34px" />   <!-- Status (C) -->
+          <col style="width: 78px" />  <!-- Pending / Confirm (issue #49) -->
           <col />                        <!-- Notes: takes the rest -->
           <col style="width: 28px" />   <!-- Open full sheet (issue #77) -->
         </colgroup>
@@ -283,6 +362,7 @@
             <th data-sort="sof">Account <span class="txt-sort-arrow"></span></th>
             <th data-sort="amount">Amount <span class="txt-sort-arrow"></span></th>
             <th data-sort="cleared" class="txt-status-col" title="Cleared">C <span class="txt-sort-arrow"></span></th>
+            <th data-sort="pending" class="txt-pending-col" title="Pending">Pending <span class="txt-sort-arrow"></span></th>
             <th class="txt-truncate">Notes</th>
             <th></th>
           </tr>
@@ -326,10 +406,13 @@
 
     let transactions = [];
     let showUpcoming = false;
+    let showPendingOnly = false; // issue #49
 
     const upcomingToggleEl = document.getElementById('upcoming-toggle');
     const upcomingSwitchEl = document.getElementById('upcoming-switch');
     const upcomingLabelEl = document.getElementById('upcoming-label');
+    const pendingToggleEl = document.getElementById('pending-toggle');
+    const pendingLabelEl = document.getElementById('pending-label');
 
     // -- wide-viewport data table (issue #65) -- filter/sort state and the
     // last "upcoming"-filtered list handed to it by renderList(), so a
@@ -443,7 +526,7 @@
       txtUpdateSortIndicators();
 
       if (!rows.length) {
-        txtTableBodyEl.innerHTML = '<tr class="txt-empty-row"><td colspan="7">No transactions match.</td></tr>';
+        txtTableBodyEl.innerHTML = '<tr class="txt-empty-row"><td colspan="8">No transactions match.</td></tr>';
         return;
       }
 
@@ -457,13 +540,20 @@
         const statusHtml = t.cleared === 'Cleared' ? '☑️' : '';
         const payee = t.payee || '';
         const notes = t.notes || '';
+        // Pending (issue #49): a Confirm button here is the "lightweight
+        // one-field update" path the issue asks for -- see
+        // confirmPendingTransaction() below, which hits transactions-update
+        // with { action: 'confirmPending' } instead of resending the row.
+        const pendingHtml = t.pending ? '<button type="button" class="txt-confirm-btn" title="Confirm this pending transaction">Confirm</button>' : '';
+        const rowClasses = [isUpcoming ? 'txt-upcoming-row' : '', t.pending ? 'txt-pending-row' : ''].filter(Boolean).join(' ');
         return `
-          <tr data-row="${t.rowNumber}" class="${isUpcoming ? 'txt-upcoming-row' : ''}">
+          <tr data-row="${t.rowNumber}" class="${rowClasses}">
             <td class="txt-editable" data-field="date">${t.date || ''}</td>
             <td class="txt-truncate txt-editable" data-field="payee" title="${payee.replace(/"/g, '&quot;')}">${payee}</td>
             <td class="txt-editable" data-field="sof">${t.sof || ''}</td>
             <td class="txt-amount txt-editable ${isIncome ? 'income' : ''}" data-field="amount">${amountText}</td>
             <td class="txt-status-col" data-field="cleared">${statusHtml}</td>
+            <td class="txt-pending-col">${pendingHtml}</td>
             <td class="txt-truncate txt-editable" data-field="notes" title="${notes.replace(/"/g, '&quot;')}">${notes}</td>
             <td class="txt-open-col"><button type="button" class="txt-open-btn" title="Open full editor">&#9998;</button></td>
           </tr>
@@ -505,7 +595,64 @@
           e.stopPropagation();
           TransactionForm.open(txn);
         });
+
+        const confirmBtn = row.querySelector('.txt-confirm-btn');
+        if (confirmBtn) {
+          confirmBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            // Issue #49 keyboard follow-up: this row is mid keyboard-edit
+            // (tabbed here from an open field, not just moused straight to
+            // Confirm) -- save the draft AND confirm in one action instead
+            // of the plain confirm-only path. A native Enter/Space on this
+            // focused button lands here too (the browser fires 'click' for
+            // both), so this single handler covers mouse and keyboard.
+            const isEditingThisRow = txtKbdEditRowNumber === txn.rowNumber;
+            confirmBtn.disabled = true;
+            confirmBtn.textContent = isEditingThisRow ? 'Saving…' : 'Confirming…';
+            try {
+              if (isEditingThisRow) {
+                await txtKbdConfirmAndSaveEdit();
+              } else {
+                await confirmPendingTransaction(txn);
+              }
+            } catch (err) {
+              alert(err.message);
+              confirmBtn.disabled = false;
+              confirmBtn.textContent = 'Confirm';
+            }
+          });
+          // Tab/Shift-Tab move on to the field on either side of this
+          // button's actual column position (Cleared before it, Notes
+          // after -- see txtKbdFieldOrder); Escape cancels the edit same
+          // as any other field. Only active while this specific row is
+          // the one being edited -- otherwise this is just a plain button.
+          confirmBtn.addEventListener('keydown', (e) => {
+            if (txtKbdEditRowNumber !== txn.rowNumber) return;
+            if (e.key === 'Tab') {
+              e.preventDefault();
+              txtKbdFocusField(e.shiftKey ? 'cleared' : 'notes');
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              txtKbdCancelEdit();
+            }
+          });
+        }
       });
+    }
+
+    // Issue #49: sets Pending=FALSE for one row via the lightweight
+    // confirmPending action on transactions-update, rather than resending
+    // the whole row like every other write in this file does. Shared by
+    // both the desktop table's Confirm button and the mobile card's.
+    async function confirmPendingTransaction(txn) {
+      const res = await fetch('/api/transactions-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rowNumber: txn.rowNumber, action: 'confirmPending' }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      await loadTransactions();
     }
 
     // -- keyboard-driven row editing --
@@ -556,11 +703,32 @@
       return prefixMatches.length === 1 ? prefixMatches[0] : typed;
     }
 
+    // Issue #49 keyboard follow-up: the Confirm button sits in the tab
+    // cycle for a pending row (see txtKbdFieldOrder below), in its actual
+    // column position between Cleared and Notes -- it's a real <button>,
+    // not one of TXT_KBD_FIELDS' inputs, so it's focused directly instead
+    // of through txtKbdEditInputs.
     function txtKbdFocusField(field) {
+      if (field === 'confirm') {
+        const row = txtRowEls()[txtKbdHighlightIndex];
+        const btn = row && row.querySelector('.txt-confirm-btn');
+        if (btn) btn.focus();
+        return;
+      }
       const input = txtKbdEditInputs && txtKbdEditInputs[field];
       if (!input) return;
       input.focus();
       if (typeof input.select === 'function' && input.type !== 'checkbox') input.select();
+    }
+
+    // Tab order for the row-edit session, left to right same as the table's
+    // own columns -- 'confirm' (the Confirm button) is only spliced in for
+    // a pending row, right where its column actually sits.
+    function txtKbdFieldOrder(txn) {
+      const order = ['date', 'payee', 'sof', 'amount', 'cleared'];
+      if (txn && txn.pending) order.push('confirm');
+      order.push('notes');
+      return order;
     }
 
     // Pulls whatever's currently in a field's input into the draft. Called
@@ -589,11 +757,12 @@
       if (e.key === 'Tab') {
         e.preventDefault();
         txtKbdCommitField(field);
-        const idx = TXT_KBD_FIELDS.indexOf(field);
+        const order = txtKbdFieldOrder(transactions.find((t) => t.rowNumber === txtKbdEditRowNumber));
+        const idx = order.indexOf(field);
         const nextIdx = e.shiftKey
-          ? (idx - 1 + TXT_KBD_FIELDS.length) % TXT_KBD_FIELDS.length
-          : (idx + 1) % TXT_KBD_FIELDS.length;
-        txtKbdFocusField(TXT_KBD_FIELDS[nextIdx]);
+          ? (idx - 1 + order.length) % order.length
+          : (idx + 1) % order.length;
+        txtKbdFocusField(order[nextIdx]);
       } else if (e.key === 'Enter') {
         e.preventDefault();
         txtKbdCommitField(field);
@@ -758,6 +927,77 @@
       }
     }
 
+    // Issue #49 keyboard follow-up: reached by tabbing to the Confirm
+    // button during a row-edit session (see txtKbdFieldOrder above) --
+    // Enter/Space on it (native button activation, handled by the
+    // button's own 'click' listener in renderTable()) saves whatever's
+    // currently filled in the row AND confirms it (Pending -> FALSE) in
+    // one action, so fixing a mis-parsed import doesn't take two separate
+    // steps. Same validation as txtKbdSaveEdit; two sequential requests
+    // since transactions-update has no single combined action.
+    async function txtKbdConfirmAndSaveEdit() {
+      if (txtKbdEditRowNumber === null || txtKbdSaving) return;
+      const draft = txtKbdEditDraft;
+      const rowNumber = txtKbdEditRowNumber;
+
+      if (!draft.payee || !draft.sof || !draft.date) {
+        alert('Payee, Account, and Date are required.');
+        return;
+      }
+      if (!Number.isFinite(draft.amount) || draft.amount <= 0) {
+        alert('Amount must be a positive number.');
+        return;
+      }
+
+      const original = transactions.find((t) => t.rowNumber === rowNumber);
+      const payload = {
+        rowNumber,
+        payee: draft.payee,
+        type: draft.type,
+        sof: draft.sof,
+        amount: draft.amount,
+        date: draft.date,
+        month: draft.month,
+        notes: draft.notes,
+        cleared: draft.cleared,
+      };
+      if (original && draft.date !== original.date) {
+        payload.month = TransactionForm.guessBillingMonth(draft.date);
+      }
+
+      const row = txtRowEls()[txtKbdHighlightIndex];
+      txtKbdSaving = true;
+      if (row) row.classList.add('txt-kbd-row-saving');
+      try {
+        const res = await fetch('/api/transactions-update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+
+        const confirmRes = await fetch('/api/transactions-update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rowNumber, action: 'confirmPending' }),
+        });
+        const confirmData = await confirmRes.json();
+        if (confirmData.error) throw new Error(confirmData.error);
+
+        txtKbdEditRowNumber = null;
+        txtKbdEditDraft = null;
+        txtKbdEditInputs = null;
+        await loadTransactions();
+        txtRestoreHighlightByRowNumber(rowNumber);
+      } catch (err) {
+        if (row) row.classList.remove('txt-kbd-row-saving');
+        throw err; // surfaced to the caller (the Confirm button's click handler), which shows/resets its own label
+      } finally {
+        txtKbdSaving = false;
+      }
+    }
+
     // Backspace on a highlighted row -- analogous to Enter opening it for
     // edit, but simpler: always confirm first, then delete outright rather
     // than opening any fields. Reuses deleteTransactionViaSwipe() (defined
@@ -817,8 +1057,16 @@
 
       const t = e.target;
       const tag = t && t.tagName;
-      const isTextField = (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable)) && t.offsetParent !== null;
-      if (isTextField) return; // typing in a filter box, etc. -- don't hijack arrows/Enter there
+      // BUTTON is included here (not just INPUT/TEXTAREA/SELECT) so that
+      // native Tab focus landing on a real button -- the Confirm button
+      // (issue #49) or the pencil "open full editor" button -- gets plain
+      // native Enter/Space-activates-the-button behavior, instead of also
+      // being intercepted by this row-highlight-index-based handler below
+      // (which tracks a highlighted row, not real DOM focus, and would
+      // otherwise fire against whatever row happens to be highlighted,
+      // not the row the focused button actually belongs to).
+      const isTextField = (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || (t && t.isContentEditable)) && t.offsetParent !== null;
+      if (isTextField) return; // typing in a filter box, a focused button, etc. -- don't hijack arrows/Enter/Space there
       if (document.querySelector('.open')) return; // the full Add/Edit sheet owns the keyboard
 
       if (e.key === 'ArrowDown') {
@@ -827,7 +1075,7 @@
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
         setTxtHighlight(txtKbdHighlightIndex - 1);
-      } else if (e.key === 'Enter') {
+      } else if (e.key === 'Enter' || e.key === ' ') {
         const txn = txtCurrentHighlightedTxn();
         if (!txn) return;
         e.preventDefault();
@@ -1055,7 +1303,28 @@
         ? (upcomingCount ? `Showing ${upcomingCount} upcoming` : 'No upcoming transactions')
         : (upcomingCount ? `${upcomingCount} upcoming hidden` : 'No upcoming transactions');
 
-      const visible = showUpcoming ? sorted : sorted.filter((t) => t.date <= todayStr);
+      // Issue #49 feedback follow-up: "Review Pending" is a mode switch, not
+      // a show/hide filter like Upcoming -- so unlike Upcoming's toggle, this
+      // button is hidden entirely when there's nothing to review (no pending
+      // rows and not currently reviewing), rather than always showing with a
+      // "No pending transactions" label. While actively reviewing, it stays
+      // visible (and offers a way back out) even if the last pending row
+      // gets confirmed mid-session. The filter itself is still shared by
+      // both the mobile card list and the wide-viewport table -- both are
+      // handed the same `visible` array.
+      const pendingCount = sorted.filter((t) => t.pending).length;
+      if (pendingCount || showPendingOnly) {
+        pendingToggleEl.style.display = '';
+        pendingToggleEl.classList.toggle('active', showPendingOnly);
+        pendingLabelEl.textContent = showPendingOnly
+          ? '← Back to all transactions'
+          : `Review Pending (${pendingCount})`;
+      } else {
+        pendingToggleEl.style.display = 'none';
+      }
+
+      let visible = showUpcoming ? sorted : sorted.filter((t) => t.date <= todayStr);
+      if (showPendingOnly) visible = visible.filter((t) => t.pending);
 
       // Wide-viewport table (issue #65) renders from the same
       // upcoming-filtered list as the mobile cards, then applies its own
@@ -1081,14 +1350,23 @@
         const metaBits = [t.sof];
         if (t.cleared !== 'Cleared') metaBits.push('<span class="uncleared">uncleared</span>');
         if (isUpcoming) metaBits.push('<span class="upcoming-tag">upcoming</span>');
+        if (t.pending) metaBits.push('<span class="pending-tag">pending</span>');
+        // Issue #49: Confirm button sits under the amount for a pending row
+        // -- see confirmPendingTransaction() and its click listener below.
+        const confirmHtml = t.pending
+          ? `<button type="button" class="txn-confirm-btn" data-row="${t.rowNumber}">Confirm</button>`
+          : '';
         const rowInner = `
             <div>
               <div class="txn-name">${t.payee}</div>
               <div class="txn-meta">${metaBits.join(' &middot; ')}</div>
             </div>
-            <div class="txn-amount ${isIncome ? 'income' : ''}">${amountText}</div>
+            <div class="txn-amount-block">
+              <div class="txn-amount ${isIncome ? 'income' : ''}">${amountText}</div>
+              ${confirmHtml}
+            </div>
         `;
-        html += SwipeActions.rowHTML(t.rowNumber, `txn-row ${isUpcoming ? 'upcoming' : ''}`, rowInner, t.cleared === 'Cleared');
+        html += SwipeActions.rowHTML(t.rowNumber, `txn-row ${isUpcoming ? 'upcoming' : ''} ${t.pending ? 'pending' : ''}`, rowInner, t.cleared === 'Cleared');
       });
       listEl.innerHTML = html;
 
@@ -1097,6 +1375,27 @@
           const rowNumber = parseInt(row.closest('.swx-wrap').dataset.row, 10);
           const txn = transactions.find((t) => t.rowNumber === rowNumber);
           if (txn) TransactionForm.open(txn);
+        });
+      });
+
+      // Issue #49: stopPropagation keeps this from also bubbling up to the
+      // row's own click listener above (which would open the full edit
+      // sheet) -- same pattern as the desktop table's Confirm/Open buttons.
+      document.querySelectorAll('.txn-confirm-btn').forEach((btn) => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const rowNumber = parseInt(btn.dataset.row, 10);
+          const txn = transactions.find((t) => t.rowNumber === rowNumber);
+          if (!txn) return;
+          btn.disabled = true;
+          btn.textContent = 'Confirming…';
+          try {
+            await confirmPendingTransaction(txn);
+          } catch (err) {
+            alert(err.message);
+            btn.disabled = false;
+            btn.textContent = 'Confirm';
+          }
         });
       });
 
@@ -1149,6 +1448,11 @@
 
     upcomingToggleEl.addEventListener('click', () => {
       showUpcoming = !showUpcoming;
+      renderList();
+    });
+
+    pendingToggleEl.addEventListener('click', () => {
+      showPendingOnly = !showPendingOnly;
       renderList();
     });
 

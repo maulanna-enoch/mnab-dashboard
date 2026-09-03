@@ -190,6 +190,11 @@ async function fetchTransactionsForReconcile(sheets) {
     // undefined -> row[undefined] is undefined -> falls through cleanly).
     const transferRaw = map['Transfer'] !== undefined ? row[map['Transfer']] : undefined;
     const paymentIdRaw = map['Payment ID'] !== undefined ? row[map['Payment ID']] : undefined;
+    // Pending: self-provisioned by EmailImport.gs (issue #38), same
+    // defensive read as Transfer/Payment ID above -- may not exist yet on a
+    // sheet that's never run that script, in which case every row just
+    // reads as not-pending.
+    const pendingRaw = map['Pending'] !== undefined ? row[map['Pending']] : undefined;
     return {
       rowNumber: i + 2,
       sof: sofRaw ? String(sofRaw).trim() : '',
@@ -206,6 +211,7 @@ async function fetchTransactionsForReconcile(sheets) {
       notes: map['Notes'] !== undefined ? (row[map['Notes']] || '') : '',
       isTransfer: transferRaw === true || transferRaw === 'TRUE' || transferRaw === 'true',
       paymentId: paymentIdRaw ? String(paymentIdRaw).trim() : null,
+      isPending: pendingRaw === true || pendingRaw === 'TRUE' || pendingRaw === 'true',
     };
   });
 

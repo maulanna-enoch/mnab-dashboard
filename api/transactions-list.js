@@ -25,6 +25,7 @@ module.exports = async (req, res) => {
         cleared: r.isCleared ? 'Cleared' : 'Uncleared',
         amount: r.amount,
         notes: r.notes,
+        pending: r.isPending,
       })),
       updatedAt: new Date().toISOString(),
     });
