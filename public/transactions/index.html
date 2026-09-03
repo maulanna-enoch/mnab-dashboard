@@ -108,6 +108,85 @@
      keeps the resulting box fully opaque. */
   .txn-row.upcoming { border: 1px dashed rgba(96,165,250,0.4); background: linear-gradient(rgba(96,165,250,0.06), rgba(96,165,250,0.06)), var(--card); }
   .txn-meta .upcoming-tag { color: var(--upcoming, #60a5fa); }
+
+  /* -- wide-viewport data table (issue #65, part of epic #64) --
+     Below 1024px this is all display:none and the existing mobile card
+     list (#list) is what renders -- same underlying `transactions` data,
+     just a different view. At 1024px+ (the same breakpoint --page-max-width
+     itself jumps to 1024px at, per shared/responsive.css) the table and its
+     filter bar take over and #list is hidden instead. No page needs its own
+     device/viewport JS check for this -- it's pure CSS, same convention
+     responsive.css established. */
+  .txt-filters, .txt-table-wrap { display: none; }
+
+  @media (min-width: 1024px) {
+    #list { display: none; }
+    .txt-filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .txt-filters input,
+    .txt-filters select {
+      background: var(--card);
+      color: var(--text);
+      border: 1px solid #2a2e37;
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 0.85rem;
+      font-family: inherit;
+    }
+    .txt-filters input[type="search"] { flex: 1 1 200px; }
+    .txt-filters input[type="date"] { flex: 0 1 150px; }
+    .txt-filter-clear {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid #2a2e37;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 0.85rem;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    .txt-filter-clear:hover { color: var(--text); border-color: #3a3f4b; }
+
+    .txt-table-wrap { display: block; }
+    /* table-layout: fixed + the <colgroup> widths below are what make the
+       one-line-by-default rule actually hold: Date/Account/Amount get a
+       fixed px width sized for their realistic content (no ellipsis --
+       these should stay fully visible per issue feedback, not truncate),
+       Payee gets a fixed 300px, and Notes (no width set) soaks up whatever's
+       left, with Payee/Notes the only two columns that ellipsis-truncate
+       when content doesn't fit. */
+    .txt-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 0.85rem; }
+    .txt-table th {
+      text-align: left;
+      color: var(--muted);
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 8px 10px;
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+    }
+    .txt-table th:hover { color: var(--text); }
+    .txt-table th .txt-sort-arrow { margin-left: 3px; opacity: 0.6; }
+    .txt-table th.txt-sorted .txt-sort-arrow { opacity: 1; }
+    .txt-table td { padding: 8px 10px; border-top: 1px solid #22262f; white-space: nowrap; }
+    .txt-table td.txt-amount { text-align: right; }
+    .txt-table td.txt-truncate,
+    .txt-table th.txt-truncate { overflow: hidden; text-overflow: ellipsis; }
+    .txt-table td.txt-status-col,
+    .txt-table th.txt-status-col { text-align: center; padding-left: 4px; padding-right: 4px; }
+    .txt-table tbody tr { cursor: pointer; }
+    .txt-table tbody tr:hover { background: var(--card); }
+    .txt-table .txt-amount.income { color: var(--accent); }
+    .txt-table .txt-upcoming-row td { color: var(--upcoming, #60a5fa); }
+    .txt-empty-row td { color: var(--muted); text-align: center; padding: 20px 10px; white-space: normal; }
+  }
 </style>
 </head>
 <body>
@@ -119,7 +198,49 @@
       <div class="switch" id="upcoming-switch"></div>
     </div>
 
+    <div class="txt-filters" id="txt-filters">
+      <input type="search" id="txt-f-search" placeholder="Search payee or notes" />
+      <select id="txt-f-sof"><option value="">All accounts</option></select>
+      <select id="txt-f-type">
+        <option value="">All types</option>
+        <option value="Expense">Expense</option>
+        <option value="Income">Income</option>
+      </select>
+      <select id="txt-f-cleared">
+        <option value="">Cleared &amp; uncleared</option>
+        <option value="Cleared">Cleared</option>
+        <option value="Uncleared">Uncleared</option>
+      </select>
+      <input type="date" id="txt-f-from" title="From date" />
+      <input type="date" id="txt-f-to" title="To date" />
+      <button type="button" class="txt-filter-clear" id="txt-f-clear">Clear filters</button>
+    </div>
+
     <div id="list"><div class="sub">Loading…</div></div>
+
+    <div class="txt-table-wrap">
+      <table class="txt-table" id="txt-table">
+        <colgroup>
+          <col style="width: 90px" />   <!-- Date -->
+          <col style="width: 300px" />  <!-- Payee -->
+          <col style="width: 140px" />  <!-- Account -->
+          <col style="width: 110px" />  <!-- Amount -->
+          <col style="width: 34px" />   <!-- Status (C) -->
+          <col />                        <!-- Notes: takes the rest -->
+        </colgroup>
+        <thead>
+          <tr>
+            <th data-sort="date">Date <span class="txt-sort-arrow"></span></th>
+            <th data-sort="payee" class="txt-truncate">Payee <span class="txt-sort-arrow"></span></th>
+            <th data-sort="sof">Account <span class="txt-sort-arrow"></span></th>
+            <th data-sort="amount">Amount <span class="txt-sort-arrow"></span></th>
+            <th data-sort="cleared" class="txt-status-col" title="Cleared">C <span class="txt-sort-arrow"></span></th>
+            <th class="txt-truncate">Notes</th>
+          </tr>
+        </thead>
+        <tbody id="txt-table-body"></tbody>
+      </table>
+    </div>
   </div>
 
   <div id="txf-root"></div>
@@ -159,6 +280,143 @@
     const upcomingToggleEl = document.getElementById('upcoming-toggle');
     const upcomingSwitchEl = document.getElementById('upcoming-switch');
     const upcomingLabelEl = document.getElementById('upcoming-label');
+
+    // -- wide-viewport data table (issue #65) -- filter/sort state and the
+    // last "upcoming"-filtered list handed to it by renderList(), so a
+    // filter/sort change alone can re-render without redoing that step.
+    const txtFilterEls = {
+      search: document.getElementById('txt-f-search'),
+      sof: document.getElementById('txt-f-sof'),
+      type: document.getElementById('txt-f-type'),
+      cleared: document.getElementById('txt-f-cleared'),
+      from: document.getElementById('txt-f-from'),
+      to: document.getElementById('txt-f-to'),
+    };
+    const txtTableBodyEl = document.getElementById('txt-table-body');
+    let txtSort = { key: 'date', dir: 'desc' };
+    let txtLastVisible = [];
+
+    async function loadAccountFilterOptions() {
+      try {
+        const res = await fetch('/api/accounts-list');
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        const opts = (data.accounts || [])
+          .map((a) => `<option value="${a.name}">${a.name}</option>`)
+          .join('');
+        txtFilterEls.sof.insertAdjacentHTML('beforeend', opts);
+      } catch (err) {
+        // Filter dropdown is a nice-to-have -- a failed fetch just leaves it
+        // at "All accounts", same fallback spirit as the form's own payee list.
+      }
+    }
+
+    function txtMatchesFilters(t) {
+      const search = txtFilterEls.search.value.trim().toLowerCase();
+      if (search) {
+        const haystack = `${t.payee || ''} ${t.notes || ''}`.toLowerCase();
+        if (!haystack.includes(search)) return false;
+      }
+      if (txtFilterEls.sof.value && t.sof !== txtFilterEls.sof.value) return false;
+      if (txtFilterEls.type.value && t.type !== txtFilterEls.type.value) return false;
+      if (txtFilterEls.cleared.value && t.cleared !== txtFilterEls.cleared.value) return false;
+      if (txtFilterEls.from.value && (!t.date || t.date < txtFilterEls.from.value)) return false;
+      if (txtFilterEls.to.value && (!t.date || t.date > txtFilterEls.to.value)) return false;
+      return true;
+    }
+
+    function txtSortRows(list) {
+      const { key, dir } = txtSort;
+      const mul = dir === 'asc' ? 1 : -1;
+      return [...list].sort((a, b) => {
+        let av = a[key];
+        let bv = b[key];
+        if (key === 'amount') {
+          av = Number(av) || 0;
+          bv = Number(bv) || 0;
+        } else {
+          av = (av || '').toString().toLowerCase();
+          bv = (bv || '').toString().toLowerCase();
+        }
+        if (av < bv) return -1 * mul;
+        if (av > bv) return 1 * mul;
+        // Stable tie-break so equal-key rows don't jump around between renders.
+        return (b.rowNumber || 0) - (a.rowNumber || 0);
+      });
+    }
+
+    function txtUpdateSortIndicators() {
+      document.querySelectorAll('#txt-table th[data-sort]').forEach((th) => {
+        const arrow = th.querySelector('.txt-sort-arrow');
+        const isActive = th.dataset.sort === txtSort.key;
+        th.classList.toggle('txt-sorted', isActive);
+        arrow.textContent = isActive ? (txtSort.dir === 'asc' ? '▲' : '▼') : '';
+      });
+    }
+
+    function renderTable(sourceList) {
+      txtLastVisible = sourceList;
+      const todayStr = TransactionForm.todayISO();
+      const rows = txtSortRows(sourceList.filter(txtMatchesFilters));
+      txtUpdateSortIndicators();
+
+      if (!rows.length) {
+        txtTableBodyEl.innerHTML = '<tr class="txt-empty-row"><td colspan="6">No transactions match.</td></tr>';
+        return;
+      }
+
+      // Income vs. expense is already conveyed by the amount's color (see
+      // .txt-amount.income) -- no separate Type column, though Type is still
+      // filterable via the filter bar above the table.
+      txtTableBodyEl.innerHTML = rows.map((t) => {
+        const isIncome = t.type === 'Income';
+        const isUpcoming = t.date > todayStr;
+        const amountText = (isIncome ? '+' : '') + formatIDR(t.amount);
+        const statusHtml = t.cleared === 'Cleared' ? '☑️' : '';
+        const payee = t.payee || '';
+        const notes = t.notes || '';
+        return `
+          <tr data-row="${t.rowNumber}" class="${isUpcoming ? 'txt-upcoming-row' : ''}">
+            <td>${t.date || ''}</td>
+            <td class="txt-truncate" title="${payee.replace(/"/g, '&quot;')}">${payee}</td>
+            <td>${t.sof || ''}</td>
+            <td class="txt-amount ${isIncome ? 'income' : ''}">${amountText}</td>
+            <td class="txt-status-col">${statusHtml}</td>
+            <td class="txt-truncate" title="${notes.replace(/"/g, '&quot;')}">${notes}</td>
+          </tr>
+        `;
+      }).join('');
+
+      txtTableBodyEl.querySelectorAll('tr[data-row]').forEach((row) => {
+        row.addEventListener('click', () => {
+          const rowNumber = parseInt(row.dataset.row, 10);
+          const txn = transactions.find((t) => t.rowNumber === rowNumber);
+          if (txn) TransactionForm.open(txn);
+        });
+      });
+    }
+
+    document.querySelectorAll('#txt-table th[data-sort]').forEach((th) => {
+      th.addEventListener('click', () => {
+        const key = th.dataset.sort;
+        if (txtSort.key === key) {
+          txtSort.dir = txtSort.dir === 'asc' ? 'desc' : 'asc';
+        } else {
+          // Date/amount read most naturally newest/largest first; text
+          // columns read most naturally A-to-Z first.
+          txtSort = { key, dir: (key === 'date' || key === 'amount') ? 'desc' : 'asc' };
+        }
+        renderTable(txtLastVisible);
+      });
+    });
+
+    Object.values(txtFilterEls).forEach((el) => {
+      el.addEventListener('input', () => renderTable(txtLastVisible));
+    });
+    document.getElementById('txt-f-clear').addEventListener('click', () => {
+      Object.values(txtFilterEls).forEach((el) => { el.value = ''; });
+      renderTable(txtLastVisible);
+    });
 
     // Add/Edit/Delete form itself lives in shared/transaction-form.js --
     // this page only wires up the list and hands rows to it via
@@ -206,6 +464,11 @@
         : (upcomingCount ? `${upcomingCount} upcoming hidden` : 'No upcoming transactions');
 
       const visible = showUpcoming ? sorted : sorted.filter((t) => t.date <= todayStr);
+
+      // Wide-viewport table (issue #65) renders from the same
+      // upcoming-filtered list as the mobile cards, then applies its own
+      // column filters/sort on top -- see renderTable().
+      renderTable(visible);
 
       if (!visible.length) {
         listEl.innerHTML = '<div class="sub">No transactions yet. Tap + to add one.</div>';
@@ -298,6 +561,7 @@
     });
 
     loadTransactions();
+    loadAccountFilterOptions();
   </script>
 </body>
 </html>
