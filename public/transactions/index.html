@@ -567,14 +567,40 @@
         if (confirmBtn) {
           confirmBtn.addEventListener('click', async (e) => {
             e.stopPropagation();
+            // Issue #49 keyboard follow-up: this row is mid keyboard-edit
+            // (tabbed here from an open field, not just moused straight to
+            // Confirm) -- save the draft AND confirm in one action instead
+            // of the plain confirm-only path. A native Enter/Space on this
+            // focused button lands here too (the browser fires 'click' for
+            // both), so this single handler covers mouse and keyboard.
+            const isEditingThisRow = txtKbdEditRowNumber === txn.rowNumber;
             confirmBtn.disabled = true;
-            confirmBtn.textContent = 'Confirming…';
+            confirmBtn.textContent = isEditingThisRow ? 'Saving…' : 'Confirming…';
             try {
-              await confirmPendingTransaction(txn);
+              if (isEditingThisRow) {
+                await txtKbdConfirmAndSaveEdit();
+              } else {
+                await confirmPendingTransaction(txn);
+              }
             } catch (err) {
               alert(err.message);
               confirmBtn.disabled = false;
               confirmBtn.textContent = 'Confirm';
+            }
+          });
+          // Tab/Shift-Tab move on to the field on either side of this
+          // button's actual column position (Cleared before it, Notes
+          // after -- see txtKbdFieldOrder); Escape cancels the edit same
+          // as any other field. Only active while this specific row is
+          // the one being edited -- otherwise this is just a plain button.
+          confirmBtn.addEventListener('keydown', (e) => {
+            if (txtKbdEditRowNumber !== txn.rowNumber) return;
+            if (e.key === 'Tab') {
+              e.preventDefault();
+              txtKbdFocusField(e.shiftKey ? 'cleared' : 'notes');
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              txtKbdCancelEdit();
             }
           });
         }
@@ -644,11 +670,32 @@
       return prefixMatches.length === 1 ? prefixMatches[0] : typed;
     }
 
+    // Issue #49 keyboard follow-up: the Confirm button sits in the tab
+    // cycle for a pending row (see txtKbdFieldOrder below), in its actual
+    // column position between Cleared and Notes -- it's a real <button>,
+    // not one of TXT_KBD_FIELDS' inputs, so it's focused directly instead
+    // of through txtKbdEditInputs.
     function txtKbdFocusField(field) {
+      if (field === 'confirm') {
+        const row = txtRowEls()[txtKbdHighlightIndex];
+        const btn = row && row.querySelector('.txt-confirm-btn');
+        if (btn) btn.focus();
+        return;
+      }
       const input = txtKbdEditInputs && txtKbdEditInputs[field];
       if (!input) return;
       input.focus();
       if (typeof input.select === 'function' && input.type !== 'checkbox') input.select();
+    }
+
+    // Tab order for the row-edit session, left to right same as the table's
+    // own columns -- 'confirm' (the Confirm button) is only spliced in for
+    // a pending row, right where its column actually sits.
+    function txtKbdFieldOrder(txn) {
+      const order = ['date', 'payee', 'sof', 'amount', 'cleared'];
+      if (txn && txn.pending) order.push('confirm');
+      order.push('notes');
+      return order;
     }
 
     // Pulls whatever's currently in a field's input into the draft. Called
@@ -677,11 +724,12 @@
       if (e.key === 'Tab') {
         e.preventDefault();
         txtKbdCommitField(field);
-        const idx = TXT_KBD_FIELDS.indexOf(field);
+        const order = txtKbdFieldOrder(transactions.find((t) => t.rowNumber === txtKbdEditRowNumber));
+        const idx = order.indexOf(field);
         const nextIdx = e.shiftKey
-          ? (idx - 1 + TXT_KBD_FIELDS.length) % TXT_KBD_FIELDS.length
-          : (idx + 1) % TXT_KBD_FIELDS.length;
-        txtKbdFocusField(TXT_KBD_FIELDS[nextIdx]);
+          ? (idx - 1 + order.length) % order.length
+          : (idx + 1) % order.length;
+        txtKbdFocusField(order[nextIdx]);
       } else if (e.key === 'Enter') {
         e.preventDefault();
         txtKbdCommitField(field);
@@ -846,6 +894,77 @@
       }
     }
 
+    // Issue #49 keyboard follow-up: reached by tabbing to the Confirm
+    // button during a row-edit session (see txtKbdFieldOrder above) --
+    // Enter/Space on it (native button activation, handled by the
+    // button's own 'click' listener in renderTable()) saves whatever's
+    // currently filled in the row AND confirms it (Pending -> FALSE) in
+    // one action, so fixing a mis-parsed import doesn't take two separate
+    // steps. Same validation as txtKbdSaveEdit; two sequential requests
+    // since transactions-update has no single combined action.
+    async function txtKbdConfirmAndSaveEdit() {
+      if (txtKbdEditRowNumber === null || txtKbdSaving) return;
+      const draft = txtKbdEditDraft;
+      const rowNumber = txtKbdEditRowNumber;
+
+      if (!draft.payee || !draft.sof || !draft.date) {
+        alert('Payee, Account, and Date are required.');
+        return;
+      }
+      if (!Number.isFinite(draft.amount) || draft.amount <= 0) {
+        alert('Amount must be a positive number.');
+        return;
+      }
+
+      const original = transactions.find((t) => t.rowNumber === rowNumber);
+      const payload = {
+        rowNumber,
+        payee: draft.payee,
+        type: draft.type,
+        sof: draft.sof,
+        amount: draft.amount,
+        date: draft.date,
+        month: draft.month,
+        notes: draft.notes,
+        cleared: draft.cleared,
+      };
+      if (original && draft.date !== original.date) {
+        payload.month = TransactionForm.guessBillingMonth(draft.date);
+      }
+
+      const row = txtRowEls()[txtKbdHighlightIndex];
+      txtKbdSaving = true;
+      if (row) row.classList.add('txt-kbd-row-saving');
+      try {
+        const res = await fetch('/api/transactions-update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+
+        const confirmRes = await fetch('/api/transactions-update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rowNumber, action: 'confirmPending' }),
+        });
+        const confirmData = await confirmRes.json();
+        if (confirmData.error) throw new Error(confirmData.error);
+
+        txtKbdEditRowNumber = null;
+        txtKbdEditDraft = null;
+        txtKbdEditInputs = null;
+        await loadTransactions();
+        txtRestoreHighlightByRowNumber(rowNumber);
+      } catch (err) {
+        if (row) row.classList.remove('txt-kbd-row-saving');
+        throw err; // surfaced to the caller (the Confirm button's click handler), which shows/resets its own label
+      } finally {
+        txtKbdSaving = false;
+      }
+    }
+
     // Backspace on a highlighted row -- analogous to Enter opening it for
     // edit, but simpler: always confirm first, then delete outright rather
     // than opening any fields. Reuses deleteTransactionViaSwipe() (defined
@@ -905,8 +1024,16 @@
 
       const t = e.target;
       const tag = t && t.tagName;
-      const isTextField = (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable)) && t.offsetParent !== null;
-      if (isTextField) return; // typing in a filter box, etc. -- don't hijack arrows/Enter there
+      // BUTTON is included here (not just INPUT/TEXTAREA/SELECT) so that
+      // native Tab focus landing on a real button -- the Confirm button
+      // (issue #49) or the pencil "open full editor" button -- gets plain
+      // native Enter/Space-activates-the-button behavior, instead of also
+      // being intercepted by this row-highlight-index-based handler below
+      // (which tracks a highlighted row, not real DOM focus, and would
+      // otherwise fire against whatever row happens to be highlighted,
+      // not the row the focused button actually belongs to).
+      const isTextField = (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || (t && t.isContentEditable)) && t.offsetParent !== null;
+      if (isTextField) return; // typing in a filter box, a focused button, etc. -- don't hijack arrows/Enter/Space there
       if (document.querySelector('.open')) return; // the full Add/Edit sheet owns the keyboard
 
       if (e.key === 'ArrowDown') {
@@ -915,7 +1042,7 @@
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
         setTxtHighlight(txtKbdHighlightIndex - 1);
-      } else if (e.key === 'Enter') {
+      } else if (e.key === 'Enter' || e.key === ' ') {
         const txn = txtCurrentHighlightedTxn();
         if (!txn) return;
         e.preventDefault();
