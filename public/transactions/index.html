@@ -116,7 +116,8 @@
      itself jumps to 1024px at, per shared/responsive.css) the table and its
      filter bar take over and #list is hidden instead. No page needs its own
      device/viewport JS check for this -- it's pure CSS, same convention
-     responsive.css established. */
+     responsive.css established. Cells are editable in place (issue #77) --
+     see the script section below. */
   .txt-filters, .txt-table-wrap { display: none; }
 
   @media (min-width: 1024px) {
@@ -181,11 +182,44 @@
     .txt-table th.txt-truncate { overflow: hidden; text-overflow: ellipsis; }
     .txt-table td.txt-status-col,
     .txt-table th.txt-status-col { text-align: center; padding-left: 4px; padding-right: 4px; }
-    .txt-table tbody tr { cursor: pointer; }
+    .txt-table tbody tr { cursor: default; }
     .txt-table tbody tr:hover { background: var(--card); }
     .txt-table .txt-amount.income { color: var(--accent); }
     .txt-table .txt-upcoming-row td { color: var(--upcoming, #60a5fa); }
     .txt-empty-row td { color: var(--muted); text-align: center; padding: 20px 10px; white-space: normal; }
+
+    /* -- inline cell editing (issue #77) -- click a cell to edit it in
+       place; the trailing pencil button (.txt-open-btn) still opens the
+       full Add/Edit sheet for anything not covered here (e.g. Income vs
+       Expense, or a coordinate edit). See the "wide-viewport data table"
+       comment above renderTable() in the script for the full flow. */
+    .txt-table td.txt-editable { cursor: text; }
+    .txt-table td.txt-editable:hover { background: rgba(255, 255, 255, 0.06); }
+    .txt-table td.txt-status-col { cursor: pointer; }
+    .txt-table td.txt-editing { padding: 4px 6px; }
+    .txt-table td.txt-cell-saving { opacity: 0.5; pointer-events: none; }
+    .txt-table td.txt-open-col { text-align: center; padding-left: 2px; padding-right: 2px; }
+    .txt-open-btn {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-size: 0.85rem;
+      cursor: pointer;
+      padding: 2px 4px;
+      line-height: 1;
+    }
+    .txt-open-btn:hover { color: var(--text); }
+    .txt-cell-input {
+      width: 100%;
+      box-sizing: border-box;
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--accent);
+      border-radius: 4px;
+      padding: 4px 6px;
+      font: inherit;
+      color-scheme: dark;
+    }
   }
 </style>
 </head>
@@ -227,6 +261,7 @@
           <col style="width: 110px" />  <!-- Amount -->
           <col style="width: 34px" />   <!-- Status (C) -->
           <col />                        <!-- Notes: takes the rest -->
+          <col style="width: 28px" />   <!-- Open full sheet (issue #77) -->
         </colgroup>
         <thead>
           <tr>
@@ -236,6 +271,7 @@
             <th data-sort="amount">Amount <span class="txt-sort-arrow"></span></th>
             <th data-sort="cleared" class="txt-status-col" title="Cleared">C <span class="txt-sort-arrow"></span></th>
             <th class="txt-truncate">Notes</th>
+            <th></th>
           </tr>
         </thead>
         <tbody id="txt-table-body"></tbody>
@@ -361,7 +397,7 @@
       txtUpdateSortIndicators();
 
       if (!rows.length) {
-        txtTableBodyEl.innerHTML = '<tr class="txt-empty-row"><td colspan="6">No transactions match.</td></tr>';
+        txtTableBodyEl.innerHTML = '<tr class="txt-empty-row"><td colspan="7">No transactions match.</td></tr>';
         return;
       }
 
@@ -377,23 +413,201 @@
         const notes = t.notes || '';
         return `
           <tr data-row="${t.rowNumber}" class="${isUpcoming ? 'txt-upcoming-row' : ''}">
-            <td>${t.date || ''}</td>
-            <td class="txt-truncate" title="${payee.replace(/"/g, '&quot;')}">${payee}</td>
-            <td>${t.sof || ''}</td>
-            <td class="txt-amount ${isIncome ? 'income' : ''}">${amountText}</td>
-            <td class="txt-status-col">${statusHtml}</td>
-            <td class="txt-truncate" title="${notes.replace(/"/g, '&quot;')}">${notes}</td>
+            <td class="txt-editable" data-field="date">${t.date || ''}</td>
+            <td class="txt-truncate txt-editable" data-field="payee" title="${payee.replace(/"/g, '&quot;')}">${payee}</td>
+            <td class="txt-editable" data-field="sof">${t.sof || ''}</td>
+            <td class="txt-amount txt-editable ${isIncome ? 'income' : ''}" data-field="amount">${amountText}</td>
+            <td class="txt-status-col" data-field="cleared">${statusHtml}</td>
+            <td class="txt-truncate txt-editable" data-field="notes" title="${notes.replace(/"/g, '&quot;')}">${notes}</td>
+            <td class="txt-open-col"><button type="button" class="txt-open-btn" title="Open full editor">&#9998;</button></td>
           </tr>
         `;
       }).join('');
 
+      // -- inline cell editing (issue #77) --
+      // A click on any of the txt-editable cells swaps it for a matching
+      // input/select in place; the status cell instead toggles Cleared
+      // directly, same as the mobile list's swipe-to-clear gesture. The
+      // trailing pencil button opens the full Add/Edit sheet, for anything
+      // an inline cell can't cover (Income/Expense, location, etc.) -- kept
+      // as its own affordance rather than a double-click, since a
+      // double-click on an already-editable cell just re-targets the input
+      // its own first click opened.
       txtTableBodyEl.querySelectorAll('tr[data-row]').forEach((row) => {
-        row.addEventListener('click', () => {
-          const rowNumber = parseInt(row.dataset.row, 10);
-          const txn = transactions.find((t) => t.rowNumber === rowNumber);
-          if (txn) TransactionForm.open(txn);
+        const rowNumber = parseInt(row.dataset.row, 10);
+        const txn = transactions.find((t) => t.rowNumber === rowNumber);
+        if (!txn) return;
+
+        row.querySelectorAll('td.txt-editable').forEach((td) => {
+          td.addEventListener('click', () => startCellEdit(td, txn, td.dataset.field));
+        });
+
+        const statusTd = row.querySelector('td.txt-status-col');
+        statusTd.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (statusTd.classList.contains('txt-cell-saving')) return;
+          statusTd.classList.add('txt-cell-saving');
+          try {
+            await toggleClearedViaSwipe(txn);
+          } catch (err) {
+            alert(err.message);
+            statusTd.classList.remove('txt-cell-saving');
+          }
+        });
+
+        row.querySelector('.txt-open-btn').addEventListener('click', (e) => {
+          e.stopPropagation();
+          TransactionForm.open(txn);
         });
       });
+    }
+
+    // Only one cell is ever mid-edit at a time -- clicking a different cell
+    // while another is open is a rare enough case that the simplest correct
+    // behavior is to let the outgoing cell's own blur handler commit/cancel
+    // it first (native focus-out ordering), rather than tracking editor
+    // state separately here.
+    function txtEditableColumnLabel(field) {
+      return { date: 'Date', payee: 'Payee', sof: 'Account', amount: 'Amount', notes: 'Notes' }[field] || field;
+    }
+
+    function createCellEditor(field, txn) {
+      if (field === 'sof') {
+        const select = document.createElement('select');
+        select.className = 'txt-cell-input';
+        Array.from(txtFilterEls.sof.options).forEach((opt) => {
+          if (!opt.value) return; // skip the filter's own "All accounts" placeholder
+          const o = document.createElement('option');
+          o.value = opt.value;
+          o.textContent = opt.textContent;
+          if (opt.value === txn.sof) o.selected = true;
+          select.appendChild(o);
+        });
+        return select;
+      }
+
+      const input = document.createElement('input');
+      input.className = 'txt-cell-input';
+      if (field === 'date') {
+        input.type = 'date';
+        input.value = txn.date || '';
+      } else if (field === 'amount') {
+        input.type = 'text';
+        input.inputMode = 'decimal';
+        input.value = txn.amount != null ? String(txn.amount) : '';
+      } else {
+        input.type = 'text';
+        input.value = txn[field] || '';
+        if (field === 'payee') {
+          // Reuses the same <datalist> the full Add/Edit sheet populates on
+          // mount (shared/transaction-form.js's loadPayees()) -- it's already
+          // in the DOM regardless of whether that sheet is open.
+          input.setAttribute('list', 'txf-payee-list');
+          input.autocomplete = 'off';
+        }
+      }
+      return input;
+    }
+
+    function startCellEdit(td, txn, field) {
+      if (td.classList.contains('txt-editing')) return; // already editing this cell
+      const input = createCellEditor(field, txn);
+      td.innerHTML = '';
+      td.classList.add('txt-editing');
+      td.appendChild(input);
+      input.focus();
+      if (typeof input.select === 'function') input.select();
+
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          commitCellEdit(td, txn, field, input);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          input.dataset.handled = '1';
+          renderTable(txtLastVisible); // discard, no save
+        }
+      });
+      input.addEventListener('blur', () => commitCellEdit(td, txn, field, input));
+    }
+
+    async function commitCellEdit(td, txn, field, input) {
+      if (input.dataset.handled) return; // Enter already handled this; ignore the blur that follows
+      input.dataset.handled = '1';
+
+      let newValue = input.value;
+      if (field === 'amount') {
+        newValue = parseFloat(String(newValue).replace(/[^\d.]/g, ''));
+      } else {
+        newValue = newValue.trim();
+      }
+
+      const unchanged = field === 'amount'
+        ? Number(newValue) === Number(txn.amount)
+        : newValue === (txn[field] || '');
+      if (unchanged) {
+        renderTable(txtLastVisible);
+        return;
+      }
+
+      if ((field === 'payee' || field === 'sof' || field === 'date') && !newValue) {
+        alert(`${txtEditableColumnLabel(field)} is required.`);
+        renderTable(txtLastVisible);
+        return;
+      }
+      if (field === 'amount' && (!Number.isFinite(newValue) || newValue <= 0)) {
+        alert('Amount must be a positive number.');
+        renderTable(txtLastVisible);
+        return;
+      }
+
+      td.classList.add('txt-cell-saving');
+      input.disabled = true;
+      try {
+        await saveCellEdit(txn, field, newValue);
+        await loadTransactions();
+      } catch (err) {
+        alert(err.message);
+        renderTable(txtLastVisible); // revert to the last-known-good values
+      }
+    }
+
+    // Sends the whole row back, same convention as toggleClearedViaSwipe()
+    // below -- transactions-update rewrites the full row, so every other
+    // field has to be resent unchanged alongside the one that changed.
+    async function saveCellEdit(txn, field, newValue) {
+      const payload = {
+        rowNumber: txn.rowNumber,
+        payee: txn.payee,
+        type: txn.type,
+        sof: txn.sof,
+        amount: txn.amount,
+        date: txn.date,
+        month: txn.month,
+        notes: txn.notes,
+        cleared: txn.cleared,
+      };
+
+      if (field === 'date') {
+        // No Month field in this editing surface -- re-guess the billing
+        // month from the new date, same heuristic the full sheet pre-fills
+        // with (TransactionForm.guessBillingMonth). If this transaction's
+        // month was hand-overridden away from the guess, editing its date
+        // inline will replace that override -- use the full sheet instead
+        // if that matters for this row.
+        payload.date = newValue;
+        payload.month = TransactionForm.guessBillingMonth(newValue);
+      } else {
+        payload[field] = newValue;
+      }
+
+      const res = await fetch('/api/transactions-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
     }
 
     document.querySelectorAll('#txt-table th[data-sort]').forEach((th) => {
