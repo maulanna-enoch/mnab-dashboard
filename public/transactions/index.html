@@ -452,12 +452,12 @@
         return `
           <tr data-row="${t.rowNumber}" class="${isUpcoming ? 'txt-upcoming-row' : ''}">
             <td class="txt-editable" data-field="date">${t.date || ''}</td>
-            <td class="txt-truncate txt-editable" data-field="payee" title="${payee.replace(/\"/g, '&quot;')}">${payee}</td>
+            <td class="txt-truncate txt-editable" data-field="payee" title="${payee.replace(/"/g, '&quot;')}">${payee}</td>
             <td class="txt-editable" data-field="sof">${t.sof || ''}</td>
             <td class="txt-amount txt-editable ${isIncome ? 'income' : ''}" data-field="amount">${amountText}</td>
             <td class="txt-status-col" data-field="cleared">${statusHtml}</td>
-            <td class="txt-truncate txt-editable" data-field="notes" title="${notes.replace(/\"/g, '&quot;')}">${notes}</td>
-            <td class="txt-open-col"><button type="button" class="txt-open-btn" title="Open full editor">&#9998;</span></td>
+            <td class="txt-truncate txt-editable" data-field="notes" title="${notes.replace(/"/g, '&quot;')}">${notes}</td>
+            <td class="txt-open-col"><button type="button" class="txt-open-btn" title="Open full editor">&#9998;</button></td>
           </tr>
         `;
       }).join('');
