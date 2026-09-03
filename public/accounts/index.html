@@ -1668,7 +1668,13 @@
     // sheet's input on close, so e.g. closing Reconcile right after typing
     // in rc-statement-amount would otherwise leave every hotkey silently
     // swallowed (isTextField still true) until the user clicks elsewhere.
-    const isTextField = (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable)) && t.offsetParent !== null;
+    // BUTTON included (issue #49 keyboard follow-up) so native Tab focus on
+    // a real button -- the Confirm button, the pencil "open editor" button,
+    // etc. -- gets plain native Enter/Space-activates-the-button behavior
+    // instead of also being intercepted here, which tracks a highlighted
+    // row (mouse/arrow-key driven), not real DOM focus, and could
+    // otherwise fire against a different row than the focused button.
+    const isTextField = (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || (t && t.isContentEditable)) && t.offsetParent !== null;
     if (isTextField) return;
     // Any sheet/overlay (Add/Edit transaction, reconcile, payment, confirm
     // dialog, undo-last-reconciliation) is currently open -- let it own the
