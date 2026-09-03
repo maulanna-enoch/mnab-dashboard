@@ -357,12 +357,20 @@
     // on blur, this one is all-or-nothing for the whole row and is driven
     // entirely from the keyboard. TXT_KBD_FIELDS is left-to-right column
     // order, matching the <colgroup> above.
+    //
+    // Backspace on a highlighted row is a separate, simpler action (not a
+    // row-edit session): it always confirms first (plain confirm(), same
+    // convention this page's full sheet and swipe-to-delete already use --
+    // see handleDelete() in transaction-form.js and swipe-actions.js), then
+    // deletes via the existing deleteTransactionViaSwipe() below, same as
+    // the mobile list's swipe-left gesture.
     const TXT_KBD_FIELDS = ['date', 'payee', 'sof', 'amount', 'cleared', 'notes'];
     let txtKbdHighlightIndex = -1;
     let txtKbdEditRowNumber = null; // rowNumber currently open for row-edit, or null
     let txtKbdEditDraft = null; // uncommitted field values for that row -- never sent until Enter
     let txtKbdEditInputs = null; // { field: <input/select> } for the currently open row
     let txtKbdSaving = false;
+    let txtKbdDeleting = false; // guards a second Backspace while a delete is in flight
 
     async function loadAccountFilterOptions() {
       try {
@@ -750,6 +758,38 @@
       }
     }
 
+    // Backspace on a highlighted row -- analogous to Enter opening it for
+    // edit, but simpler: always confirm first, then delete outright rather
+    // than opening any fields. Reuses deleteTransactionViaSwipe() (defined
+    // below), the same delete path the mobile list's swipe-left gesture and
+    // the full Add/Edit sheet's own Delete link already use, so there's a
+    // single place that talks to /api/transactions-delete.
+    async function txtKbdHandleDelete(txn) {
+      if (!confirm(`Delete "${txn.payee}"?`)) return;
+      // Capture the row/index before the confirm dialog's own event loop
+      // turn and the delete request -- txtKbdHighlightIndex itself doesn't
+      // change while this is in flight (nothing else can move it), but
+      // reading both up front keeps this in the same style as the row-edit
+      // save path above.
+      const index = txtKbdHighlightIndex;
+      const row = txtRowEls()[index];
+      txtKbdDeleting = true;
+      if (row) row.classList.add('txt-kbd-row-saving'); // reuse the same dimmed "busy" look as a row-edit save
+      try {
+        await deleteTransactionViaSwipe(txn);
+        // deleteTransactionViaSwipe() -> loadTransactions() rebuilds the
+        // table (renderTable() always resets the highlight -- see its own
+        // comment), so re-highlight by the same index: the row that slides
+        // into the deleted row's spot, or the new last row if it was last.
+        setTxtHighlight(index);
+      } catch (err) {
+        if (row) row.classList.remove('txt-kbd-row-saving');
+        alert(err.message);
+      } finally {
+        txtKbdDeleting = false;
+      }
+    }
+
     // A click anywhere outside the row currently open for keyboard editing
     // discards it (same as Escape, no save) -- a click on another field
     // inside that same row is left alone and just focuses it normally.
@@ -792,6 +832,11 @@
         if (!txn) return;
         e.preventDefault();
         startTxtKbdEdit(txn);
+      } else if (e.key === 'Backspace') {
+        const txn = txtCurrentHighlightedTxn();
+        if (!txn || txtKbdDeleting) return;
+        e.preventDefault();
+        txtKbdHandleDelete(txn);
       }
     });
 
