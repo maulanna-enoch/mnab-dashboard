@@ -121,8 +121,40 @@
      toggles share one visual language. */
   .txn-row.pending { border: 1px dashed rgba(167,139,250,0.45); background: linear-gradient(rgba(167,139,250,0.08), rgba(167,139,250,0.08)), var(--card); }
   .txn-meta .pending-tag { color: var(--pending, #a78bfa); }
-  #pending-switch.on { background: var(--pending, #a78bfa); }
-  #pending-toggle .dot { background: var(--pending, #a78bfa); }
+
+  /* -- "Review Pending" mode button (issue #49 feedback follow-up) --
+     Deliberately NOT the on/off .switch control used for Upcoming: this
+     isn't a show/hide filter, it's a mode switch (browsing all
+     transactions vs. reviewing the pending ones), so it gets its own
+     button-shaped affordance that visibly changes shape/label when
+     active, rather than looking like a toggle that's merely "on". Hidden
+     entirely when there's nothing to review (see the pendingCount ||
+     showPendingOnly check in renderList()) -- unlike Upcoming, an empty
+     Pending queue isn't something worth a permanent row on screen. */
+  .pending-review-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    background: var(--card);
+    border: 1px dashed rgba(167,139,250,0.5);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    font-size: 12.5px;
+    font-family: inherit;
+    color: var(--pending, #a78bfa);
+    cursor: pointer;
+    text-align: left;
+  }
+  .pending-review-btn:hover { background: rgba(167,139,250,0.08); }
+  .pending-review-btn .prb-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--pending, #a78bfa); flex-shrink: 0; }
+  .pending-review-btn.active {
+    background: rgba(167,139,250,0.16);
+    border-style: solid;
+    color: var(--text);
+    font-weight: 600;
+  }
   .txn-confirm-btn {
     background: rgba(167,139,250,0.15);
     color: var(--pending, #a78bfa);
@@ -281,13 +313,15 @@
 
     <!-- Pending transactions (issue #49): auto-imported by EmailImport.gs
          (issue #38) and not yet reviewed. Shared by both the mobile card
-         list and the wide-viewport table below -- this toggle filters the
+         list and the wide-viewport table below -- this button filters the
          same `visible` array renderList() hands to both, same convention
-         as the Upcoming toggle above. -->
-    <div class="upcoming-toggle" id="pending-toggle">
-      <span class="label"><span class="dot"></span><span id="pending-label">Pending</span></span>
-      <div class="switch" id="pending-switch"></div>
-    </div>
+         as the Upcoming toggle above, but shaped as a mode switch (browse
+         all vs. review pending) rather than a show/hide filter -- see the
+         .pending-review-btn CSS comment above for why. Hidden by default;
+         renderList() shows it once there's something to review. -->
+    <button type="button" class="pending-review-btn" id="pending-toggle" style="display:none;">
+      <span class="prb-dot"></span><span id="pending-label">Review Pending</span>
+    </button>
 
     <div class="txt-filters" id="txt-filters">
       <input type="search" id="txt-f-search" placeholder="Search payee or notes" />
@@ -378,7 +412,6 @@
     const upcomingSwitchEl = document.getElementById('upcoming-switch');
     const upcomingLabelEl = document.getElementById('upcoming-label');
     const pendingToggleEl = document.getElementById('pending-toggle');
-    const pendingSwitchEl = document.getElementById('pending-switch');
     const pendingLabelEl = document.getElementById('pending-label');
 
     // -- wide-viewport data table (issue #65) -- filter/sort state and the
@@ -1270,14 +1303,25 @@
         ? (upcomingCount ? `Showing ${upcomingCount} upcoming` : 'No upcoming transactions')
         : (upcomingCount ? `${upcomingCount} upcoming hidden` : 'No upcoming transactions');
 
-      // Issue #49: pending count/label follows the same pattern as Upcoming
-      // above, and the filter is shared by both the mobile card list and the
-      // wide-viewport table -- both are handed the same `visible` array.
+      // Issue #49 feedback follow-up: "Review Pending" is a mode switch, not
+      // a show/hide filter like Upcoming -- so unlike Upcoming's toggle, this
+      // button is hidden entirely when there's nothing to review (no pending
+      // rows and not currently reviewing), rather than always showing with a
+      // "No pending transactions" label. While actively reviewing, it stays
+      // visible (and offers a way back out) even if the last pending row
+      // gets confirmed mid-session. The filter itself is still shared by
+      // both the mobile card list and the wide-viewport table -- both are
+      // handed the same `visible` array.
       const pendingCount = sorted.filter((t) => t.pending).length;
-      pendingSwitchEl.classList.toggle('on', showPendingOnly);
-      pendingLabelEl.textContent = showPendingOnly
-        ? (pendingCount ? `Showing ${pendingCount} pending` : 'No pending transactions')
-        : (pendingCount ? `${pendingCount} pending` : 'No pending transactions');
+      if (pendingCount || showPendingOnly) {
+        pendingToggleEl.style.display = '';
+        pendingToggleEl.classList.toggle('active', showPendingOnly);
+        pendingLabelEl.textContent = showPendingOnly
+          ? '← Back to all transactions'
+          : `Review Pending (${pendingCount})`;
+      } else {
+        pendingToggleEl.style.display = 'none';
+      }
 
       let visible = showUpcoming ? sorted : sorted.filter((t) => t.date <= todayStr);
       if (showPendingOnly) visible = visible.filter((t) => t.pending);
