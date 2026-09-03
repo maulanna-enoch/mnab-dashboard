@@ -20,6 +20,7 @@
     --uncleared: #f5b942;
     --negative: #e24b4a;
     --upcoming: #60a5fa;
+    --pending: #a78bfa;
   }
   * { box-sizing: border-box; }
   html, body {
@@ -148,6 +149,9 @@
   .txn-meta .transfer-tag { color: var(--upcoming); }
   .txn-amount { font-size: 0.9rem; white-space: nowrap; }
   .txn-amount.income { color: var(--accent); }
+  /* Wraps the amount and (for a Pending row) the Confirm button, right-
+     aligned under it -- issue #49. */
+  .txn-amount-block { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 
   .upcoming-toggle {
     display: flex;
@@ -187,6 +191,27 @@
   .date-header.upcoming { color: var(--upcoming, #60a5fa); }
   .txn-row.upcoming { border: 1px dashed rgba(96,165,250,0.4); background: linear-gradient(rgba(96,165,250,0.06), rgba(96,165,250,0.06)), var(--card); }
   .txn-meta .upcoming-tag { color: var(--upcoming, #60a5fa); }
+
+  /* -- Pending transactions (issue #49) -- auto-imported rows (EmailImport.gs
+     / issue #38) not yet reviewed. Listed after .upcoming so it wins on a
+     row that's both -- same convention as the Transactions page. */
+  .txn-row.pending { border: 1px dashed rgba(167,139,250,0.45); background: linear-gradient(rgba(167,139,250,0.08), rgba(167,139,250,0.08)), var(--card); }
+  .txn-meta .pending-tag { color: var(--pending, #a78bfa); }
+  #detail-pending-switch.on { background: var(--pending, #a78bfa); }
+  #detail-pending-toggle .dot { background: var(--pending, #a78bfa); }
+  .txn-confirm-btn {
+    background: rgba(167,139,250,0.15);
+    color: var(--pending, #a78bfa);
+    border: 1px solid rgba(167,139,250,0.5);
+    border-radius: 6px;
+    padding: 3px 9px;
+    font-size: 0.7rem;
+    font-family: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .txn-confirm-btn:hover { background: rgba(167,139,250,0.25); }
+  .txn-confirm-btn:disabled { opacity: 0.6; cursor: default; }
 
   .detail-sticky {
     position: sticky;
@@ -374,6 +399,14 @@
       <div class="upcoming-toggle" id="detail-upcoming-toggle">
         <span class="label"><span class="dot"></span><span id="detail-upcoming-label">Upcoming</span></span>
         <div class="switch" id="detail-upcoming-switch"></div>
+      </div>
+
+      <!-- Pending transactions (issue #49): auto-imported by EmailImport.gs
+           (issue #38) and not yet reviewed. Same toggle convention as
+           Upcoming above. -->
+      <div class="upcoming-toggle" id="detail-pending-toggle">
+        <span class="label"><span class="dot"></span><span id="detail-pending-label">Pending</span></span>
+        <div class="switch" id="detail-pending-switch"></div>
       </div>
     </div>
   </div>
@@ -659,6 +692,7 @@
   let currentAccountMeta = null;
   let currentAccountTxns = [];
   let showUpcomingDetail = false;
+  let showPendingOnlyDetail = false; // issue #49
 
   // Hardware-keyboard row highlight indexes (issue #63) -- -1 means nothing
   // highlighted yet. Reset to -1 wherever the underlying row list is
@@ -678,6 +712,14 @@
   const detailUpcomingLabelEl = document.getElementById('detail-upcoming-label');
   detailUpcomingToggleEl.addEventListener('click', () => {
     showUpcomingDetail = !showUpcomingDetail;
+    renderDetailTxnList(currentAccountTxns);
+  });
+
+  const detailPendingToggleEl = document.getElementById('detail-pending-toggle');
+  const detailPendingSwitchEl = document.getElementById('detail-pending-switch');
+  const detailPendingLabelEl = document.getElementById('detail-pending-label');
+  detailPendingToggleEl.addEventListener('click', () => {
+    showPendingOnlyDetail = !showPendingOnlyDetail;
     renderDetailTxnList(currentAccountTxns);
   });
 
@@ -746,7 +788,15 @@
       ? (upcomingCount ? `Showing ${upcomingCount} upcoming` : 'No upcoming transactions')
       : (upcomingCount ? `${upcomingCount} upcoming hidden` : 'No upcoming transactions');
 
-    const visible = showUpcomingDetail ? rows : rows.filter((t) => !t.date || t.date <= todayStr);
+    // Issue #49: same pattern as Upcoming above.
+    const pendingCount = rows.filter((t) => t.pending).length;
+    detailPendingSwitchEl.classList.toggle('on', showPendingOnlyDetail);
+    detailPendingLabelEl.textContent = showPendingOnlyDetail
+      ? (pendingCount ? `Showing ${pendingCount} pending` : 'No pending transactions')
+      : (pendingCount ? `${pendingCount} pending` : 'No pending transactions');
+
+    let visible = showUpcomingDetail ? rows : rows.filter((t) => !t.date || t.date <= todayStr);
+    if (showPendingOnlyDetail) visible = visible.filter((t) => t.pending);
 
     if (!visible.length) {
       listEl.innerHTML = '<div class="sub">No transactions for this account yet.</div>';
@@ -768,14 +818,22 @@
       if (t.reconciled) metaBits.push('<span class="reconciled-tag">reconciled</span>');
       if (isUpcoming) metaBits.push('<span class="upcoming-tag">upcoming</span>');
       if (t.transfer) metaBits.push('<span class="transfer-tag">payment</span>');
+      if (t.pending) metaBits.push('<span class="pending-tag">pending</span>');
+      // Issue #49: lightweight Confirm action, same as the Transactions page.
+      const confirmHtml = t.pending
+        ? `<button type="button" class="txn-confirm-btn" data-row="${t.rowNumber}">Confirm</button>`
+        : '';
       const rowInner = `
           <div>
             <div class="txn-name">${t.payee}</div>
             <div class="txn-meta">${metaBits.join(' &middot; ') || '&nbsp;'}</div>
           </div>
-          <div class="txn-amount ${isIncome ? 'income' : ''}">${amountText}</div>
+          <div class="txn-amount-block">
+            <div class="txn-amount ${isIncome ? 'income' : ''}">${amountText}</div>
+            ${confirmHtml}
+          </div>
       `;
-      html += SwipeActions.rowHTML(t.rowNumber, `txn-row ${t.reconciled ? 'reconciled' : ''} ${isUpcoming ? 'upcoming' : ''}`, rowInner, t.isCleared, t.transfer);
+      html += SwipeActions.rowHTML(t.rowNumber, `txn-row ${t.reconciled ? 'reconciled' : ''} ${isUpcoming ? 'upcoming' : ''} ${t.pending ? 'pending' : ''}`, rowInner, t.isCleared, t.transfer);
     });
     listEl.innerHTML = html;
 
@@ -792,12 +850,48 @@
       });
     });
 
+    // Issue #49: stopPropagation keeps this from bubbling up to the row's
+    // own click listener above (which would open the edit sheet, or the
+    // undo-payment menu for a transfer leg).
+    listEl.querySelectorAll('.txn-confirm-btn').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const rowNumber = parseInt(btn.dataset.row, 10);
+        const txn = rows.find((t) => t.rowNumber === rowNumber);
+        if (!txn) return;
+        btn.disabled = true;
+        btn.textContent = 'Confirming…';
+        try {
+          await confirmDetailTxnPending(txn);
+        } catch (err) {
+          alert(err.message);
+          btn.disabled = false;
+          btn.textContent = 'Confirm';
+        }
+      });
+    });
+
     SwipeActions.init(listEl, {
       getRow: (rowNumber) => rows.find((t) => t.rowNumber === rowNumber),
       onDelete: deleteDetailTxnViaSwipe,
       onToggleClear: toggleDetailTxnClearedViaSwipe,
       onError: (err) => alert(err.message),
     });
+  }
+
+  // Issue #49: sets Pending=FALSE for one row via the lightweight
+  // confirmPending action on transactions-update -- same helper concept as
+  // the Transactions page's confirmPendingTransaction(), just re-fetching
+  // this account's detail view afterward instead of the flat list.
+  async function confirmDetailTxnPending(txn) {
+    const res = await fetch('/api/transactions-update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rowNumber: txn.rowNumber, action: 'confirmPending' }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    await fetchAndRenderAccountDetail(currentAccount);
   }
 
   async function deleteDetailTxnViaSwipe(txn) {
