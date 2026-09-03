@@ -56,6 +56,10 @@ Two things guard against the same email ending up as two rows — see
   labeled — so even a run that crashes partway through can't leave behind
   a duplicate on its next attempt.
 
+Separately — not a duplicate-row risk, but a real incident on this
+project — the automatic trigger never reads more than genuinely-new mail,
+no matter how it's configured. See "Avoiding a Gmail quota blowout" below.
+
 ## One-time setup
 
 ### 1. Create the Gmail labels
@@ -131,23 +135,32 @@ still `true`.
 
 ### 6. Dry-run it first
 
-The script ships with `DRY_RUN = true`. With that on, running
-`processMnabEmails` logs exactly what row it *would* write (**View →
-Logs**, or Ctrl+Enter) without touching the sheet or re-labeling
-anything — safe to run repeatedly against real labeled email while
-checking the output looks right. Once you're happy, flip `DRY_RUN` to
-`false` in the script.
+`DRY_RUN` is a **Script Property**, not a line in the code — **Project
+Settings (gear icon) → Script Properties → Add script property**, key
+`DRY_RUN`, value `true` or `false`. Unset defaults to `true` (nothing gets
+written). It lives there — not in `EmailImport.gs` itself — specifically
+so that pasting in an updated copy of the script later never resets it;
+see "Avoiding a Gmail quota blowout" below for why that matters.
 
-While `DRY_RUN` is `true`, this also picks up threads already tagged
-`mnab/imported` — including any you marked in step 5 — so you can test
-the parser against your whole backlog, not just new mail. That inclusion
-only applies during dry runs; once `DRY_RUN` is `false`, already-imported
-threads go back to being excluded, so step 5's backlog stays skipped for
-real.
+With `DRY_RUN` true (or unset), run `processMnabEmails` a few times as
+real mail arrives under your labels and check the execution log (**View →
+Logs**, or Ctrl+Enter) — it logs exactly what row it *would* write,
+without touching the sheet or re-labeling anything.
+
+Testing against **old** mail (a backlog) instead of waiting for new mail
+to arrive? Run `previewMnabBacklog` instead (same function dropdown) — it
+picks up threads already tagged `mnab/imported`, including any you marked
+in step 5, so you can test the parser against your whole backlog. It's
+always safe to run repeatedly, no matter what `DRY_RUN` is set to: this
+function can never write a row or re-label a thread, full stop — see
+"Avoiding a Gmail quota blowout" below.
+
+Once you're happy with the logged output, set the `DRY_RUN` script
+property to `false`.
 
 ### 7. Install the trigger
 
-Once `DRY_RUN` is off, run `installEmailImportTrigger` once. From then
+Once `DRY_RUN` is `false`, run `installEmailImportTrigger` once. From then
 on, `processMnabEmails` runs automatically every 5 minutes — no more
 manual runs needed.
 
@@ -182,9 +195,9 @@ past it and land as two rows for one real transaction:
    Gmail message ID in a new `Email Message ID` column (auto-provisioned
    the same way `Pending` is), and every message's ID is checked against
    that column before it's processed — independent of whether its thread
-   ever got labeled. This check runs during `DRY_RUN` too, so a preview
-   run accurately shows "already imported, skipped" rather than a
-   would-be duplicate.
+   ever got labeled. This check runs during a dry run too — including
+   `previewMnabBacklog()` — so a preview run accurately shows "already
+   imported, skipped" rather than a would-be duplicate.
 
 This only prevents *new* duplicates going forward — it can't retroactively
 catch anything already duplicated by an earlier version of the script,
@@ -194,6 +207,45 @@ already sitting in `transactions`, they'll need a manual look (matching
 Payee/Amount/Date), or ask for a one-off script to help surface likely
 candidates.
 
+## Avoiding a Gmail quota blowout
+
+Apps Script gives a personal Gmail account a **20,000-call-per-day**
+budget for Gmail operations (search, read a thread's labels, read a
+message, apply a label — each counts). This project hit that limit for
+real, and it's worth understanding why so it doesn't happen again.
+
+**What happened:** `DRY_RUN` used to be a plain `var` at the top of
+`EmailImport.gs`, and — before the fix described here — setting `DRY_RUN`
+to `true` also widened `processMnabEmails`'s Gmail search to include the
+whole backlog of already-`mnab/imported` threads, not just new mail (so
+dry-run testing could cover old email too). Pasting an updated copy of
+the script silently reset that `var` back to whatever the new file
+shipped with — `true` by default — while the 5-minute trigger, installed
+earlier and unaffected by a code paste, kept firing regardless. The
+result: every 5 minutes, the script re-read the *entire* backlog again,
+forever, since a dry run never marks anything as done. That burned
+through the full day's 20,000-call budget in well under an hour. No data
+was corrupted — dry runs never write — but the trigger then failed on
+every firing (`Service invoked too many times for one day: gmail.`) until
+the quota reset roughly 24 hours after the first call that day.
+
+**The fix, two parts:**
+
+1. `DRY_RUN` moved from a code `var` to a **Script Property** (step 6
+   above). Script Properties live outside the code text, so pasting an
+   updated `EmailImport.gs` from here on never resets it.
+2. The backlog-widened search is no longer tied to `DRY_RUN` at all.
+   `processMnabEmails` — the only function the trigger ever calls — now
+   *always* excludes already-imported threads, in either `DRY_RUN` state.
+   Testing against the backlog is now the job of a separate, manual-only
+   function, `previewMnabBacklog()`, which is never trigger-bound (so it
+   can't repeat automatically) and always simulates regardless of
+   `DRY_RUN` (so it can never write for real, even by accident).
+
+Net effect: the 5-minute trigger now only ever reads genuinely new mail,
+so leaving `DRY_RUN` in the "wrong" state costs you accurate imports, not
+your daily Gmail quota.
+
 ## Safety notes
 
 - Every row this writes is `Pending = TRUE`. It never marks anything
@@ -201,19 +253,22 @@ candidates.
 - It only ever **appends** new rows — nothing here edits or deletes
   existing rows in `transactions`.
 - While `DRY_RUN` is `true`, threads are never re-labeled as processed,
-  so re-running is repeatable for testing — and threads already labeled
-  `mnab/imported` are included rather than skipped, so dry runs can test
-  against your full backlog, not just new mail. Only live runs
-  (`DRY_RUN = false`) exclude already-imported threads.
+  so re-running `processMnabEmails` is repeatable for testing. It only
+  ever looks at genuinely new mail either way — never the backlog; see
+  "Avoiding a Gmail quota blowout" above.
+- `previewMnabBacklog()` is the one function that includes already-labeled
+  `mnab/imported` threads, so you can test against your full backlog —
+  and it always behaves like a dry run, even if the `DRY_RUN` script
+  property is `false`, so it's safe to run against a live setup too.
 - A failed-transaction email still produces a row (so you have a record
   something was attempted), but with `Amount`/`Expense`/`Income`/`Total`
   all `0` and the payee prefixed `[FAILED TRANSFER]` — it can't affect
   your balance.
-- `markExistingMnabEmailsAsAlreadyImported` (step 5 above) is the one
-  exception to all of the above: it ignores `DRY_RUN` and does make a real
-  change (applying the `mnab/imported` label) even before you've flipped
-  `DRY_RUN` off, since that's the entire point of it. It never touches the
-  sheet or reads message content, though — only Gmail labels.
+- `markExistingMnabEmailsAsAlreadyImported` (step 5 above) is a separate
+  exception: it ignores `DRY_RUN` and does make a real change (applying
+  the `mnab/imported` label) even before you've set `DRY_RUN` to `false`,
+  since that's the entire point of it. It never touches the sheet or
+  reads message content, though — only Gmail labels.
 
 ## What's next
 
