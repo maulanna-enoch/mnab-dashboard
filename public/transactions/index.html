@@ -9,3 +9,1817 @@
 <link rel="stylesheet" href="/shared/swipe-actions.css" />
 <link rel="stylesheet" href="/shared/responsive.css" />
 <link rel="stylesheet" href="/shared/bottom-nav.css" />
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0f1115;
+    --card: #1a1d24;
+    --text: #f4f4f5;
+    --muted: #9ca3af;
+    --accent: #22c55e;
+    --uncleared: #f5b942;
+    --negative: #e24b4a;
+    --upcoming: #60a5fa;
+    --pending: #a78bfa;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 24px 16px calc(140px + env(safe-area-inset-bottom));
+  }
+  .wrap { max-width: var(--page-max-width); margin: 0 auto; position: relative; }
+  h1 {
+    font-size: 1.1rem;
+    font-weight: 500;
+    color: var(--muted);
+    margin: 0 0 16px;
+    text-align: center;
+  }
+  .date-header {
+    font-size: 0.7rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 16px 0 6px;
+  }
+  .date-header:first-of-type { margin-top: 0; }
+  .txn-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--card);
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-bottom: 8px;
+    cursor: pointer;
+  }
+  .txn-name { font-size: 0.9rem; }
+  .txn-meta { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
+  .txn-meta .uncleared { color: var(--uncleared); }
+  .txn-amount { font-size: 0.9rem; white-space: nowrap; }
+  .txn-amount.income { color: var(--accent); }
+  /* Wraps the amount and (for a Pending row) the Confirm button, right-
+     aligned under it -- see .txn-confirm-btn below. */
+  .txn-amount-block { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+  .sub { font-size: 0.85rem; color: var(--muted); }
+  .error { color: #f87171; font-size: 0.9rem; }
+
+  /* -- future-transactions toggle -- */
+  .upcoming-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--card);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    font-size: 12.5px;
+    color: var(--muted);
+    cursor: pointer;
+    user-select: none;
+  }
+  .upcoming-toggle .label { display: flex; align-items: center; gap: 6px; }
+  .upcoming-toggle .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--upcoming, #60a5fa); }
+  .switch {
+    position: relative;
+    width: 38px;
+    height: 22px;
+    border-radius: 999px;
+    background: #374151;
+    flex-shrink: 0;
+    transition: background 0.15s;
+  }
+  .switch.on { background: var(--upcoming, #60a5fa); }
+  .switch::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform 0.15s;
+  }
+  .switch.on::after { transform: translateX(16px); }
+  .date-header.upcoming { color: var(--upcoming, #60a5fa); }
+  /* Layer the blue tint over the opaque card color instead of replacing it
+     with a low-alpha background -- a translucent row background lets the
+     swipe-reveal action buttons (shared/swipe-actions.js) positioned behind
+     every row show through at rest. Compositing the tint over `var(--card)`
+     keeps the resulting box fully opaque. */
+  .txn-row.upcoming { border: 1px dashed rgba(96,165,250,0.4); background: linear-gradient(rgba(96,165,250,0.06), rgba(96,165,250,0.06)), var(--card); }
+  .txn-meta .upcoming-tag { color: var(--upcoming, #60a5fa); }
+
+  /* -- Pending transactions (issue #49) -- auto-imported rows (EmailImport.gs
+     / issue #38) not yet reviewed by the user. Pending styling is listed
+     after .upcoming above so it wins on a row that happens to be both
+     (reviewing an unconfirmed import is the more urgent state). Reuses the
+     "Upcoming" toggle switch's own #pending-switch override below so the two
+     toggles share one visual language. */
+  .txn-row.pending { border: 1px dashed rgba(167,139,250,0.45); background: linear-gradient(rgba(167,139,250,0.08), rgba(167,139,250,0.08)), var(--card); }
+  .txn-meta .pending-tag { color: var(--pending, #a78bfa); }
+
+  /* -- "Review Pending" mode button (issue #49 feedback follow-up) --
+     Deliberately NOT the on/off .switch control used for Upcoming: this
+     isn't a show/hide filter, it's a mode switch (browsing all
+     transactions vs. reviewing the pending ones), so it gets its own
+     button-shaped affordance that visibly changes shape/label when
+     active, rather than looking like a toggle that's merely "on". Hidden
+     entirely when there's nothing to review (see the pendingCount ||
+     showPendingOnly check in renderList()) -- unlike Upcoming, an empty
+     Pending queue isn't something worth a permanent row on screen. */
+  .pending-review-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    background: var(--card);
+    border: 1px dashed rgba(167,139,250,0.5);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    font-size: 12.5px;
+    font-family: inherit;
+    color: var(--pending, #a78bfa);
+    cursor: pointer;
+    text-align: left;
+  }
+  .pending-review-btn:hover { background: rgba(167,139,250,0.08); }
+  .pending-review-btn .prb-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--pending, #a78bfa); flex-shrink: 0; }
+  .pending-review-btn.active {
+    background: rgba(167,139,250,0.16);
+    border-style: solid;
+    color: var(--text);
+    font-weight: 600;
+  }
+  .txn-confirm-btn {
+    background: rgba(167,139,250,0.15);
+    color: var(--pending, #a78bfa);
+    border: 1px solid rgba(167,139,250,0.5);
+    border-radius: 6px;
+    padding: 3px 9px;
+    font-size: 0.7rem;
+    font-family: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .txn-confirm-btn:hover { background: rgba(167,139,250,0.25); }
+  .txn-confirm-btn:disabled { opacity: 0.6; cursor: default; }
+
+  /* -- wide-viewport data table (issue #65, part of epic #64) --
+     Below 1024px this is all display:none and the existing mobile card
+     list (#list) is what renders -- same underlying `transactions` data,
+     just a different view. At 1024px+ (the same breakpoint --page-max-width
+     itself jumps to 1024px at, per shared/responsive.css) the table and its
+     filter bar take over and #list is hidden instead. No page needs its own
+     device/viewport JS check for this -- it's pure CSS, same convention
+     responsive.css established. Cells are editable in place (issue #77) --
+     see the script section below. */
+  .txt-filters, .txt-table-wrap { display: none; }
+
+  @media (min-width: 1024px) {
+    #list { display: none; }
+    .txt-filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .txt-filters input,
+    .txt-filters select {
+      background: var(--card);
+      color: var(--text);
+      border: 1px solid #2a2e37;
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 0.85rem;
+      font-family: inherit;
+    }
+    .txt-filters input[type="search"] { flex: 1 1 200px; }
+    .txt-filters input[type="date"] { flex: 0 1 150px; }
+    .txt-filter-clear {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid #2a2e37;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 0.85rem;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    .txt-filter-clear:hover { color: var(--text); border-color: #3a3f4b; }
+
+    .txt-table-wrap { display: block; }
+    /* table-layout: fixed + the <colgroup> widths below are what make the
+       one-line-by-default rule actually hold: Date/Account/Amount get a
+       fixed px width sized for their realistic content (no ellipsis --
+       these should stay fully visible per issue feedback, not truncate),
+       Payee gets a fixed 300px, and Notes (no width set) soaks up whatever's
+       left, with Payee/Notes the only two columns that ellipsis-truncate
+       when content doesn't fit. */
+    .txt-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 0.85rem; }
+    .txt-table th {
+      text-align: left;
+      color: var(--muted);
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 8px 10px;
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+    }
+    .txt-table th:hover { color: var(--text); }
+    .txt-table th .txt-sort-arrow { margin-left: 3px; opacity: 0.6; }
+    .txt-table th.txt-sorted .txt-sort-arrow { opacity: 1; }
+    .txt-table-wrap { overflow-x: auto; }
+    .txt-table td { padding: 8px 10px; border-top: 1px solid #22262f; white-space: nowrap; }
+    .txt-table td.txt-amount { text-align: right; }
+    .txt-table td.txt-truncate,
+    .txt-table th.txt-truncate { overflow: hidden; text-overflow: ellipsis; }
+    .txt-table td.txt-status-col,
+    .txt-table th.txt-status-col { text-align: center; padding-left: 4px; padding-right: 4px; }
+    .txt-table tbody tr { cursor: default; }
+    .txt-table tbody tr:hover { background: var(--card); }
+    .txt-table .txt-amount.income { color: var(--accent); }
+    .txt-table .txt-upcoming-row td { color: var(--upcoming, #60a5fa); }
+    /* Pending row tint (issue #49) -- listed after upcoming so it wins on a
+       row that's both (see the mobile-card CSS comment above for why). */
+    .txt-table .txt-pending-row td { background: rgba(167,139,250,0.08); }
+    .txt-table .txt-pending-row:hover td { background: rgba(167,139,250,0.14); }
+    .txt-table td.txt-pending-col { text-align: center; padding-left: 4px; padding-right: 4px; }
+    .txt-empty-row td { color: var(--muted); text-align: center; padding: 20px 10px; white-space: normal; }
+
+    /* -- inline cell editing (issue #77) -- click a cell to edit it in
+       place; the trailing pencil button (.txt-open-btn) still opens the
+       full Add/Edit sheet for anything not covered here (e.g. Income vs
+       Expense, or a coordinate edit). See the "wide-viewport data table"
+       comment above renderTable() in the script for the full flow. */
+    .txt-table td.txt-editable { cursor: text; }
+    .txt-table td.txt-editable:hover { background: rgba(255, 255, 255, 0.06); }
+    .txt-table td.txt-status-col { cursor: pointer; }
+    .txt-table td.txt-editing { padding: 4px 6px; }
+    .txt-table td.txt-cell-saving { opacity: 0.5; pointer-events: none; }
+    .txt-table td.txt-open-col { text-align: center; padding-left: 2px; padding-right: 2px; }
+    .txt-open-btn {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-size: 0.85rem;
+      cursor: pointer;
+      padding: 2px 4px;
+      line-height: 1;
+    }
+    .txt-open-btn:hover { color: var(--text); }
+    .txt-open-btn:disabled { opacity: 0.3; cursor: default; }
+    .txt-table .txt-confirm-btn { padding: 2px 7px; font-size: 0.68rem; }
+    .txt-cell-input {
+      width: 100%;
+      box-sizing: border-box;
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--accent);
+      border-radius: 4px;
+      padding: 4px 6px;
+      font: inherit;
+      color-scheme: dark;
+    }
+
+    /* -- keyboard-driven row editing --
+       Down/Up arrow highlights a whole row and cycles through rows; Enter
+       opens every editable cell in that row at once (Tab/Shift-Tab moves
+       between them, wrapping around); Enter again saves the whole row in
+       one request, Escape discards. See the "keyboard row editing" comment
+       block above the script's document keydown listener for the full flow
+       -- same outline-highlight convention as the accounts page's
+       Up/Down row nav (issue #63, .kbd-focus there). */
+    .txt-table tbody tr.txt-kbd-highlight { outline: 2px solid var(--accent); outline-offset: -2px; }
+    .txt-table tbody tr.txt-kbd-row-saving { opacity: 0.6; }
+    .txt-cell-checkbox { width: 16px; height: 16px; cursor: pointer; }
+
+    /* -- column show/hide + draggable column widths (issue #79) --
+       Visibility and width both apply at the <colgroup> level, so the
+       picker panel and the resize handles only ever touch <col> elements,
+       not individual cells. Hiding uses `visibility: collapse` on the
+       <col>, not `display: none` -- collapse is the CSS table-column value
+       that actually removes a whole column (header cell included) from
+       the rendered table and lets the other columns reclaim its width;
+       `display: none` on a <col> is a no-op in current browsers (the `col`
+       element itself isn't a rendered box to begin with, so hiding it
+       doesn't hide the cells it's paired with). See the "column layout
+       (issue #79)" comment above the script block below for the
+       persisted-layout details. */
+    .txt-table th { position: relative; }
+    .txt-col-resizer {
+      position: absolute;
+      top: 0;
+      right: -4px;
+      width: 8px;
+      height: 100%;
+      cursor: col-resize;
+      z-index: 1;
+      touch-action: none;
+    }
+    .txt-col-resizer:hover { background: rgba(255, 255, 255, 0.12); }
+    body.txt-resizing { cursor: col-resize; user-select: none; }
+    body.txt-resizing .txt-col-resizer { background: rgba(255, 255, 255, 0.12); }
+
+    .txt-col-picker { position: relative; }
+    .txt-columns-btn {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid #2a2e37;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 0.85rem;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    .txt-columns-btn:hover { color: var(--text); border-color: #3a3f4b; }
+    .txt-columns-panel {
+      display: none;
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      z-index: 5;
+      background: var(--card);
+      border: 1px solid #2a2e37;
+      border-radius: 10px;
+      padding: 10px 12px;
+      min-width: 160px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+    .txt-columns-panel.open { display: block; }
+    .txt-columns-panel label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.85rem;
+      padding: 4px 0;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .txt-columns-panel label input { cursor: pointer; }
+    .txt-columns-reset {
+      display: block;
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      border: none;
+      border-top: 1px solid #2a2e37;
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-family: inherit;
+      padding: 8px 0 2px;
+      margin-top: 4px;
+      cursor: pointer;
+    }
+    .txt-columns-reset:hover { color: var(--text); }
+
+    .txt-sortby-group { display: flex; align-items: center; gap: 0; }
+    .txt-sortby-group select {
+      border-top-right-radius: 0;
+      border-bottom-right-radius: 0;
+    }
+    .txt-sortby-dir {
+      background: var(--card);
+      color: var(--muted);
+      border: 1px solid #2a2e37;
+      border-left: none;
+      border-top-right-radius: 8px;
+      border-bottom-right-radius: 8px;
+      padding: 8px 10px;
+      font-size: 0.85rem;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    .txt-sortby-dir:hover { color: var(--text); }
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Transactions</h1>
+
+    <div class="upcoming-toggle" id="upcoming-toggle">
+      <span class="label"><span class="dot"></span><span id="upcoming-label">Upcoming</span></span>
+      <div class="switch" id="upcoming-switch"></div>
+    </div>
+
+    <!-- Pending transactions (issue #49): auto-imported by EmailImport.gs
+         (issue #38) and not yet reviewed. Shared by both the mobile card
+         list and the wide-viewport table below -- this button filters the
+         same `visible` array renderList() hands to both, same convention
+         as the Upcoming toggle above, but shaped as a mode switch (browse
+         all vs. review pending) rather than a show/hide filter -- see the
+         .pending-review-btn CSS comment above for why. Hidden by default;
+         renderList() shows it once there's something to review. -->
+    <button type="button" class="pending-review-btn" id="pending-toggle" style="display:none;">
+      <span class="prb-dot"></span><span id="pending-label">Review Pending</span>
+    </button>
+
+    <div class="txt-filters" id="txt-filters">
+      <input type="search" id="txt-f-search" placeholder="Search payee or notes" />
+      <select id="txt-f-sof"><option value="">All accounts</option></select>
+      <select id="txt-f-type">
+        <option value="">All types</option>
+        <option value="Expense">Expense</option>
+        <option value="Income">Income</option>
+      </select>
+      <select id="txt-f-cleared">
+        <option value="">Cleared &amp; uncleared</option>
+        <option value="Cleared">Cleared</option>
+        <option value="Uncleared">Uncleared</option>
+      </select>
+      <input type="date" id="txt-f-from" title="From date" />
+      <input type="date" id="txt-f-to" title="To date" />
+      <button type="button" class="txt-filter-clear" id="txt-f-clear">Clear filters</button>
+
+      <!-- Sort-by, decoupled from the column headers (issue #79) -- a
+           column hidden via the picker below still has its header (and
+           therefore its click-to-sort control) hidden along with it, so
+           this pair is the only way to sort by that column while it's
+           hidden. Clicking a visible header still works too and keeps
+           this select in sync -- see txtUpdateSortIndicators(). -->
+      <div class="txt-sortby-group">
+        <select id="txt-f-sortby" title="Sort by"></select>
+        <button type="button" class="txt-sortby-dir" id="txt-f-sortdir" title="Toggle sort direction"></button>
+      </div>
+
+      <!-- Column show/hide (issue #79) -->
+      <div class="txt-col-picker">
+        <button type="button" class="txt-columns-btn" id="txt-columns-btn">Columns ▾</button>
+        <div class="txt-columns-panel" id="txt-columns-panel">
+          <div id="txt-columns-checkboxes"></div>
+          <button type="button" class="txt-columns-reset" id="txt-columns-reset">Reset to defaults</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="list"><div class="sub">Loading…</div></div>
+
+    <div class="txt-table-wrap">
+      <table class="txt-table" id="txt-table">
+        <colgroup id="txt-colgroup">
+          <col data-col="date" style="width: 90px" />   <!-- Date -->
+          <col data-col="payee" style="width: 300px" />  <!-- Payee -->
+          <col data-col="sof" style="width: 140px" />  <!-- Account -->
+          <col data-col="amount" style="width: 110px" />  <!-- Amount -->
+          <col data-col="cleared" style="width: 34px" />   <!-- Status (C) -->
+          <col data-col="pending" style="width: 78px" />  <!-- Pending / Confirm (issue #49) -- not part of the issue #79 show/hide+resize picker: see COLUMNS comment below -->
+          <col data-col="notes" />                        <!-- Notes: takes the rest -->
+          <col data-col="open" style="width: 28px" />   <!-- Open full sheet (issue #77) -->
+        </colgroup>
+        <thead>
+          <tr>
+            <th data-sort="date" data-col="date">Date <span class="txt-sort-arrow"></span></th>
+            <th data-sort="payee" data-col="payee" class="txt-truncate">Payee <span class="txt-sort-arrow"></span></th>
+            <th data-sort="sof" data-col="sof">Account <span class="txt-sort-arrow"></span></th>
+            <th data-sort="amount" data-col="amount">Amount <span class="txt-sort-arrow"></span></th>
+            <th data-sort="cleared" data-col="cleared" class="txt-status-col" title="Cleared">C <span class="txt-sort-arrow"></span></th>
+            <th data-sort="pending" data-col="pending" class="txt-pending-col" title="Pending">Pending <span class="txt-sort-arrow"></span></th>
+            <th data-col="notes" class="txt-truncate">Notes</th>
+            <th data-col="open"></th>
+          </tr>
+        </thead>
+        <tbody id="txt-table-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div id="txf-root"></div>
+  <div id="bnv-root"></div>
+  <datalist id="txt-account-list"></datalist>
+
+  <script src="/shared/transaction-form.js"></script>
+  <script src="/shared/swipe-actions.js"></script>
+  <script src="/shared/bottom-nav.js"></script>
+  <script src="/shared/keyboard-nav.js"></script>
+  <script>
+    function formatIDR(value) {
+      return new Intl.NumberFormat('id-ID', {
+        style: 'currency',
+        currency: 'IDR',
+        maximumFractionDigits: 0,
+      }).format(value);
+    }
+
+    function dateLabel(dateStr) {
+      if (!dateStr) return 'No date';
+      const d = new Date(dateStr + 'T00:00:00');
+      const today = new Date(); today.setHours(0, 0, 0, 0);
+      const yesterday = new Date(today); yesterday.setDate(today.getDate() - 1);
+      const tomorrow = new Date(today); tomorrow.setDate(today.getDate() + 1);
+      if (d.getTime() === today.getTime()) return 'Today';
+      if (d.getTime() === yesterday.getTime()) return 'Yesterday';
+      if (d.getTime() === tomorrow.getTime()) return 'Tomorrow';
+      return d.toLocaleDateString('en-GB', {
+        day: 'numeric', month: 'short',
+        year: d.getFullYear() !== today.getFullYear() ? 'numeric' : undefined,
+      });
+    }
+
+    let transactions = [];
+    let showUpcoming = false;
+    let showPendingOnly = false; // issue #49
+
+    const upcomingToggleEl = document.getElementById('upcoming-toggle');
+    const upcomingSwitchEl = document.getElementById('upcoming-switch');
+    const upcomingLabelEl = document.getElementById('upcoming-label');
+    const pendingToggleEl = document.getElementById('pending-toggle');
+    const pendingLabelEl = document.getElementById('pending-label');
+
+    // -- wide-viewport data table (issue #65) -- filter/sort state and the
+    // last "upcoming"-filtered list handed to it by renderList(), so a
+    // filter/sort change alone can re-render without redoing that step.
+    const txtFilterEls = {
+      search: document.getElementById('txt-f-search'),
+      sof: document.getElementById('txt-f-sof'),
+      type: document.getElementById('txt-f-type'),
+      cleared: document.getElementById('txt-f-cleared'),
+      from: document.getElementById('txt-f-from'),
+      to: document.getElementById('txt-f-to'),
+    };
+    const txtTableBodyEl = document.getElementById('txt-table-body');
+    let txtSort = { key: 'date', dir: 'desc' };
+    let txtLastVisible = [];
+
+    // -- column show/hide + draggable column widths (issue #79) --
+    // COLUMNS is the single source of truth for every data column the
+    // picker/resizer touch -- deliberately excludes the trailing "open full
+    // sheet" action column (data-col="open"), which is neither a data
+    // column nor mentioned in the issue's own list. `resizable: false`
+    // (Cleared) keeps that column at its fixed icon-sized width -- dragging
+    // a 34px status column to arbitrary widths has no real use, and the
+    // issue's own "override the built-in default widths" framing was about
+    // Date/Account/Amount/Payee/Notes. Notes is hideable but not resizable:
+    // it's the one column with no default width (colgroup has no `width`
+    // for it) so it can soak up whatever space the fixed-width columns
+    // leave -- giving it a persisted pixel width would turn it into just
+    // another fixed column and defeat that "takes the rest" role table-wide.
+    const COLUMNS = [
+      { key: 'date', label: 'Date', defaultWidth: 90, minWidth: 70, resizable: true },
+      { key: 'payee', label: 'Payee', defaultWidth: 300, minWidth: 100, resizable: true },
+      { key: 'sof', label: 'Account', defaultWidth: 140, minWidth: 80, resizable: true },
+      { key: 'amount', label: 'Amount', defaultWidth: 110, minWidth: 70, resizable: true },
+      { key: 'cleared', label: 'Cleared', defaultWidth: 34, minWidth: 34, resizable: false },
+      { key: 'notes', label: 'Notes', defaultWidth: null, minWidth: 80, resizable: false },
+    ];
+    const TXT_COLUMN_LAYOUT_KEY = 'mnab-txt-column-layout-v1';
+
+    function txtDefaultColumnLayout() {
+      const visible = {};
+      const widths = {};
+      COLUMNS.forEach((c) => { visible[c.key] = true; widths[c.key] = c.defaultWidth; });
+      return { visible, widths };
+    }
+
+    // Reads the persisted layout and merges it over the defaults rather
+    // than trusting it wholesale -- a column added since the layout was
+    // saved (or a widths/visible object malformed by hand-editing
+    // localStorage) should degrade back to its default, not disappear or
+    // throw, per the issue's own "should degrade gracefully" note.
+    function txtLoadColumnLayout() {
+      const layout = txtDefaultColumnLayout();
+      try {
+        const raw = localStorage.getItem(TXT_COLUMN_LAYOUT_KEY);
+        if (!raw) return layout;
+        const saved = JSON.parse(raw);
+        COLUMNS.forEach((c) => {
+          if (saved.visible && typeof saved.visible[c.key] === 'boolean') {
+            layout.visible[c.key] = saved.visible[c.key];
+          }
+          if (c.resizable && saved.widths && Number.isFinite(saved.widths[c.key])) {
+            layout.widths[c.key] = Math.max(c.minWidth, saved.widths[c.key]);
+          }
+        });
+      } catch (err) {
+        // Corrupt/unavailable localStorage (private browsing, hand-edited
+        // JSON, etc.) -- fall back to defaults rather than breaking the page.
+      }
+      // Never allow every column to end up hidden -- there'd be nothing
+      // left to click to bring one back.
+      if (!COLUMNS.some((c) => layout.visible[c.key])) {
+        COLUMNS.forEach((c) => { layout.visible[c.key] = true; });
+      }
+      return layout;
+    }
+
+    let txtColumnLayout = txtLoadColumnLayout();
+
+    function txtSaveColumnLayout() {
+      try {
+        localStorage.setItem(TXT_COLUMN_LAYOUT_KEY, JSON.stringify(txtColumnLayout));
+      } catch (err) {
+        // Storage full/unavailable -- the layout just won't persist across
+        // visits this time; the in-memory state for this page load is
+        // unaffected.
+      }
+    }
+
+    // Applies txtColumnLayout to the <colgroup> -- visibility and width both
+    // live at the <col> level, so this is the only place either one needs
+    // to be written to the DOM. `visibility: collapse` removes the whole
+    // column (header cell included) from the rendered table -- see the CSS
+    // comment above for why `display: none` doesn't work here.
+    function txtApplyColumnLayout() {
+      COLUMNS.forEach((c) => {
+        const col = document.querySelector(`#txt-colgroup col[data-col="${c.key}"]`);
+        if (!col) return;
+        col.style.visibility = txtColumnLayout.visible[c.key] ? '' : 'collapse';
+        if (c.resizable) {
+          const w = txtColumnLayout.widths[c.key] || c.defaultWidth;
+          col.style.width = w + 'px';
+        }
+      });
+    }
+
+    function txtVisibleColumnCount() {
+      // +2 for the always-visible Pending (issue #49) and trailing "open
+      // full sheet" columns -- neither is part of COLUMNS/the issue #79
+      // show/hide picker (see the <colgroup> comment above), so they're
+      // never counted in the filter() below but always render.
+      return COLUMNS.filter((c) => txtColumnLayout.visible[c.key]).length + 2;
+    }
+
+    // Sort-by dropdown mirrors exactly the columns whose header already
+    // supports click-to-sort (th[data-sort] in the markup above) -- Notes
+    // isn't one of those today, so it isn't offered here either, keeping
+    // this control an alternate path to the same sort behavior rather than
+    // a new one.
+    const TXT_SORT_COLUMNS = [
+      { key: 'date', label: 'Date' },
+      { key: 'payee', label: 'Payee' },
+      { key: 'sof', label: 'Account' },
+      { key: 'amount', label: 'Amount' },
+      { key: 'cleared', label: 'Cleared' },
+    ];
+
+    function txtRefreshColumnCheckboxes() {
+      const container = document.getElementById('txt-columns-checkboxes');
+      container.innerHTML = COLUMNS.map((c) => `
+        <label>
+          <input type="checkbox" data-col-toggle="${c.key}" ${txtColumnLayout.visible[c.key] ? 'checked' : ''} />
+          ${c.label}
+        </label>
+      `).join('');
+      container.querySelectorAll('input[data-col-toggle]').forEach((cb) => {
+        cb.addEventListener('change', () => {
+          const key = cb.dataset.colToggle;
+          const nextVisible = { ...txtColumnLayout.visible, [key]: cb.checked };
+          // Never let the picker hide every column -- revert this one
+          // checkbox rather than leaving the table with nothing to show.
+          if (!COLUMNS.some((c) => nextVisible[c.key])) {
+            cb.checked = true;
+            return;
+          }
+          txtColumnLayout.visible[key] = cb.checked;
+          txtApplyColumnLayout();
+          txtSaveColumnLayout();
+          renderTable(txtLastVisible);
+        });
+      });
+    }
+
+    // Column drag-resize -- one resizer handle per resizable th, created
+    // once since the <thead> itself is static (only the <tbody> is
+    // rebuilt by renderTable). Dragging updates the <col>'s width live and
+    // persists once on mouseup, not on every mousemove.
+    function txtInitColumnResizers() {
+      let dragCol = null;
+      let dragMinWidth = 0;
+      let dragKey = null;
+      let startX = 0;
+      let startWidth = 0;
+
+      function onMouseMove(e) {
+        if (!dragCol) return;
+        const next = Math.max(dragMinWidth, startWidth + (e.clientX - startX));
+        dragCol.style.width = next + 'px';
+      }
+      function onMouseUp() {
+        if (!dragCol) return;
+        txtColumnLayout.widths[dragKey] = parseInt(dragCol.style.width, 10);
+        txtSaveColumnLayout();
+        document.body.classList.remove('txt-resizing');
+        dragCol = null;
+        dragKey = null;
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+      }
+
+      COLUMNS.filter((c) => c.resizable).forEach((c) => {
+        const th = document.querySelector(`#txt-table th[data-col="${c.key}"]`);
+        if (!th) return;
+        const handle = document.createElement('div');
+        handle.className = 'txt-col-resizer';
+        // A drag starts on mousedown (stopPropagation there keeps it from
+        // also reaching the header's own click-to-sort listener), but the
+        // browser still fires a 'click' on mouseup if the pointer didn't
+        // move -- stop that one too, so a plain click that lands on the
+        // 8px handle strip doesn't also toggle sort.
+        handle.addEventListener('click', (e) => e.stopPropagation());
+        handle.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          e.stopPropagation(); // don't also trigger the header's sort-click handler
+          dragCol = document.querySelector(`#txt-colgroup col[data-col="${c.key}"]`);
+          dragKey = c.key;
+          dragMinWidth = c.minWidth;
+          startX = e.clientX;
+          startWidth = dragCol.getBoundingClientRect().width;
+          document.body.classList.add('txt-resizing');
+          document.addEventListener('mousemove', onMouseMove);
+          document.addEventListener('mouseup', onMouseUp);
+        });
+        th.appendChild(handle);
+      });
+    }
+
+    function txtInitColumnControls() {
+      txtApplyColumnLayout();
+      txtRefreshColumnCheckboxes();
+      txtInitColumnResizers();
+
+      const panel = document.getElementById('txt-columns-panel');
+      const btn = document.getElementById('txt-columns-btn');
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        panel.classList.toggle('open');
+      });
+      document.addEventListener('mousedown', (e) => {
+        if (panel.classList.contains('open') && !panel.contains(e.target) && e.target !== btn) {
+          panel.classList.remove('open');
+        }
+      });
+
+      document.getElementById('txt-columns-reset').addEventListener('click', () => {
+        txtColumnLayout = txtDefaultColumnLayout();
+        txtApplyColumnLayout();
+        txtSaveColumnLayout();
+        txtRefreshColumnCheckboxes();
+        renderTable(txtLastVisible);
+      });
+
+      const sortBySelect = document.getElementById('txt-f-sortby');
+      sortBySelect.innerHTML = TXT_SORT_COLUMNS.map((c) => `<option value="${c.key}">${c.label}</option>`).join('');
+      sortBySelect.value = txtSort.key;
+      sortBySelect.addEventListener('change', () => {
+        const key = sortBySelect.value;
+        if (txtSort.key === key) return;
+        // Same default-direction rule the header click uses below.
+        txtSort = { key, dir: (key === 'date' || key === 'amount') ? 'desc' : 'asc' };
+        renderTable(txtLastVisible);
+      });
+
+      const sortDirBtn = document.getElementById('txt-f-sortdir');
+      sortDirBtn.textContent = txtSort.dir === 'asc' ? '▲' : '▼';
+      sortDirBtn.addEventListener('click', () => {
+        txtSort.dir = txtSort.dir === 'asc' ? 'desc' : 'asc';
+        renderTable(txtLastVisible);
+      });
+    }
+
+    // -- keyboard-driven row editing --
+    // Down/Up arrow highlights a row and cycles through the visible rows;
+    // Enter opens every editable cell of the highlighted row at once
+    // (leftmost column first), Tab/Shift-Tab moves between them (wrapping
+    // around), and only Enter (save, whole row in one request) or Escape
+    // (discard) ever touches the network -- nothing is sent while merely
+    // moving between columns. This is a separate editing surface from the
+    // single-cell click-to-edit above: that one auto-saves a single field
+    // on blur, this one is all-or-nothing for the whole row and is driven
+    // entirely from the keyboard. TXT_KBD_FIELDS is left-to-right column
+    // order, matching the <colgroup> above.
+    //
+    // Backspace on a highlighted row is a separate, simpler action (not a
+    // row-edit session): it always confirms first (plain confirm(), same
+    // convention this page's full sheet and swipe-to-delete already use --
+    // see handleDelete() in transaction-form.js and swipe-actions.js), then
+    // deletes via the existing deleteTransactionViaSwipe() below, same as
+    // the mobile list's swipe-left gesture.
+    const TXT_KBD_FIELDS = ['date', 'payee', 'sof', 'amount', 'cleared', 'notes'];
+    let txtKbdHighlightIndex = -1;
+    let txtKbdEditRowNumber = null; // rowNumber currently open for row-edit, or null
+    let txtKbdEditDraft = null; // uncommitted field values for that row -- never sent until Enter
+    let txtKbdEditInputs = null; // { field: <input/select> } for the currently open row
+    let txtKbdSaving = false;
+    let txtKbdDeleting = false; // guards a second Backspace while a delete is in flight
+
+    async function loadAccountFilterOptions() {
+      try {
+        const res = await fetch('/api/accounts-list');
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        const opts = (data.accounts || [])
+          .map((a) => `<option value="${a.name}">${a.name}</option>`)
+          .join('');
+        txtFilterEls.sof.insertAdjacentHTML('beforeend', opts);
+        document.getElementById('txt-account-list').insertAdjacentHTML('beforeend', opts);
+      } catch (err) {
+        // Filter dropdown is a nice-to-have -- a failed fetch just leaves it
+        // at "All accounts", same fallback spirit as the form's own payee list.
+      }
+    }
+
+    function txtMatchesFilters(t) {
+      const search = txtFilterEls.search.value.trim().toLowerCase();
+      if (search) {
+        const haystack = `${t.payee || ''} ${t.notes || ''}`.toLowerCase();
+        if (!haystack.includes(search)) return false;
+      }
+      if (txtFilterEls.sof.value && t.sof !== txtFilterEls.sof.value) return false;
+      if (txtFilterEls.type.value && t.type !== txtFilterEls.type.value) return false;
+      if (txtFilterEls.cleared.value && t.cleared !== txtFilterEls.cleared.value) return false;
+      if (txtFilterEls.from.value && (!t.date || t.date < txtFilterEls.from.value)) return false;
+      if (txtFilterEls.to.value && (!t.date || t.date > txtFilterEls.to.value)) return false;
+      return true;
+    }
+
+    function txtSortRows(list) {
+      const { key, dir } = txtSort;
+      const mul = dir === 'asc' ? 1 : -1;
+      return [...list].sort((a, b) => {
+        let av = a[key];
+        let bv = b[key];
+        if (key === 'amount') {
+          av = Number(av) || 0;
+          bv = Number(bv) || 0;
+        } else {
+          av = (av || '').toString().toLowerCase();
+          bv = (bv || '').toString().toLowerCase();
+        }
+        if (av < bv) return -1 * mul;
+        if (av > bv) return 1 * mul;
+        // Stable tie-break so equal-key rows don't jump around between renders.
+        return (b.rowNumber || 0) - (a.rowNumber || 0);
+      });
+    }
+
+    function txtUpdateSortIndicators() {
+      document.querySelectorAll('#txt-table th[data-sort]').forEach((th) => {
+        const arrow = th.querySelector('.txt-sort-arrow');
+        const isActive = th.dataset.sort === txtSort.key;
+        th.classList.toggle('txt-sorted', isActive);
+        arrow.textContent = isActive ? (txtSort.dir === 'asc' ? '▲' : '▼') : '';
+      });
+      // Keep the decoupled sort-by control (issue #79) in sync whichever
+      // side changed it -- a header click updates txtSort, this reflects
+      // it back into the select/direction button.
+      const sortBySelect = document.getElementById('txt-f-sortby');
+      const sortDirBtn = document.getElementById('txt-f-sortdir');
+      if (sortBySelect && sortBySelect.value !== txtSort.key) sortBySelect.value = txtSort.key;
+      if (sortDirBtn) sortDirBtn.textContent = txtSort.dir === 'asc' ? '▲' : '▼';
+    }
+
+    function renderTable(sourceList) {
+      txtLastVisible = sourceList;
+      // Rows are rebuilt from scratch below, so any previous highlight/edit
+      // DOM state is gone -- callers that want to keep the highlight (the
+      // keyboard row-edit save/cancel paths) restore it by rowNumber right
+      // after calling this, via txtRestoreHighlightByRowNumber().
+      txtKbdHighlightIndex = -1;
+      const todayStr = TransactionForm.todayISO();
+      const rows = txtSortRows(sourceList.filter(txtMatchesFilters));
+      txtUpdateSortIndicators();
+
+      if (!rows.length) {
+        txtTableBodyEl.innerHTML = `<tr class="txt-empty-row"><td colspan="${txtVisibleColumnCount()}">No transactions match.</td></tr>`;
+        return;
+      }
+
+      // Income vs. expense is already conveyed by the amount's color (see
+      // .txt-amount.income) -- no separate Type column, though Type is still
+      // filterable via the filter bar above the table.
+      txtTableBodyEl.innerHTML = rows.map((t) => {
+        const isIncome = t.type === 'Income';
+        const isUpcoming = t.date > todayStr;
+        const amountText = (isIncome ? '+' : '') + formatIDR(t.amount);
+        const statusHtml = t.cleared === 'Cleared' ? '☑️' : '';
+        const payee = t.payee || '';
+        const notes = t.notes || '';
+        // Pending (issue #49): a Confirm button here is the "lightweight
+        // one-field update" path the issue asks for -- see
+        // confirmPendingTransaction() below, which hits transactions-update
+        // with { action: 'confirmPending' } instead of resending the row.
+        const pendingHtml = t.pending ? '<button type="button" class="txt-confirm-btn" title="Confirm this pending transaction">Confirm</button>' : '';
+        const rowClasses = [isUpcoming ? 'txt-upcoming-row' : '', t.pending ? 'txt-pending-row' : ''].filter(Boolean).join(' ');
+        return `
+          <tr data-row="${t.rowNumber}" class="${rowClasses}">
+            <td class="txt-editable" data-field="date">${t.date || ''}</td>
+            <td class="txt-truncate txt-editable" data-field="payee" title="${payee.replace(/"/g, '&quot;')}">${payee}</td>
+            <td class="txt-editable" data-field="sof">${t.sof || ''}</td>
+            <td class="txt-amount txt-editable ${isIncome ? 'income' : ''}" data-field="amount">${amountText}</td>
+            <td class="txt-status-col" data-field="cleared">${statusHtml}</td>
+            <td class="txt-pending-col">${pendingHtml}</td>
+            <td class="txt-truncate txt-editable" data-field="notes" title="${notes.replace(/"/g, '&quot;')}">${notes}</td>
+            <td class="txt-open-col"><button type="button" class="txt-open-btn" title="Open full editor">&#9998;</button></td>
+          </tr>
+        `;
+      }).join('');
+
+      // -- inline cell editing (issue #77) --
+      // A click on any of the txt-editable cells swaps it for a matching
+      // input/select in place; the status cell instead toggles Cleared
+      // directly, same as the mobile list's swipe-to-clear gesture. The
+      // trailing pencil button opens the full Add/Edit sheet, for anything
+      // an inline cell can't cover (Income/Expense, location, etc.) -- kept
+      // as its own affordance rather than a double-click, since a
+      // double-click on an already-editable cell just re-targets the input
+      // its own first click opened.
+      txtTableBodyEl.querySelectorAll('tr[data-row]').forEach((row) => {
+        const rowNumber = parseInt(row.dataset.row, 10);
+        const txn = transactions.find((t) => t.rowNumber === rowNumber);
+        if (!txn) return;
+
+        row.querySelectorAll('td.txt-editable').forEach((td) => {
+          td.addEventListener('click', () => startCellEdit(td, txn, td.dataset.field));
+        });
+
+        const statusTd = row.querySelector('td.txt-status-col');
+        statusTd.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          if (statusTd.classList.contains('txt-cell-saving')) return;
+          statusTd.classList.add('txt-cell-saving');
+          try {
+            await toggleClearedViaSwipe(txn);
+          } catch (err) {
+            alert(err.message);
+            statusTd.classList.remove('txt-cell-saving');
+          }
+        });
+
+        row.querySelector('.txt-open-btn').addEventListener('click', (e) => {
+          e.stopPropagation();
+          TransactionForm.open(txn);
+        });
+
+        const confirmBtn = row.querySelector('.txt-confirm-btn');
+        if (confirmBtn) {
+          confirmBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            // Issue #49 keyboard follow-up: this row is mid keyboard-edit
+            // (tabbed here from an open field, not just moused straight to
+            // Confirm) -- save the draft AND confirm in one action instead
+            // of the plain confirm-only path. A native Enter/Space on this
+            // focused button lands here too (the browser fires 'click' for
+            // both), so this single handler covers mouse and keyboard.
+            const isEditingThisRow = txtKbdEditRowNumber === txn.rowNumber;
+            confirmBtn.disabled = true;
+            confirmBtn.textContent = isEditingThisRow ? 'Saving…' : 'Confirming…';
+            try {
+              if (isEditingThisRow) {
+                await txtKbdConfirmAndSaveEdit();
+              } else {
+                await confirmPendingTransaction(txn);
+              }
+            } catch (err) {
+              alert(err.message);
+              confirmBtn.disabled = false;
+              confirmBtn.textContent = 'Confirm';
+            }
+          });
+          // Tab/Shift-Tab move on to the field on either side of this
+          // button's actual column position (Cleared before it, Notes
+          // after -- see txtKbdFieldOrder); Escape cancels the edit same
+          // as any other field. Only active while this specific row is
+          // the one being edited -- otherwise this is just a plain button.
+          confirmBtn.addEventListener('keydown', (e) => {
+            if (txtKbdEditRowNumber !== txn.rowNumber) return;
+            if (e.key === 'Tab') {
+              e.preventDefault();
+              txtKbdFocusField(e.shiftKey ? 'cleared' : 'notes');
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              txtKbdCancelEdit();
+            }
+          });
+        }
+      });
+    }
+
+    // Issue #49: sets Pending=FALSE for one row via the lightweight
+    // confirmPending action on transactions-update, rather than resending
+    // the whole row like every other write in this file does. Shared by
+    // both the desktop table's Confirm button and the mobile card's.
+    async function confirmPendingTransaction(txn) {
+      const res = await fetch('/api/transactions-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rowNumber: txn.rowNumber, action: 'confirmPending' }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      await loadTransactions();
+    }
+
+    // -- keyboard-driven row editing --
+
+    function txtRowEls() {
+      return Array.from(txtTableBodyEl.querySelectorAll('tr[data-row]'));
+    }
+
+    function setTxtHighlight(index) {
+      const rows = txtRowEls();
+      rows.forEach((r) => r.classList.remove('txt-kbd-highlight'));
+      if (!rows.length) { txtKbdHighlightIndex = -1; return; }
+      txtKbdHighlightIndex = Math.max(0, Math.min(index, rows.length - 1));
+      const row = rows[txtKbdHighlightIndex];
+      row.classList.add('txt-kbd-highlight');
+      row.scrollIntoView({ block: 'nearest' });
+    }
+
+    function txtCurrentHighlightedTxn() {
+      const rows = txtRowEls();
+      if (txtKbdHighlightIndex < 0 || txtKbdHighlightIndex >= rows.length) return null;
+      const rowNumber = parseInt(rows[txtKbdHighlightIndex].dataset.row, 10);
+      return transactions.find((t) => t.rowNumber === rowNumber) || null;
+    }
+
+    // Re-finds a row by rowNumber after a renderTable() rebuild (which always
+    // resets the highlight -- see the comment at the top of renderTable) and
+    // re-highlights it, so the keyboard row-edit save/cancel paths can leave
+    // the user right where they were instead of dropping the highlight.
+    function txtRestoreHighlightByRowNumber(rowNumber) {
+      if (rowNumber == null) return;
+      const idx = txtRowEls().findIndex((r) => parseInt(r.dataset.row, 10) === rowNumber);
+      if (idx !== -1) setTxtHighlight(idx);
+    }
+
+    // Matches free-typed Account text against the known accounts list (same
+    // list the filter bar's dropdown and the <datalist> below are populated
+    // from) -- an exact case-insensitive match snaps to the canonical name;
+    // an unambiguous case-insensitive prefix match does too; anything else
+    // is left as typed (server-side this is still just a text field, not a
+    // hard foreign key, so an unmatched value isn't blocked here).
+    function txtKbdNormalizeAccount(typed) {
+      if (!typed) return typed;
+      const known = Array.from(txtFilterEls.sof.options).map((o) => o.value).filter(Boolean);
+      const exact = known.find((n) => n.toLowerCase() === typed.toLowerCase());
+      if (exact) return exact;
+      const prefixMatches = known.filter((n) => n.toLowerCase().startsWith(typed.toLowerCase()));
+      return prefixMatches.length === 1 ? prefixMatches[0] : typed;
+    }
+
+    // Issue #49 keyboard follow-up: the Confirm button sits in the tab
+    // cycle for a pending row (see txtKbdFieldOrder below), in its actual
+    // column position between Cleared and Notes -- it's a real <button>,
+    // not one of TXT_KBD_FIELDS' inputs, so it's focused directly instead
+    // of through txtKbdEditInputs.
+    function txtKbdFocusField(field) {
+      if (field === 'confirm') {
+        const row = txtRowEls()[txtKbdHighlightIndex];
+        const btn = row && row.querySelector('.txt-confirm-btn');
+        if (btn) btn.focus();
+        return;
+      }
+      const input = txtKbdEditInputs && txtKbdEditInputs[field];
+      if (!input) return;
+      input.focus();
+      if (typeof input.select === 'function' && input.type !== 'checkbox') input.select();
+    }
+
+    // Tab order for the row-edit session, left to right same as the table's
+    // own columns -- 'confirm' (the Confirm button) is only spliced in for
+    // a pending row, right where its column actually sits.
+    function txtKbdFieldOrder(txn) {
+      const order = ['date', 'payee', 'sof', 'amount', 'cleared'];
+      if (txn && txn.pending) order.push('confirm');
+      order.push('notes');
+      return order;
+    }
+
+    // Pulls whatever's currently in a field's input into the draft. Called
+    // before moving focus away from a field (Tab/Shift-Tab) and again right
+    // before Enter saves, so the draft always reflects the field the user
+    // was just looking at -- the Account field also gets its autocomplete
+    // snap applied here, and the snapped value is written back into the
+    // input so it's visible if the user tabs back to it.
+    function txtKbdCommitField(field) {
+      const input = txtKbdEditInputs[field];
+      if (!input) return;
+      if (field === 'cleared') return; // kept in sync live by the checkbox's own change handler
+      if (field === 'amount') {
+        const parsed = parseFloat(String(input.value).replace(/[^\d.]/g, ''));
+        txtKbdEditDraft.amount = Number.isFinite(parsed) ? parsed : NaN;
+      } else if (field === 'sof') {
+        txtKbdEditDraft.sof = txtKbdNormalizeAccount(input.value.trim());
+        input.value = txtKbdEditDraft.sof;
+      } else {
+        txtKbdEditDraft[field] = input.value.trim();
+      }
+    }
+
+    function txtKbdInputKeydown(e) {
+      const field = e.target.dataset.field;
+      if (e.key === 'Tab') {
+        e.preventDefault();
+        txtKbdCommitField(field);
+        const order = txtKbdFieldOrder(transactions.find((t) => t.rowNumber === txtKbdEditRowNumber));
+        const idx = order.indexOf(field);
+        const nextIdx = e.shiftKey
+          ? (idx - 1 + order.length) % order.length
+          : (idx + 1) % order.length;
+        txtKbdFocusField(order[nextIdx]);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        txtKbdCommitField(field);
+        txtKbdSaveEdit(field);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        txtKbdCancelEdit();
+      }
+    }
+
+    // Opens every editable cell of the highlighted row at once, starting
+    // with the leftmost column (Date). Nothing here talks to the network --
+    // it only builds inputs seeded from a cloned draft of the row's current
+    // values, which Tab/Shift-Tab and typing mutate locally until Enter
+    // (save) or Escape (cancel/discard) resolve the whole session.
+    function startTxtKbdEdit(txn) {
+      if (txtKbdEditRowNumber !== null) return; // already editing a row
+      const row = txtRowEls()[txtKbdHighlightIndex];
+      if (!row) return;
+
+      txtKbdEditRowNumber = txn.rowNumber;
+      txtKbdEditDraft = {
+        payee: txn.payee, type: txn.type, sof: txn.sof, amount: txn.amount,
+        date: txn.date, month: txn.month, notes: txn.notes, cleared: txn.cleared,
+      };
+
+      const inputs = {};
+      TXT_KBD_FIELDS.forEach((field) => {
+        const td = row.querySelector(`td[data-field="${field}"]`);
+        if (!td) return;
+        td.classList.add('txt-editing');
+        td.innerHTML = '';
+
+        let input;
+        if (field === 'cleared') {
+          input = document.createElement('input');
+          input.type = 'checkbox';
+          input.className = 'txt-cell-checkbox';
+          input.checked = txtKbdEditDraft.cleared === 'Cleared';
+          input.addEventListener('change', () => {
+            txtKbdEditDraft.cleared = input.checked ? 'Cleared' : 'Uncleared';
+          });
+        } else if (field === 'date') {
+          input = document.createElement('input');
+          input.type = 'date';
+          input.className = 'txt-cell-input';
+          input.value = txtKbdEditDraft.date || '';
+        } else if (field === 'amount') {
+          input = document.createElement('input');
+          input.type = 'text';
+          input.inputMode = 'decimal';
+          input.className = 'txt-cell-input';
+          input.value = txtKbdEditDraft.amount != null ? String(txtKbdEditDraft.amount) : '';
+        } else {
+          input = document.createElement('input');
+          input.type = 'text';
+          input.className = 'txt-cell-input';
+          input.value = txtKbdEditDraft[field] || '';
+          if (field === 'payee') {
+            input.setAttribute('list', 'txf-payee-list'); // shared datalist -- see createCellEditor() above
+            input.autocomplete = 'off';
+          } else if (field === 'sof') {
+            input.setAttribute('list', 'txt-account-list'); // free-typed + autocompleted, not a <select> here
+            input.autocomplete = 'off';
+          }
+        }
+
+        input.dataset.field = field;
+        // The td itself still carries the single-cell click-to-edit
+        // listener from above (its innerHTML was cleared, not the td node)
+        // -- stop the click here so focusing/clicking inside this input
+        // can't also re-trigger that handler or the status column's
+        // click-to-toggle-immediately handler underneath it.
+        input.addEventListener('click', (e) => e.stopPropagation());
+        input.addEventListener('keydown', txtKbdInputKeydown);
+        td.appendChild(input);
+        inputs[field] = input;
+      });
+
+      txtKbdEditInputs = inputs;
+      // The pencil button would otherwise open the full sheet against the
+      // still-unsaved original row data while this draft is in flight --
+      // disable it for the duration of the edit session instead of trying
+      // to reconcile the two editing surfaces.
+      const openBtn = row.querySelector('.txt-open-btn');
+      if (openBtn) openBtn.disabled = true;
+
+      txtKbdFocusField(TXT_KBD_FIELDS[0]); // leftmost column
+    }
+
+    function txtKbdCancelEdit() {
+      if (txtKbdEditRowNumber === null) return;
+      const rowNumber = txtKbdEditRowNumber;
+      txtKbdEditRowNumber = null;
+      txtKbdEditDraft = null;
+      txtKbdEditInputs = null;
+      renderTable(txtLastVisible); // rebuild -- discards the draft, no save
+      txtRestoreHighlightByRowNumber(rowNumber);
+    }
+
+    // The only place this whole editing surface ever calls the API -- Enter
+    // committed the field under the cursor into the draft already (see
+    // txtKbdInputKeydown), so this just validates and sends the full row,
+    // same shape/convention as saveCellEdit()/toggleClearedViaSwipe() below.
+    async function txtKbdSaveEdit(focusFieldOnError) {
+      if (txtKbdEditRowNumber === null || txtKbdSaving) return;
+      const draft = txtKbdEditDraft;
+      const rowNumber = txtKbdEditRowNumber;
+
+      if (!draft.payee || !draft.sof || !draft.date) {
+        alert('Payee, Account, and Date are required.');
+        txtKbdFocusField(focusFieldOnError);
+        return;
+      }
+      if (!Number.isFinite(draft.amount) || draft.amount <= 0) {
+        alert('Amount must be a positive number.');
+        txtKbdFocusField(focusFieldOnError);
+        return;
+      }
+
+      const original = transactions.find((t) => t.rowNumber === rowNumber);
+      const payload = {
+        rowNumber,
+        payee: draft.payee,
+        type: draft.type,
+        sof: draft.sof,
+        amount: draft.amount,
+        date: draft.date,
+        month: draft.month,
+        notes: draft.notes,
+        cleared: draft.cleared,
+      };
+      // No Month field in this editing surface either -- same re-guess as
+      // the single-cell Date edit above, only when the date actually
+      // changed so an untouched row keeps its (possibly hand-picked) Month.
+      if (original && draft.date !== original.date) {
+        payload.month = TransactionForm.guessBillingMonth(draft.date);
+      }
+
+      const row = txtRowEls()[txtKbdHighlightIndex];
+      txtKbdSaving = true;
+      if (row) row.classList.add('txt-kbd-row-saving');
+      try {
+        const res = await fetch('/api/transactions-update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        txtKbdEditRowNumber = null;
+        txtKbdEditDraft = null;
+        txtKbdEditInputs = null;
+        await loadTransactions();
+        txtRestoreHighlightByRowNumber(rowNumber);
+      } catch (err) {
+        alert(err.message);
+        if (row) row.classList.remove('txt-kbd-row-saving');
+        txtKbdFocusField(focusFieldOnError);
+      } finally {
+        txtKbdSaving = false;
+      }
+    }
+
+    // Issue #49 keyboard follow-up: reached by tabbing to the Confirm
+    // button during a row-edit session (see txtKbdFieldOrder above) --
+    // Enter/Space on it (native button activation, handled by the
+    // button's own 'click' listener in renderTable()) saves whatever's
+    // currently filled in the row AND confirms it (Pending -> FALSE) in
+    // one action, so fixing a mis-parsed import doesn't take two separate
+    // steps. Same validation as txtKbdSaveEdit; two sequential requests
+    // since transactions-update has no single combined action.
+    async function txtKbdConfirmAndSaveEdit() {
+      if (txtKbdEditRowNumber === null || txtKbdSaving) return;
+      const draft = txtKbdEditDraft;
+      const rowNumber = txtKbdEditRowNumber;
+
+      if (!draft.payee || !draft.sof || !draft.date) {
+        alert('Payee, Account, and Date are required.');
+        return;
+      }
+      if (!Number.isFinite(draft.amount) || draft.amount <= 0) {
+        alert('Amount must be a positive number.');
+        return;
+      }
+
+      const original = transactions.find((t) => t.rowNumber === rowNumber);
+      const payload = {
+        rowNumber,
+        payee: draft.payee,
+        type: draft.type,
+        sof: draft.sof,
+        amount: draft.amount,
+        date: draft.date,
+        month: draft.month,
+        notes: draft.notes,
+        cleared: draft.cleared,
+      };
+      if (original && draft.date !== original.date) {
+        payload.month = TransactionForm.guessBillingMonth(draft.date);
+      }
+
+      const row = txtRowEls()[txtKbdHighlightIndex];
+      txtKbdSaving = true;
+      if (row) row.classList.add('txt-kbd-row-saving');
+      try {
+        const res = await fetch('/api/transactions-update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+
+        const confirmRes = await fetch('/api/transactions-update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rowNumber, action: 'confirmPending' }),
+        });
+        const confirmData = await confirmRes.json();
+        if (confirmData.error) throw new Error(confirmData.error);
+
+        txtKbdEditRowNumber = null;
+        txtKbdEditDraft = null;
+        txtKbdEditInputs = null;
+        await loadTransactions();
+        txtRestoreHighlightByRowNumber(rowNumber);
+      } catch (err) {
+        if (row) row.classList.remove('txt-kbd-row-saving');
+        throw err; // surfaced to the caller (the Confirm button's click handler), which shows/resets its own label
+      } finally {
+        txtKbdSaving = false;
+      }
+    }
+
+    // Backspace on a highlighted row -- analogous to Enter opening it for
+    // edit, but simpler: always confirm first, then delete outright rather
+    // than opening any fields. Reuses deleteTransactionViaSwipe() (defined
+    // below), the same delete path the mobile list's swipe-left gesture and
+    // the full Add/Edit sheet's own Delete link already use, so there's a
+    // single place that talks to /api/transactions-delete.
+    async function txtKbdHandleDelete(txn) {
+      if (!confirm(`Delete "${txn.payee}"?`)) return;
+      // Capture the row/index before the confirm dialog's own event loop
+      // turn and the delete request -- txtKbdHighlightIndex itself doesn't
+      // change while this is in flight (nothing else can move it), but
+      // reading both up front keeps this in the same style as the row-edit
+      // save path above.
+      const index = txtKbdHighlightIndex;
+      const row = txtRowEls()[index];
+      txtKbdDeleting = true;
+      if (row) row.classList.add('txt-kbd-row-saving'); // reuse the same dimmed "busy" look as a row-edit save
+      try {
+        await deleteTransactionViaSwipe(txn);
+        // deleteTransactionViaSwipe() -> loadTransactions() rebuilds the
+        // table (renderTable() always resets the highlight -- see its own
+        // comment), so re-highlight by the same index: the row that slides
+        // into the deleted row's spot, or the new last row if it was last.
+        setTxtHighlight(index);
+      } catch (err) {
+        if (row) row.classList.remove('txt-kbd-row-saving');
+        alert(err.message);
+      } finally {
+        txtKbdDeleting = false;
+      }
+    }
+
+    // A click anywhere outside the row currently open for keyboard editing
+    // discards it (same as Escape, no save) -- a click on another field
+    // inside that same row is left alone and just focuses it normally.
+    // mousedown (not click/focusout) is used deliberately: it fires only for
+    // real pointer input, so it can't be tripped by the alert() dialogs
+    // above stealing focus, or by our own Tab handler moving focus between
+    // fields within the row.
+    document.addEventListener('mousedown', (e) => {
+      if (txtKbdEditRowNumber === null) return;
+      const editingRow = txtRowEls().find((r) => parseInt(r.dataset.row, 10) === txtKbdEditRowNumber);
+      if (editingRow && editingRow.contains(e.target)) return;
+      txtKbdCancelEdit();
+    });
+
+    document.addEventListener('keydown', (e) => {
+      if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (txtKbdEditRowNumber !== null) return; // the row's own inputs own the keyboard now (txtKbdInputKeydown)
+
+      // Only meaningful while the wide-viewport table is actually the
+      // visible view (>=1024px, see the CSS above) -- below that this table
+      // is display:none and the mobile card list has no row/column concept
+      // for Up/Down/Enter to act on.
+      const wrapEl = document.querySelector('.txt-table-wrap');
+      if (!wrapEl || getComputedStyle(wrapEl).display === 'none') return;
+
+      const t = e.target;
+      const tag = t && t.tagName;
+      // BUTTON is included here (not just INPUT/TEXTAREA/SELECT) so that
+      // native Tab focus landing on a real button -- the Confirm button
+      // (issue #49) or the pencil "open full editor" button -- gets plain
+      // native Enter/Space-activates-the-button behavior, instead of also
+      // being intercepted by this row-highlight-index-based handler below
+      // (which tracks a highlighted row, not real DOM focus, and would
+      // otherwise fire against whatever row happens to be highlighted,
+      // not the row the focused button actually belongs to).
+      const isTextField = (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || (t && t.isContentEditable)) && t.offsetParent !== null;
+      if (isTextField) return; // typing in a filter box, a focused button, etc. -- don't hijack arrows/Enter/Space there
+      if (document.querySelector('.open')) return; // the full Add/Edit sheet owns the keyboard
+
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setTxtHighlight(txtKbdHighlightIndex + 1);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setTxtHighlight(txtKbdHighlightIndex - 1);
+      } else if (e.key === 'Enter' || e.key === ' ') {
+        const txn = txtCurrentHighlightedTxn();
+        if (!txn) return;
+        e.preventDefault();
+        startTxtKbdEdit(txn);
+      } else if (e.key === 'Backspace') {
+        const txn = txtCurrentHighlightedTxn();
+        if (!txn || txtKbdDeleting) return;
+        e.preventDefault();
+        txtKbdHandleDelete(txn);
+      }
+    });
+
+    // Only one cell is ever mid-edit at a time -- clicking a different cell
+    // while another is open is a rare enough case that the simplest correct
+    // behavior is to let the outgoing cell's own blur handler commit/cancel
+    // it first (native focus-out ordering), rather than tracking editor
+    // state separately here.
+    function txtEditableColumnLabel(field) {
+      return { date: 'Date', payee: 'Payee', sof: 'Account', amount: 'Amount', notes: 'Notes' }[field] || field;
+    }
+
+    function createCellEditor(field, txn) {
+      if (field === 'sof') {
+        const select = document.createElement('select');
+        select.className = 'txt-cell-input';
+        Array.from(txtFilterEls.sof.options).forEach((opt) => {
+          if (!opt.value) return; // skip the filter's own "All accounts" placeholder
+          const o = document.createElement('option');
+          o.value = opt.value;
+          o.textContent = opt.textContent;
+          if (opt.value === txn.sof) o.selected = true;
+          select.appendChild(o);
+        });
+        return select;
+      }
+
+      const input = document.createElement('input');
+      input.className = 'txt-cell-input';
+      if (field === 'date') {
+        input.type = 'date';
+        input.value = txn.date || '';
+      } else if (field === 'amount') {
+        input.type = 'text';
+        input.inputMode = 'decimal';
+        input.value = txn.amount != null ? String(txn.amount) : '';
+      } else {
+        input.type = 'text';
+        input.value = txn[field] || '';
+        if (field === 'payee') {
+          // Reuses the same <datalist> the full Add/Edit sheet populates on
+          // mount (shared/transaction-form.js's loadPayees()) -- it's already
+          // in the DOM regardless of whether that sheet is open.
+          input.setAttribute('list', 'txf-payee-list');
+          input.autocomplete = 'off';
+        }
+      }
+      return input;
+    }
+
+    function startCellEdit(td, txn, field) {
+      if (td.classList.contains('txt-editing')) return; // already editing this cell
+      const input = createCellEditor(field, txn);
+      td.innerHTML = '';
+      td.classList.add('txt-editing');
+      td.appendChild(input);
+      input.focus();
+      if (typeof input.select === 'function') input.select();
+
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          commitCellEdit(td, txn, field, input);
+        } else if (e.key === 'Escape') {
+          e.preventDefault();
+          input.dataset.handled = '1';
+          renderTable(txtLastVisible); // discard, no save
+        }
+      });
+      input.addEventListener('blur', () => commitCellEdit(td, txn, field, input));
+    }
+
+    async function commitCellEdit(td, txn, field, input) {
+      if (input.dataset.handled) return; // Enter already handled this; ignore the blur that follows
+      input.dataset.handled = '1';
+
+      let newValue = input.value;
+      if (field === 'amount') {
+        newValue = parseFloat(String(newValue).replace(/[^\d.]/g, ''));
+      } else {
+        newValue = newValue.trim();
+      }
+
+      const unchanged = field === 'amount'
+        ? Number(newValue) === Number(txn.amount)
+        : newValue === (txn[field] || '');
+      if (unchanged) {
+        renderTable(txtLastVisible);
+        return;
+      }
+
+      if ((field === 'payee' || field === 'sof' || field === 'date') && !newValue) {
+        alert(`${txtEditableColumnLabel(field)} is required.`);
+        renderTable(txtLastVisible);
+        return;
+      }
+      if (field === 'amount' && (!Number.isFinite(newValue) || newValue <= 0)) {
+        alert('Amount must be a positive number.');
+        renderTable(txtLastVisible);
+        return;
+      }
+
+      td.classList.add('txt-cell-saving');
+      input.disabled = true;
+      try {
+        await saveCellEdit(txn, field, newValue);
+        await loadTransactions();
+      } catch (err) {
+        alert(err.message);
+        renderTable(txtLastVisible); // revert to the last-known-good values
+      }
+    }
+
+    // Sends the whole row back, same convention as toggleClearedViaSwipe()
+    // below -- transactions-update rewrites the full row, so every other
+    // field has to be resent unchanged alongside the one that changed.
+    async function saveCellEdit(txn, field, newValue) {
+      const payload = {
+        rowNumber: txn.rowNumber,
+        payee: txn.payee,
+        type: txn.type,
+        sof: txn.sof,
+        amount: txn.amount,
+        date: txn.date,
+        month: txn.month,
+        notes: txn.notes,
+        cleared: txn.cleared,
+      };
+
+      if (field === 'date') {
+        // No Month field in this editing surface -- re-guess the billing
+        // month from the new date, same heuristic the full sheet pre-fills
+        // with (TransactionForm.guessBillingMonth). If this transaction's
+        // month was hand-overridden away from the guess, editing its date
+        // inline will replace that override -- use the full sheet instead
+        // if that matters for this row.
+        payload.date = newValue;
+        payload.month = TransactionForm.guessBillingMonth(newValue);
+      } else {
+        payload[field] = newValue;
+      }
+
+      const res = await fetch('/api/transactions-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+    }
+
+    document.querySelectorAll('#txt-table th[data-sort]').forEach((th) => {
+      th.addEventListener('click', () => {
+        const key = th.dataset.sort;
+        if (txtSort.key === key) {
+          txtSort.dir = txtSort.dir === 'asc' ? 'desc' : 'asc';
+        } else {
+          // Date/amount read most naturally newest/largest first; text
+          // columns read most naturally A-to-Z first.
+          txtSort = { key, dir: (key === 'date' || key === 'amount') ? 'desc' : 'asc' };
+        }
+        renderTable(txtLastVisible);
+      });
+    });
+
+    Object.values(txtFilterEls).forEach((el) => {
+      el.addEventListener('input', () => renderTable(txtLastVisible));
+    });
+    document.getElementById('txt-f-clear').addEventListener('click', () => {
+      Object.values(txtFilterEls).forEach((el) => { el.value = ''; });
+      renderTable(txtLastVisible);
+    });
+
+    // Add/Edit/Delete form itself lives in shared/transaction-form.js --
+    // this page only wires up the list and hands rows to it via
+    // TransactionForm.open(txn).
+    TransactionForm.mount(document.getElementById('txf-root'), {
+      supportEditDelete: true,
+      onSaved: () => loadTransactions(),
+      onDeleted: () => loadTransactions(),
+    });
+
+    BottomNav.mount(document.getElementById('bnv-root'), { active: 'transactions' });
+    KeyboardNav.mount();
+
+    async function loadTransactions() {
+      const listEl = document.getElementById('list');
+      listEl.innerHTML = '<div class="sub">Loading…</div>';
+      try {
+        const res = await fetch('/api/transactions-list');
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        transactions = data.transactions;
+        renderList();
+      } catch (err) {
+        listEl.innerHTML = `<span class="error">${err.message}</span>`;
+      }
+    }
+
+    // Renders from the already-fetched `transactions` array -- called after
+    // load, and again whenever the upcoming toggle flips, so switching it
+    // doesn't need a refetch. Sorted descending by date so "today" is what
+    // actually sits on top once future-dated rows are filtered out, rather
+    // than trusting whatever order the API happens to return.
+    function renderList() {
+      const listEl = document.getElementById('list');
+      const todayStr = TransactionForm.todayISO();
+
+      const sorted = [...transactions].sort((a, b) =>
+        a.date < b.date ? 1 : a.date > b.date ? -1 : (b.rowNumber || 0) - (a.rowNumber || 0)
+      );
+
+      const upcomingCount = sorted.filter((t) => t.date > todayStr).length;
+      upcomingSwitchEl.classList.toggle('on', showUpcoming);
+      upcomingLabelEl.textContent = showUpcoming
+        ? (upcomingCount ? `Showing ${upcomingCount} upcoming` : 'No upcoming transactions')
+        : (upcomingCount ? `${upcomingCount} upcoming hidden` : 'No upcoming transactions');
+
+      // Issue #49 feedback follow-up: "Review Pending" is a mode switch, not
+      // a show/hide filter like Upcoming -- so unlike Upcoming's toggle, this
+      // button is hidden entirely when there's nothing to review (no pending
+      // rows and not currently reviewing), rather than always showing with a
+      // "No pending transactions" label. While actively reviewing, it stays
+      // visible (and offers a way back out) even if the last pending row
+      // gets confirmed mid-session. The filter itself is still shared by
+      // both the mobile card list and the wide-viewport table -- both are
+      // handed the same `visible` array.
+      const pendingCount = sorted.filter((t) => t.pending).length;
+      if (pendingCount || showPendingOnly) {
+        pendingToggleEl.style.display = '';
+        pendingToggleEl.classList.toggle('active', showPendingOnly);
+        pendingLabelEl.textContent = showPendingOnly
+          ? '← Back to all transactions'
+          : `Review Pending (${pendingCount})`;
+      } else {
+        pendingToggleEl.style.display = 'none';
+      }
+
+      let visible = showUpcoming ? sorted : sorted.filter((t) => t.date <= todayStr);
+      if (showPendingOnly) visible = visible.filter((t) => t.pending);
+
+      // Wide-viewport table (issue #65) renders from the same
+      // upcoming-filtered list as the mobile cards, then applies its own
+      // column filters/sort on top -- see renderTable().
+      renderTable(visible);
+
+      if (!visible.length) {
+        listEl.innerHTML = '<div class="sub">No transactions yet. Tap + to add one.</div>';
+        return;
+      }
+
+      let html = '';
+      let lastLabel = null;
+      visible.forEach((t) => {
+        const isUpcoming = t.date > todayStr;
+        const label = dateLabel(t.date);
+        if (label !== lastLabel) {
+          html += `<div class="date-header ${isUpcoming ? 'upcoming' : ''}">${label}</div>`;
+          lastLabel = label;
+        }
+        const isIncome = t.type === 'Income';
+        const amountText = (isIncome ? '+' : '') + formatIDR(t.amount);
+        const metaBits = [t.sof];
+        if (t.cleared !== 'Cleared') metaBits.push('<span class="uncleared">uncleared</span>');
+        if (isUpcoming) metaBits.push('<span class="upcoming-tag">upcoming</span>');
+        if (t.pending) metaBits.push('<span class="pending-tag">pending</span>');
+        // Issue #49: Confirm button sits under the amount for a pending row
+        // -- see confirmPendingTransaction() and its click listener below.
+        const confirmHtml = t.pending
+          ? `<button type="button" class="txn-confirm-btn" data-row="${t.rowNumber}">Confirm</button>`
+          : '';
+        const rowInner = `
+            <div>
+              <div class="txn-name">${t.payee}</div>
+              <div class="txn-meta">${metaBits.join(' &middot; ')}</div>
+            </div>
+            <div class="txn-amount-block">
+              <div class="txn-amount ${isIncome ? 'income' : ''}">${amountText}</div>
+              ${confirmHtml}
+            </div>
+        `;
+        html += SwipeActions.rowHTML(t.rowNumber, `txn-row ${isUpcoming ? 'upcoming' : ''} ${t.pending ? 'pending' : ''}`, rowInner, t.cleared === 'Cleared');
+      });
+      listEl.innerHTML = html;
+
+      document.querySelectorAll('.txn-row').forEach((row) => {
+        row.addEventListener('click', () => {
+          const rowNumber = parseInt(row.closest('.swx-wrap').dataset.row, 10);
+          const txn = transactions.find((t) => t.rowNumber === rowNumber);
+          if (txn) TransactionForm.open(txn);
+        });
+      });
+
+      // Issue #49: stopPropagation keeps this from also bubbling up to the
+      // row's own click listener above (which would open the full edit
+      // sheet) -- same pattern as the desktop table's Confirm/Open buttons.
+      document.querySelectorAll('.txn-confirm-btn').forEach((btn) => {
+        btn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          const rowNumber = parseInt(btn.dataset.row, 10);
+          const txn = transactions.find((t) => t.rowNumber === rowNumber);
+          if (!txn) return;
+          btn.disabled = true;
+          btn.textContent = 'Confirming…';
+          try {
+            await confirmPendingTransaction(txn);
+          } catch (err) {
+            alert(err.message);
+            btn.disabled = false;
+            btn.textContent = 'Confirm';
+          }
+        });
+      });
+
+      SwipeActions.init(listEl, {
+        getRow: (rowNumber) => transactions.find((t) => t.rowNumber === rowNumber),
+        onDelete: deleteTransactionViaSwipe,
+        onToggleClear: toggleClearedViaSwipe,
+        onError: (err) => alert(err.message),
+      });
+    }
+
+    // Swipe-left delete: same endpoint/payload as the shared form's own
+    // Delete link (transaction-form.js's handleDelete) -- confirmation is
+    // handled by SwipeActions itself before this is ever called.
+    async function deleteTransactionViaSwipe(txn) {
+      const res = await fetch('/api/transactions-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rowNumber: txn.rowNumber }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      await loadTransactions();
+    }
+
+    // Swipe-right clear/unclear toggle: transactions-update rewrites the
+    // whole row, so every other field has to be resent unchanged -- exactly
+    // what the shared form's own Save does for a normal edit, just with
+    // `cleared` flipped and no sheet round-trip through the edit sheet UI.
+    async function toggleClearedViaSwipe(txn) {
+      const res = await fetch('/api/transactions-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rowNumber: txn.rowNumber,
+          payee: txn.payee,
+          type: txn.type,
+          sof: txn.sof,
+          amount: txn.amount,
+          date: txn.date,
+          month: txn.month,
+          notes: txn.notes,
+          cleared: txn.cleared === 'Cleared' ? 'Uncleared' : 'Cleared',
+        }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      await loadTransactions();
+    }
+
+    upcomingToggleEl.addEventListener('click', () => {
+      showUpcoming = !showUpcoming;
+      renderList();
+    });
+
+    pendingToggleEl.addEventListener('click', () => {
+      showPendingOnly = !showPendingOnly;
+      renderList();
+    });
+
+    txtInitColumnControls();
+    loadTransactions();
+    loadAccountFilterOptions();
+  </script>
+</body>
+</html>
