@@ -197,8 +197,36 @@
      row that's both -- same convention as the Transactions page. */
   .txn-row.pending { border: 1px dashed rgba(167,139,250,0.45); background: linear-gradient(rgba(167,139,250,0.08), rgba(167,139,250,0.08)), var(--card); }
   .txn-meta .pending-tag { color: var(--pending, #a78bfa); }
-  #detail-pending-switch.on { background: var(--pending, #a78bfa); }
-  #detail-pending-toggle .dot { background: var(--pending, #a78bfa); }
+
+  /* -- "Review Pending" mode button (issue #49 feedback follow-up) --
+     Same rationale as the Transactions page: this is a mode switch
+     (browse all vs. review pending), not a show/hide filter like Upcoming,
+     so it gets its own button-shaped affordance instead of reusing
+     .switch, and is hidden entirely when there's nothing to review. */
+  .pending-review-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    background: var(--card);
+    border: 1px dashed rgba(167,139,250,0.5);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    font-size: 12.5px;
+    font-family: inherit;
+    color: var(--pending, #a78bfa);
+    cursor: pointer;
+    text-align: left;
+  }
+  .pending-review-btn:hover { background: rgba(167,139,250,0.08); }
+  .pending-review-btn .prb-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--pending, #a78bfa); flex-shrink: 0; }
+  .pending-review-btn.active {
+    background: rgba(167,139,250,0.16);
+    border-style: solid;
+    color: var(--text);
+    font-weight: 600;
+  }
   .txn-confirm-btn {
     background: rgba(167,139,250,0.15);
     color: var(--pending, #a78bfa);
@@ -402,12 +430,13 @@
       </div>
 
       <!-- Pending transactions (issue #49): auto-imported by EmailImport.gs
-           (issue #38) and not yet reviewed. Same toggle convention as
-           Upcoming above. -->
-      <div class="upcoming-toggle" id="detail-pending-toggle">
-        <span class="label"><span class="dot"></span><span id="detail-pending-label">Pending</span></span>
-        <div class="switch" id="detail-pending-switch"></div>
-      </div>
+           (issue #38) and not yet reviewed. Shaped as a mode switch (browse
+           all vs. review pending), not a show/hide filter like Upcoming --
+           see the .pending-review-btn CSS comment above. Hidden by default;
+           renderDetailTxnList() shows it once there's something to review. -->
+      <button type="button" class="pending-review-btn" id="detail-pending-toggle" style="display:none;">
+        <span class="prb-dot"></span><span id="detail-pending-label">Review Pending</span>
+      </button>
     </div>
   </div>
 
@@ -716,7 +745,6 @@
   });
 
   const detailPendingToggleEl = document.getElementById('detail-pending-toggle');
-  const detailPendingSwitchEl = document.getElementById('detail-pending-switch');
   const detailPendingLabelEl = document.getElementById('detail-pending-label');
   detailPendingToggleEl.addEventListener('click', () => {
     showPendingOnlyDetail = !showPendingOnlyDetail;
@@ -788,12 +816,22 @@
       ? (upcomingCount ? `Showing ${upcomingCount} upcoming` : 'No upcoming transactions')
       : (upcomingCount ? `${upcomingCount} upcoming hidden` : 'No upcoming transactions');
 
-    // Issue #49: same pattern as Upcoming above.
+    // Issue #49 feedback follow-up: "Review Pending" is a mode switch, not a
+    // show/hide filter -- hide the button entirely when there's nothing to
+    // review, same as the Transactions page (see its own comment for the
+    // full rationale). Stays visible while actively reviewing even if the
+    // last pending row gets confirmed mid-session, so there's still a way
+    // back to the full list.
     const pendingCount = rows.filter((t) => t.pending).length;
-    detailPendingSwitchEl.classList.toggle('on', showPendingOnlyDetail);
-    detailPendingLabelEl.textContent = showPendingOnlyDetail
-      ? (pendingCount ? `Showing ${pendingCount} pending` : 'No pending transactions')
-      : (pendingCount ? `${pendingCount} pending` : 'No pending transactions');
+    if (pendingCount || showPendingOnlyDetail) {
+      detailPendingToggleEl.style.display = '';
+      detailPendingToggleEl.classList.toggle('active', showPendingOnlyDetail);
+      detailPendingLabelEl.textContent = showPendingOnlyDetail
+        ? '← Back to all transactions'
+        : `Review Pending (${pendingCount})`;
+    } else {
+      detailPendingToggleEl.style.display = 'none';
+    }
 
     let visible = showUpcomingDetail ? rows : rows.filter((t) => !t.date || t.date <= todayStr);
     if (showPendingOnlyDetail) visible = visible.filter((t) => t.pending);
