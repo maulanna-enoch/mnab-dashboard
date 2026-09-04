@@ -68,22 +68,19 @@ module.exports = async (req, res) => {
     const sheets = getWriteSheetsClient();
     const spreadsheetId = process.env.SHEET_ID;
 
-    // Issue #89: clearing a transaction through ANY save path (full-sheet
+    // Issue #89: *saving* a transaction through ANY path here (full-sheet
     // edit, inline cell edit, keyboard row edit -- every one of them funnels
-    // through this one endpoint) implicitly means the user has also
-    // reviewed/confirmed it, so Pending must never be left TRUE on a row
-    // that's being saved as Cleared. Mirrors the `confirmPending` action's
-    // graceful-no-op handling above: Pending is a self-provisioned column
-    // (see EmailImport.gs / issue #38) that may not exist on this sheet yet,
-    // in which case there's nothing to clear.
-    const isNowCleared = String(cleared).trim().toLowerCase() === 'cleared';
-    let pendingCol = null;
-    if (isNowCleared) {
-      const headerMap = await getHeaderMap(sheets, spreadsheetId, 'transactions');
-      if (headerMap['Pending'] !== undefined) {
-        pendingCol = columnLetter(headerMap['Pending']);
-      }
-    }
+    // through this one endpoint) implicitly means the user has reviewed and
+    // confirmed it, regardless of what Cleared ends up being saved as --
+    // saving it back as Uncleared is still a deliberate save, not a no-op,
+    // so Pending must never be left TRUE on a row that's just been saved.
+    // (Originally this was scoped to "saved as Cleared" only; broadened per
+    // the user's follow-up -- see claude/MNAB-live-status.md.) Mirrors the
+    // `confirmPending` action's graceful-no-op handling above: Pending is a
+    // self-provisioned column (see EmailImport.gs / issue #38) that may not
+    // exist on this sheet yet, in which case there's nothing to clear.
+    const headerMap = await getHeaderMap(sheets, spreadsheetId, 'transactions');
+    const pendingCol = headerMap['Pending'] !== undefined ? columnLetter(headerMap['Pending']) : null;
 
     if (pendingCol) {
       await sheets.spreadsheets.values.batchUpdate({
