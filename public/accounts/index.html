@@ -1,1 +1,3059 @@
-PLACEHOLDER
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>Accounts · MNAB</title>
+<link rel="icon" type="image/png" href="/favicon.png" />
+<link rel="stylesheet" href="/shared/transaction-form.css" />
+<link rel="stylesheet" href="/shared/swipe-actions.css" />
+<link rel="stylesheet" href="/shared/responsive.css" />
+<link rel="stylesheet" href="/shared/bottom-nav.css" />
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0f1115;
+    --card: #1a1d24;
+    --text: #f4f4f5;
+    --muted: #9ca3af;
+    --accent: #22c55e;
+    --uncleared: #f5b942;
+    --negative: #e24b4a;
+    --upcoming: #60a5fa;
+    --pending: #a78bfa;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    overscroll-behavior-y: contain;
+  }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 24px 16px calc(140px + env(safe-area-inset-bottom));
+  }
+  .wrap { max-width: var(--page-max-width); margin: 0 auto; position: relative; }
+
+  .back-link {
+    display: block;
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 0.85rem;
+    margin-bottom: 4px;
+    cursor: pointer;
+  }
+  h1 {
+    font-size: 1.1rem;
+    font-weight: 500;
+    color: var(--muted);
+    margin: 0 0 16px;
+    text-align: center;
+  }
+  .sub { font-size: 0.85rem; color: var(--muted); }
+  .error { color: #f87171; font-size: 0.9rem; }
+  .loading { color: var(--muted); font-size: 0.85rem; text-align: center; padding: 24px 0; }
+
+  .acct-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--card);
+    border-radius: 14px;
+    padding: 16px 16px;
+    margin-bottom: 10px;
+    cursor: pointer;
+  }
+  .acct-name { font-size: 0.95rem; font-weight: 500; }
+  .acct-type { font-size: 0.72rem; color: var(--muted); margin-top: 3px; }
+  .acct-balance-block { text-align: right; }
+  .acct-balance { font-size: 0.95rem; font-weight: 600; }
+  .acct-balance.owed { color: var(--negative); }
+  .acct-balance.positive { color: var(--accent); }
+  .acct-uncleared { font-size: 0.7rem; color: var(--muted); margin-top: 3px; }
+  .acct-uncleared.stale { color: var(--uncleared); }
+
+  .section-label {
+    font-size: 0.7rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 18px 0 8px;
+  }
+  .section-label:first-of-type { margin-top: 0; }
+
+  .acct-header {
+    background: var(--card);
+    border-radius: 16px;
+    padding: 18px 18px;
+    margin-bottom: 16px;
+  }
+  .acct-header-top { display: flex; justify-content: space-between; align-items: flex-start; }
+  .acct-header-name { font-size: 1.1rem; font-weight: 600; }
+  .acct-header-type { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
+  .acct-header-balance { font-size: 1.6rem; font-weight: 700; margin-top: 12px; }
+  .acct-header-balance.owed { color: var(--negative); }
+  .acct-header-balance.positive { color: var(--accent); }
+  .acct-header-meta { font-size: 0.72rem; color: var(--muted); margin-top: 6px; }
+  .acct-header-meta .uncleared-amt { color: var(--uncleared); }
+  .acct-header-meta div + div { margin-top: 2px; }
+  .acct-header-actions { display: flex; gap: 10px; margin-top: 14px; }
+  .btn {
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: none;
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .btn-primary { background: var(--accent); color: #0f1115; flex: 1; }
+  .btn-secondary { background: #2a2e37; color: var(--text); }
+  .btn-danger { background: transparent; color: var(--negative); border: 1px solid var(--negative); }
+  .btn-ghost { background: transparent; color: var(--muted); border: 1px solid #374151; }
+  .btn:disabled { opacity: 0.5; cursor: default; }
+  .btn-block { width: 100%; }
+  .last-recon-link {
+    display: block;
+    text-align: center;
+    font-size: 0.75rem;
+    color: var(--muted);
+    text-decoration: underline;
+    margin-top: 10px;
+    cursor: pointer;
+  }
+
+  .date-header {
+    font-size: 0.7rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin: 16px 0 6px;
+  }
+  .date-header:first-of-type { margin-top: 0; }
+  .txn-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: var(--card);
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-bottom: 8px;
+    cursor: pointer;
+  }
+  .txn-row.reconciled > div { opacity: 0.55; }
+  .txn-name { font-size: 0.9rem; }
+  .txn-meta { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
+  .txn-meta .uncleared { color: var(--uncleared); }
+  .txn-meta .reconciled-tag { color: var(--accent); }
+  .txn-meta .transfer-tag { color: var(--upcoming); }
+  .txn-amount { font-size: 0.9rem; white-space: nowrap; }
+  .txn-amount.income { color: var(--accent); }
+  /* Wraps the amount and (for a Pending row) the Confirm button, right-
+     aligned under it -- issue #49. */
+  .txn-amount-block { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+
+  .upcoming-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    background: var(--card);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    font-size: 12.5px;
+    color: var(--muted);
+    cursor: pointer;
+    user-select: none;
+  }
+  .upcoming-toggle .label { display: flex; align-items: center; gap: 6px; }
+  .upcoming-toggle .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--upcoming, #60a5fa); }
+  .switch {
+    position: relative;
+    width: 38px;
+    height: 22px;
+    border-radius: 999px;
+    background: #374151;
+    flex-shrink: 0;
+    transition: background 0.15s;
+  }
+  .switch.on { background: var(--upcoming, #60a5fa); }
+  .switch::after {
+    content: '';
+    position: absolute;
+    top: 2px; left: 2px;
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    background: #fff;
+    transition: transform 0.15s;
+  }
+  .switch.on::after { transform: translateX(16px); }
+  .date-header.upcoming { color: var(--upcoming, #60a5fa); }
+  .txn-row.upcoming { border: 1px dashed rgba(96,165,250,0.4); background: linear-gradient(rgba(96,165,250,0.06), rgba(96,165,250,0.06)), var(--card); }
+  .txn-meta .upcoming-tag { color: var(--upcoming, #60a5fa); }
+
+  /* -- Pending transactions (issue #49) -- auto-imported rows (EmailImport.gs
+     / issue #38) not yet reviewed. Listed after .upcoming so it wins on a
+     row that's both -- same convention as the Transactions page. */
+  .txn-row.pending { border: 1px dashed rgba(167,139,250,0.45); background: linear-gradient(rgba(167,139,250,0.08), rgba(167,139,250,0.08)), var(--card); }
+  .txn-meta .pending-tag { color: var(--pending, #a78bfa); }
+
+  /* -- "Review Pending" mode button (issue #49 feedback follow-up) --
+     Same rationale as the Transactions page: this is a mode switch
+     (browse all vs. review pending), not a show/hide filter like Upcoming,
+     so it gets its own button-shaped affordance instead of reusing
+     .switch, and is hidden entirely when there's nothing to review. */
+  .pending-review-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    background: var(--card);
+    border: 1px dashed rgba(167,139,250,0.5);
+    border-radius: 10px;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    font-size: 12.5px;
+    font-family: inherit;
+    color: var(--pending, #a78bfa);
+    cursor: pointer;
+    text-align: left;
+  }
+  .pending-review-btn:hover { background: rgba(167,139,250,0.08); }
+  .pending-review-btn .prb-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--pending, #a78bfa); flex-shrink: 0; }
+  .pending-review-btn.active {
+    background: rgba(167,139,250,0.16);
+    border-style: solid;
+    color: var(--text);
+    font-weight: 600;
+  }
+  .txn-confirm-btn {
+    background: rgba(167,139,250,0.15);
+    color: var(--pending, #a78bfa);
+    border: 1px solid rgba(167,139,250,0.5);
+    border-radius: 6px;
+    padding: 3px 9px;
+    font-size: 0.7rem;
+    font-family: inherit;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .txn-confirm-btn:hover { background: rgba(167,139,250,0.25); }
+  .txn-confirm-btn:disabled { opacity: 0.6; cursor: default; }
+
+  .detail-sticky {
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    background: var(--bg);
+  }
+
+  .txn-pull-wrap { position: relative; overscroll-behavior-y: contain; touch-action: pan-y; }
+  .pull-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    height: 0;
+    overflow: hidden;
+    color: var(--muted);
+    font-size: 0.75rem;
+  }
+  .pull-spinner {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    border: 2px solid #374151;
+    border-top-color: var(--accent);
+    flex-shrink: 0;
+    animation: pull-spin 0.7s linear infinite;
+  }
+  @keyframes pull-spin { to { transform: rotate(360deg); } }
+
+  .rc-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.55);
+    display: none;
+    align-items: flex-end;
+    justify-content: center;
+    z-index: 10;
+  }
+  .rc-overlay.open { display: flex; }
+  .rc-sheet {
+    width: 100%;
+    max-width: 420px;
+    max-height: 88vh;
+    overflow-y: auto;
+    background: var(--card);
+    border-radius: 16px 16px 0 0;
+    padding: 18px 16px 24px;
+  }
+  .rc-sheet-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 14px;
+  }
+  .rc-sheet-title { font-size: 15px; font-weight: 600; }
+  .rc-sheet-close { color: var(--muted); font-size: 20px; cursor: pointer; }
+  .rc-field-label { font-size: 11px; color: var(--muted); font-weight: 600; margin: 12px 0 4px; display: block; }
+  .rc-field {
+    width: 100%;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid #374151;
+    border-radius: 8px;
+    padding: 9px 10px;
+    font-size: 14px;
+  }
+  .rc-hint { font-size: 10.5px; color: var(--muted); margin: 4px 0 0; line-height: 1.4; }
+  .rc-result-box {
+    margin-top: 14px;
+    padding: 12px;
+    border-radius: 10px;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid #2a2e37;
+  }
+  .rc-result-box.match { background: rgba(34,197,94,0.08); border-color: rgba(34,197,94,0.3); }
+  .rc-result-box.mismatch { background: rgba(226,75,74,0.08); border-color: rgba(226,75,74,0.3); }
+  .rc-row { display: flex; justify-content: space-between; font-size: 13px; margin: 3px 0; }
+  .rc-row b { font-weight: 600; }
+  .rc-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+  .rc-actions-row { display: flex; gap: 8px; }
+  .rc-actions-row .btn { flex: 1; }
+  .rc-step { margin-bottom: 4px; }
+  .rc-toggle-row { display: flex; gap: 8px; margin: 4px 0 2px; }
+  .rc-toggle-btn {
+    flex: 1;
+    padding: 8px;
+    border-radius: 8px;
+    border: 1px solid #374151;
+    background: var(--bg);
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .rc-toggle-btn.active { border-color: var(--accent); color: var(--text); }
+  .rc-log-entry { font-size: 12.5px; }
+
+  .rc-clear-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 8px 0;
+    border-bottom: 1px solid #2a2e37;
+    cursor: pointer;
+  }
+  .rc-clear-item:last-child { border-bottom: none; }
+  .rc-clear-item input[type="checkbox"] { margin-top: 3px; flex-shrink: 0; width: 16px; height: 16px; }
+  .rc-clear-item-main { flex: 1; min-width: 0; }
+  .rc-clear-item-payee { font-size: 13px; }
+  .rc-clear-item-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .rc-clear-item-amount { font-size: 13px; white-space: nowrap; }
+  .rc-clear-item-amount.income { color: var(--accent); }
+  .rc-clear-empty { font-size: 12.5px; color: var(--muted); padding: 4px 0 8px; }
+  .rc-clear-list { max-height: 260px; overflow-y: auto; }
+
+  #pay-amount, #pay-amount-currency { color: var(--negative); }
+
+  /* Hardware-keyboard highlight (Up/Down arrow nav on the accounts list and
+     the account-detail transaction list -- see issue #63). Outline instead
+     of a border/box-shadow-on-layout so it can't shift row height, and
+     outline-offset keeps it from clipping against the row's own
+     border-radius corners. Applies equally to .acct-row and .txn-row. */
+  .acct-row.kbd-focus, .txn-row.kbd-focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+
+  /* Keyboard-triggered clear/unclear (C) and delete (Backspace) busy state
+     -- see issue #63 follow-up. There's no button to swap a spinner into
+     (unlike the swipe actions), so this dims the whole row and swaps its
+     meta line for a spinner + "Clearing…"/"Deleting…" label instead, reusing
+     the .swx-spinner asset from shared/swipe-actions.css. Success needs no
+     cleanup here -- the row is replaced wholesale by the normal list
+     re-render -- only the error path reverts it explicitly. */
+  .txn-row.kbd-row-busy {
+    opacity: 0.6;
+    pointer-events: none;
+  }
+  .txn-row .kbd-busy-meta {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+
+  /* -- account-detail wide-viewport data table (issue #86, sibling of
+     transactions' issue #65/#77/#79/#49) -- same conventions as the
+     Transactions page's own wide-viewport table, minus an Account column
+     (every row here already belongs to the one account this page is
+     showing). Below 1024px this is all display:none and the existing
+     mobile card list (#detail-txn-pull) is what renders -- same
+     underlying per-account transaction data, just a different view. No
+     device/viewport JS check needed -- pure CSS, same breakpoint
+     shared/responsive.css itself bumps --page-max-width at. */
+  .dtx-filters, .dtx-table-wrap { display: none; }
+
+  @media (min-width: 1024px) {
+    #detail-txn-pull { display: none; }
+    .dtx-filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .dtx-filters input,
+    .dtx-filters select {
+      background: var(--card);
+      color: var(--text);
+      border: 1px solid #2a2e37;
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 0.85rem;
+      font-family: inherit;
+    }
+    .dtx-filters input[type="search"] { flex: 1 1 200px; }
+    .dtx-filters input[type="date"] { flex: 0 1 150px; }
+    .dtx-filter-clear {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid #2a2e37;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 0.85rem;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    .dtx-filter-clear:hover { color: var(--text); border-color: #3a3f4b; }
+
+    .dtx-table-wrap { display: block; overflow-x: auto; }
+    /* table-layout: fixed + the <colgroup> widths below are the same
+       one-line-by-default convention as .txt-table: Date/Amount get a
+       fixed px width, Payee gets a fixed default width, and Notes (no
+       width set) soaks up whatever's left. */
+    .dtx-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 0.85rem; }
+    .dtx-table th {
+      text-align: left;
+      color: var(--muted);
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 8px 10px;
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+      position: relative;
+    }
+    .dtx-table th:hover { color: var(--text); }
+    .dtx-table th .dtx-sort-arrow { margin-left: 3px; opacity: 0.6; }
+    .dtx-table th.dtx-sorted .dtx-sort-arrow { opacity: 1; }
+    .dtx-table td { padding: 8px 10px; border-top: 1px solid #22262f; white-space: nowrap; }
+    .dtx-table td.dtx-amount { text-align: right; }
+    .dtx-table td.dtx-truncate,
+    .dtx-table th.dtx-truncate { overflow: hidden; text-overflow: ellipsis; }
+    .dtx-table td.dtx-status-col,
+    .dtx-table th.dtx-status-col { text-align: center; padding-left: 4px; padding-right: 4px; }
+    .dtx-table tbody tr { cursor: default; }
+    .dtx-table tbody tr:hover { background: var(--card); }
+    .dtx-table .dtx-amount.income { color: var(--accent); }
+    .dtx-table .dtx-upcoming-row td { color: var(--upcoming, #60a5fa); }
+    /* Pending row tint (issue #49) -- listed after upcoming so it wins on a
+       row that's both, same convention as the mobile card CSS above. */
+    .dtx-table .dtx-pending-row td { background: rgba(167,139,250,0.08); }
+    .dtx-table .dtx-pending-row:hover td { background: rgba(167,139,250,0.14); }
+    .dtx-table td.dtx-pending-col { text-align: center; padding-left: 4px; padding-right: 4px; }
+    /* Reconciled rows: same dimmed treatment as .txn-row.reconciled on the
+       mobile card list -- still editable (only a transfer/payment row
+       blocks inline editing, see .dtx-transfer-row below). */
+    .dtx-table .dtx-reconciled-row td { opacity: 0.55; }
+    /* Transfer (card payment) legs: inline cell editing is disabled --
+       editing one leg's fields here would silently desync it from its
+       linked pair. The pencil button opens the undo-payment menu instead
+       of the full edit sheet for these rows -- see the script section. */
+    .dtx-table .dtx-transfer-row td.dtx-editable { cursor: default; }
+    .dtx-table .dtx-transfer-row td.dtx-editable:hover { background: none; }
+    .dtx-empty-row td { color: var(--muted); text-align: center; padding: 20px 10px; white-space: normal; }
+
+    /* -- inline cell editing (issue #77-style, single-cell) -- click a cell
+       to edit it in place; the trailing pencil button (.dtx-open-btn) opens
+       the full Add/Edit sheet for anything not covered here, or the
+       undo-payment menu for a transfer row.
+       -- keyboard whole-row editing (issue #86 keyboard follow-up, mirrors
+       the Transactions page's own txtKbd* system) -- Down/Up highlights a
+       row, Enter opens every editable field at once, Tab/Shift-Tab cycles
+       between them, Enter saves the whole row and Escape discards it. See
+       the dtxKbd* functions in the script section below. */
+    .dtx-table td.dtx-editable { cursor: text; }
+    .dtx-table td.dtx-editable:hover { background: rgba(255, 255, 255, 0.06); }
+    .dtx-table td.dtx-status-col { cursor: pointer; }
+    .dtx-table td.dtx-editing { padding: 4px 6px; }
+    .dtx-table td.dtx-cell-saving { opacity: 0.5; pointer-events: none; }
+    .dtx-table td.dtx-open-col { text-align: center; padding-left: 2px; padding-right: 2px; }
+    .dtx-table tbody tr.dtx-kbd-highlight { outline: 2px solid var(--accent); outline-offset: -2px; }
+    .dtx-table tbody tr.dtx-kbd-row-saving { opacity: 0.6; }
+    .dtx-cell-checkbox { width: 16px; height: 16px; cursor: pointer; }
+    .dtx-open-btn {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-size: 0.85rem;
+      cursor: pointer;
+      padding: 2px 4px;
+      line-height: 1;
+    }
+    .dtx-open-btn:hover { color: var(--text); }
+    .dtx-open-btn:disabled { opacity: 0.3; cursor: default; }
+    .dtx-table .txn-confirm-btn { padding: 2px 7px; font-size: 0.68rem; }
+    .dtx-cell-input {
+      width: 100%;
+      box-sizing: border-box;
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--accent);
+      border-radius: 4px;
+      padding: 4px 6px;
+      font: inherit;
+      color-scheme: dark;
+    }
+
+    /* -- column show/hide + draggable column widths (issue #79-style) --
+       Visibility and width both apply at the <colgroup> level. Hiding uses
+       `visibility: collapse` on the <col>, not `display: none` -- see the
+       Transactions page's own CSS comment (public/transactions/index.html)
+       for why `display: none` on a <col> is a no-op in current browsers. */
+    .dtx-col-resizer {
+      position: absolute;
+      top: 0;
+      right: -4px;
+      width: 8px;
+      height: 100%;
+      cursor: col-resize;
+      z-index: 1;
+      touch-action: none;
+    }
+    .dtx-col-resizer:hover { background: rgba(255, 255, 255, 0.12); }
+    body.dtx-resizing { cursor: col-resize; user-select: none; }
+    body.dtx-resizing .dtx-col-resizer { background: rgba(255, 255, 255, 0.12); }
+
+    .dtx-col-picker { position: relative; }
+    .dtx-columns-btn {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid #2a2e37;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 0.85rem;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    .dtx-columns-btn:hover { color: var(--text); border-color: #3a3f4b; }
+    .dtx-columns-panel {
+      display: none;
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      z-index: 5;
+      background: var(--card);
+      border: 1px solid #2a2e37;
+      border-radius: 10px;
+      padding: 10px 12px;
+      min-width: 160px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+    .dtx-columns-panel.open { display: block; }
+    .dtx-columns-panel label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.85rem;
+      padding: 4px 0;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .dtx-columns-panel label input { cursor: pointer; }
+    .dtx-columns-reset {
+      display: block;
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      border: none;
+      border-top: 1px solid #2a2e37;
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-family: inherit;
+      padding: 8px 0 2px;
+      margin-top: 4px;
+      cursor: pointer;
+    }
+    .dtx-columns-reset:hover { color: var(--text); }
+
+    .dtx-sortby-group { display: flex; align-items: center; gap: 0; }
+    .dtx-sortby-group select {
+      border-top-right-radius: 0;
+      border-bottom-right-radius: 0;
+    }
+    .dtx-sortby-dir {
+      background: var(--card);
+      color: var(--muted);
+      border: 1px solid #2a2e37;
+      border-left: none;
+      border-top-right-radius: 8px;
+      border-bottom-right-radius: 8px;
+      padding: 8px 10px;
+      font-size: 0.85rem;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    .dtx-sortby-dir:hover { color: var(--text); }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap" id="screen-accounts">
+  <h1>Accounts</h1>
+  <a class="last-recon-link" href="/payees" style="margin: -8px 0 16px;">Manage payee locations →</a>
+  <div id="accounts-loading" class="loading">Loading accounts…</div>
+  <div id="accounts-error" class="error" style="display:none;"></div>
+  <div id="accounts-content" style="display:none;">
+    <div class="section-label">Cash &amp; Bank</div>
+    <div id="acct-list-cash"></div>
+    <div class="section-label">Credit Cards</div>
+    <div id="acct-list-credit"></div>
+  </div>
+</div>
+
+<div class="wrap" id="screen-detail" style="display:none;">
+  <div class="detail-sticky">
+    <a class="back-link" onclick="goto('accounts')">← Accounts</a>
+    <h1 id="detail-title">Account</h1>
+
+    <div id="detail-loading" class="loading" style="display:none;">Loading…</div>
+    <div id="detail-error" class="error" style="display:none;"></div>
+
+    <div id="detail-content" style="display:none;">
+      <div class="acct-header">
+        <div class="acct-header-top">
+          <div>
+            <div class="acct-header-name" id="detail-name"></div>
+            <div class="acct-header-type" id="detail-type"></div>
+          </div>
+        </div>
+        <div class="acct-header-balance" id="detail-balance"></div>
+        <div class="acct-header-meta" id="detail-meta"></div>
+        <div class="acct-header-actions">
+          <button class="btn btn-primary" onclick="openReconcile()">Reconcile</button>
+          <button class="btn btn-secondary" id="detail-pay-btn" style="display:none;" onclick="openPayCard()">Add Payment</button>
+        </div>
+        <div class="last-recon-link" onclick="openUndo()">View / undo last reconciliation</div>
+      </div>
+
+      <div class="upcoming-toggle" id="detail-upcoming-toggle">
+        <span class="label"><span class="dot"></span><span id="detail-upcoming-label">Upcoming</span></span>
+        <div class="switch" id="detail-upcoming-switch"></div>
+      </div>
+
+      <!-- Pending transactions (issue #49): auto-imported by EmailImport.gs
+           (issue #38) and not yet reviewed. Shaped as a mode switch (browse
+           all vs. review pending), not a show/hide filter like Upcoming --
+           see the .pending-review-btn CSS comment above. Hidden by default;
+           renderDetailTxnList() shows it once there's something to review. -->
+      <button type="button" class="pending-review-btn" id="detail-pending-toggle" style="display:none;">
+        <span class="prb-dot"></span><span id="detail-pending-label">Review Pending</span>
+      </button>
+    </div>
+  </div>
+
+  <div class="txn-pull-wrap" id="detail-txn-pull" style="display:none;">
+    <div class="pull-indicator" id="pull-indicator">
+      <span class="pull-spinner"></span><span id="pull-label">Pull to refresh</span>
+    </div>
+    <div id="detail-txn-list"></div>
+  </div>
+
+  <!-- Wide-viewport data table (issue #86) -- same view/filters convention
+       as public/transactions/index.html's .txt-table, minus an Account
+       column/filter (redundant here -- every row belongs to this one
+       account). Shares the mobile list's Upcoming/Pending-review state and
+       `visible` row array above; only filters/sorts/columns on top of it. -->
+  <div class="dtx-filters" id="dtx-filters">
+    <input type="search" id="dtx-f-search" placeholder="Search payee or notes" />
+    <select id="dtx-f-type">
+      <option value="">All types</option>
+      <option value="Expense">Expense</option>
+      <option value="Income">Income</option>
+    </select>
+    <select id="dtx-f-cleared">
+      <option value="">Cleared &amp; uncleared</option>
+      <option value="Cleared">Cleared</option>
+      <option value="Uncleared">Uncleared</option>
+    </select>
+    <input type="date" id="dtx-f-from" title="From date" />
+    <input type="date" id="dtx-f-to" title="To date" />
+    <button type="button" class="dtx-filter-clear" id="dtx-f-clear">Clear filters</button>
+
+    <div class="dtx-sortby-group">
+      <select id="dtx-f-sortby" title="Sort by"></select>
+      <button type="button" class="dtx-sortby-dir" id="dtx-f-sortdir" title="Toggle sort direction"></button>
+    </div>
+
+    <div class="dtx-col-picker">
+      <button type="button" class="dtx-columns-btn" id="dtx-columns-btn">Columns ▾</button>
+      <div class="dtx-columns-panel" id="dtx-columns-panel">
+        <div id="dtx-columns-checkboxes"></div>
+        <button type="button" class="dtx-columns-reset" id="dtx-columns-reset">Reset to defaults</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="dtx-table-wrap">
+    <table class="dtx-table" id="dtx-table">
+      <colgroup id="dtx-colgroup">
+        <col data-col="date" style="width: 90px" />    <!-- Date -->
+        <col data-col="payee" style="width: 300px" />  <!-- Payee -->
+        <col data-col="amount" style="width: 110px" /> <!-- Amount -->
+        <col data-col="cleared" style="width: 34px" /> <!-- Status (C) -->
+        <col data-col="pending" style="width: 78px" /> <!-- Pending / Confirm (issue #49) -- not part of the show/hide+resize picker, see DTX_COLUMNS comment below -->
+        <col data-col="notes" />                       <!-- Notes: takes the rest -->
+        <col data-col="open" style="width: 28px" />    <!-- Open full sheet / undo-payment menu -->
+      </colgroup>
+      <thead>
+        <tr>
+          <th data-sort="date" data-col="date">Date <span class="dtx-sort-arrow"></span></th>
+          <th data-sort="payee" data-col="payee" class="dtx-truncate">Payee <span class="dtx-sort-arrow"></span></th>
+          <th data-sort="amount" data-col="amount">Amount <span class="dtx-sort-arrow"></span></th>
+          <th data-sort="cleared" data-col="cleared" class="dtx-status-col" title="Cleared">C <span class="dtx-sort-arrow"></span></th>
+          <th data-col="pending" class="dtx-pending-col" title="Pending">Pending</th>
+          <th data-col="notes" class="dtx-truncate">Notes</th>
+          <th data-col="open"></th>
+        </tr>
+      </thead>
+      <tbody id="dtx-table-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<div id="txf-root"></div>
+<div id="bnv-root"></div>
+
+<div class="rc-overlay" id="rc-overlay">
+  <div class="rc-sheet">
+    <div class="rc-sheet-header">
+      <div class="rc-sheet-title">Reconcile <span id="rc-account-name"></span></div>
+      <div class="rc-sheet-close" onclick="closeReconcile()">✕</div>
+    </div>
+
+    <div class="rc-step">
+      <label class="rc-field-label">As-of / statement date</label>
+      <input type="date" class="rc-field" id="rc-asof-date">
+      <label class="rc-field-label" id="rc-amount-label">Statement / actual amount</label>
+      <input type="text" inputmode="numeric" class="rc-field" id="rc-statement-amount" placeholder="e.g. 5000000">
+      <button class="btn btn-primary btn-block" style="margin-top:12px;" onclick="rcCalculate()">Calculate system total</button>
+    </div>
+
+    <div id="rc-result-box" class="rc-result-box" style="display:none;">
+      <div class="rc-row"><b>Book balance (through <span id="rc-result-date"></span>)</b><b id="rc-result-sum"></b></div>
+      <p class="rc-hint">Every Cleared transaction on this account through this date, reconciled or not — compare this against what your bank/card statement shows.</p>
+      <div class="rc-row"><span>New since <span id="rc-since-label"></span></span><span id="rc-matched-count"></span></div>
+    </div>
+
+    <div id="rc-compare-box" class="rc-result-box" style="display:none;"></div>
+    <div id="rc-actions" class="rc-actions" style="display:none;"></div>
+
+    <div id="rc-add-form" style="display:none; margin-top:12px; padding:12px; border-radius:10px; background:rgba(255,255,255,0.03); border:1px solid #2a2e37;">
+      <label class="rc-field-label">Name</label>
+      <input type="text" class="rc-field" id="rc-add-name" placeholder="e.g. Grab to office">
+      <label class="rc-field-label">Type</label>
+      <div class="rc-toggle-row">
+        <div class="rc-toggle-btn active" id="rc-add-type-expense" onclick="rcSetAddType('Expense')">Expense</div>
+        <div class="rc-toggle-btn" id="rc-add-type-income" onclick="rcSetAddType('Income')">Income</div>
+      </div>
+      <label class="rc-field-label">Date</label>
+      <input type="date" class="rc-field" id="rc-add-date">
+      <label class="rc-field-label">Billing month</label>
+      <input type="month" class="rc-field" id="rc-add-month">
+      <label class="rc-field-label">Amount</label>
+      <input type="text" inputmode="numeric" class="rc-field" id="rc-add-amount" placeholder="e.g. 150000">
+      <p class="rc-hint">Always logged as Cleared for this account. Picked up by the next recalculation.</p>
+      <div class="rc-actions-row" style="margin-top:12px;">
+        <button class="btn btn-ghost" onclick="rcHideAddForm()">Cancel</button>
+        <button class="btn btn-primary" onclick="rcSaveTransaction()">Save transaction</button>
+      </div>
+    </div>
+
+    <div id="rc-clear-form" style="display:none; margin-top:12px; padding:12px; border-radius:10px; background:rgba(255,255,255,0.03); border:1px solid #2a2e37;">
+      <p class="rc-hint" style="margin-top:0;">Uncleared transactions already logged on this account, dated on or before the as-of date. Pick the ones your statement shows and mark them Cleared instead of adding something new.</p>
+      <div class="rc-clear-list" id="rc-clear-list"></div>
+      <div class="rc-row" style="margin-top:10px;"><span>Selected total</span><b id="rc-clear-selected-total">0</b></div>
+      <div class="rc-actions-row" style="margin-top:12px;">
+        <button class="btn btn-ghost" onclick="rcHideClearForm()">Cancel</button>
+        <button class="btn btn-primary" id="rc-clear-save-btn" onclick="rcSaveClearSelection()" disabled>Clear selected &amp; recalculate</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="rc-overlay" id="pay-overlay">
+  <div class="rc-sheet">
+    <div class="rc-sheet-header">
+      <div class="rc-sheet-title">Add Payment — <span id="pay-account-name"></span></div>
+      <div class="rc-sheet-close" onclick="closePayCard()">✕</div>
+    </div>
+
+    <label class="txf-amount-block" for="pay-amount">
+      <div class="txf-amount-label">Amount</div>
+      <div class="txf-amount-row">
+        <span class="txf-amount-currency" id="pay-amount-currency">Rp</span>
+        <input id="pay-amount" class="txf-amount-input" type="text" inputmode="numeric" placeholder="0" />
+      </div>
+      <div class="txf-amount-rule"></div>
+    </label>
+    <p class="rc-hint" id="pay-amount-hint" style="text-align:center; margin-top:-10px;">&nbsp;</p>
+
+    <label class="rc-field-label">Paying from (cash account)</label>
+    <select class="rc-field" id="pay-cash-account"></select>
+
+    <div class="txf-row-2">
+      <div>
+        <label class="rc-field-label">Payment date</label>
+        <input type="date" class="rc-field" id="pay-date">
+      </div>
+      <div>
+        <label class="rc-field-label">Billing month</label>
+        <input type="month" class="rc-field" id="pay-month">
+      </div>
+    </div>
+    <p class="rc-hint">Billing month is pre-filled to the usual guess for the payment date, minus one month — a payment made now is normally paying down the prior closed statement, not the one still accruing. Still fully editable.</p>
+
+    <p class="rc-hint">Logs two linked transactions — an expense on the cash account above and an income on <span id="pay-account-name-2"></span> — both flagged as a transfer, same as a desktop-logged payment. Excluded from spend/income totals. If this card has a Billed Diary line for this billing month, it's marked Paid automatically once the payment covers it.</p>
+
+    <div class="rc-actions-row" style="margin-top:14px;">
+      <button class="btn btn-ghost" onclick="closePayCard()">Cancel</button>
+      <button class="btn btn-primary" onclick="savePayCard()">Save payment</button>
+    </div>
+  </div>
+</div>
+
+<div class="rc-overlay" id="modal-overlay" style="z-index: 30;">
+  <div class="rc-sheet" style="border-radius:16px; margin: 0 16px;">
+    <div class="rc-sheet-title" id="modal-title" style="margin-bottom:8px;"></div>
+    <p class="sub" id="modal-message" style="white-space:pre-line; line-height:1.5;"></p>
+    <div class="rc-actions-row" style="margin-top:16px;">
+      <button class="btn btn-ghost" id="modal-cancel-btn" style="display:none;">Cancel</button>
+      <button class="btn btn-primary" id="modal-ok-btn">OK</button>
+    </div>
+  </div>
+</div>
+
+<div class="rc-overlay" id="undo-overlay">
+  <div class="rc-sheet">
+    <div class="rc-sheet-header">
+      <div class="rc-sheet-title">Last reconciliation — <span id="undo-account-name"></span></div>
+      <div class="rc-sheet-close" onclick="closeUndo()">✕</div>
+    </div>
+    <div id="undo-body"></div>
+  </div>
+</div>
+
+<script src="/shared/transaction-form.js"></script>
+<script src="/shared/swipe-actions.js"></script>
+<script src="/shared/bottom-nav.js"></script>
+<script src="/shared/keyboard-nav.js"></script>
+<script>
+  async function apiGet(url) {
+    const res = await fetch(url);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    return data;
+  }
+  async function apiPost(url, body) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    return data;
+  }
+
+  function formatIDR(value) {
+    return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(value);
+  }
+  function todayISO() {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  function showAlert(message, title) {
+    document.getElementById('modal-title').textContent = title || 'Notice';
+    document.getElementById('modal-message').textContent = message;
+    document.getElementById('modal-cancel-btn').style.display = 'none';
+    const okBtn = document.getElementById('modal-ok-btn');
+    okBtn.textContent = 'OK';
+    okBtn.onclick = () => document.getElementById('modal-overlay').classList.remove('open');
+    document.getElementById('modal-overlay').classList.add('open');
+  }
+  function showConfirm(message, onConfirm, opts) {
+    opts = opts || {};
+    document.getElementById('modal-title').textContent = opts.title || 'Are you sure?';
+    document.getElementById('modal-message').textContent = message;
+    const cancelBtn = document.getElementById('modal-cancel-btn');
+    const okBtn = document.getElementById('modal-ok-btn');
+    cancelBtn.style.display = 'inline-block';
+    cancelBtn.textContent = opts.cancelLabel || 'Cancel';
+    okBtn.textContent = opts.confirmLabel || 'Confirm';
+    okBtn.className = opts.danger ? 'btn btn-danger' : 'btn btn-primary';
+    const close = () => document.getElementById('modal-overlay').classList.remove('open');
+    cancelBtn.onclick = close;
+    okBtn.onclick = () => { close(); onConfirm(); };
+    document.getElementById('modal-overlay').classList.add('open');
+  }
+
+  function goto(id) {
+    ['accounts', 'detail'].forEach((s) => {
+      document.getElementById('screen-' + s).style.display = 'none';
+    });
+    document.getElementById('screen-' + id).style.display = 'block';
+    window.scrollTo(0, 0);
+  }
+
+  function accountStats(accountName, transactions) {
+    const todayStr = TransactionForm.todayISO();
+    const rows = transactions.filter((t) => t.sof === accountName && (!t.date || t.date <= todayStr));
+    const totalOf = (t) => (t.type === 'Income' ? -t.amount : t.amount);
+    const clearedTotal = rows.filter((t) => t.cleared === 'Cleared').reduce((s, t) => s + totalOf(t), 0);
+    const unclearedRows = rows.filter((t) => t.cleared !== 'Cleared');
+    const unclearedTotal = unclearedRows.reduce((s, t) => s + totalOf(t), 0);
+    return {
+      clearedTotal,
+      unclearedTotal,
+      runningTotal: clearedTotal + unclearedTotal,
+      unclearedCount: unclearedRows.length,
+    };
+  }
+
+  async function loadAccountsList() {
+    const loadingEl = document.getElementById('accounts-loading');
+    const errorEl = document.getElementById('accounts-error');
+    const contentEl = document.getElementById('accounts-content');
+    loadingEl.style.display = 'block';
+    errorEl.style.display = 'none';
+    contentEl.style.display = 'none';
+
+    try {
+      const [accountsRes, transactionsRes] = await Promise.all([
+        apiGet('/api/accounts-list'),
+        apiGet('/api/transactions-list'),
+      ]);
+      renderAccountsList(accountsRes.accounts, transactionsRes.transactions);
+      loadingEl.style.display = 'none';
+      contentEl.style.display = 'block';
+    } catch (err) {
+      loadingEl.style.display = 'none';
+      errorEl.textContent = 'Couldn\'t load accounts: ' + err.message;
+      errorEl.style.display = 'block';
+    }
+  }
+
+  // Accounts not reconciled within this many days get their "Last
+  // reconciled" text highlighted instead of the default grey -- everything
+  // more recent stays de-emphasized so only stale accounts stand out.
+  const RECONCILED_STALE_DAYS = 5;
+
+  function lastReconciledLabel(iso) {
+    if (!iso) return { text: 'Never reconciled', stale: true };
+    const then = new Date(iso);
+    if (isNaN(then.getTime())) return { text: 'Never reconciled', stale: true };
+    const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    const diffDays = Math.round((startOfDay(new Date()) - startOfDay(then)) / (24 * 60 * 60 * 1000));
+    const rel = diffDays <= 0 ? 'Today' : diffDays === 1 ? 'Yesterday' : `${diffDays} days ago`;
+    return { text: `Last reconciled ${rel}`, stale: diffDays > RECONCILED_STALE_DAYS };
+  }
+
+  function renderAccountsList(accounts, transactions) {
+    acctHighlightIndex = -1;
+    const cashEl = document.getElementById('acct-list-cash');
+    const creditEl = document.getElementById('acct-list-credit');
+    cashEl.innerHTML = '';
+    creditEl.innerHTML = '';
+
+    accounts.forEach((a) => {
+      const stats = accountStats(a.name, transactions);
+      const isCredit = (a.type || '').toLowerCase().includes('credit');
+      const isBad = stats.runningTotal > 0;
+      const balanceClass = isBad ? 'owed' : 'positive';
+      const balanceSuffix = isCredit && !isBad ? ' CR' : '';
+      const reconciled = lastReconciledLabel(a.lastReconciledAt);
+
+      const row = document.createElement('div');
+      row.className = 'acct-row';
+      row.onclick = () => openAccountDetail(a.name);
+      row.innerHTML = `
+        <div>
+          <div class="acct-name">${a.name}</div>
+          <div class="acct-type">${a.type || ''}</div>
+        </div>
+        <div class="acct-balance-block">
+          <div class="acct-balance ${balanceClass}">${formatIDR(Math.abs(stats.runningTotal))}${balanceSuffix}</div>
+          <div class="acct-uncleared${reconciled.stale ? ' stale' : ''}">${reconciled.text}</div>
+        </div>
+      `;
+      (isCredit ? creditEl : cashEl).appendChild(row);
+    });
+  }
+
+  let currentAccount = null;
+  let currentAccountMeta = null;
+  let currentAccountTxns = [];
+  let showUpcomingDetail = false;
+  let showPendingOnlyDetail = false; // issue #49
+
+  // Hardware-keyboard row highlight indexes (issue #63) -- -1 means nothing
+  // highlighted yet. Reset to -1 wherever the underlying row list is
+  // (re)rendered, since the old index may no longer point at the same row
+  // (or may now be out of bounds).
+  let acctHighlightIndex = -1;
+  let txnHighlightIndex = -1;
+  // Guards the C (clear/unclear) and Backspace (delete) keyboard shortcuts
+  // against firing again while a previous one is still in flight -- the
+  // confirm dialog for Backspace already blocks re-triggering via the
+  // shared `.open` overlay check below, but the async gap AFTER it closes
+  // (and C has no dialog at all) isn't covered by that.
+  let kbdActionBusy = false;
+
+  // -- account-detail wide-viewport data table (issue #86) -- filter/sort
+  // state and the last upcoming/pending-filtered row list handed to it by
+  // renderDetailTxnList(), mirroring the Transactions page's txt* state
+  // (public/transactions/index.html) but scoped to `dtx` and with no
+  // Account column/filter -- every row already belongs to this one account.
+  const dtxFilterEls = {
+    search: document.getElementById('dtx-f-search'),
+    type: document.getElementById('dtx-f-type'),
+    cleared: document.getElementById('dtx-f-cleared'),
+    from: document.getElementById('dtx-f-from'),
+    to: document.getElementById('dtx-f-to'),
+  };
+  const dtxTableBodyEl = document.getElementById('dtx-table-body');
+  let dtxSort = { key: 'date', dir: 'desc' };
+  let dtxLastVisible = [];
+
+  // Column show/hide + draggable widths (issue #79-style), same rationale
+  // as the Transactions page's own COLUMNS: Cleared stays fixed-width
+  // (icon-sized status column), Notes is hideable but not resizable since
+  // it's the one column with no default width (soaks up whatever's left).
+  const DTX_COLUMNS = [
+    { key: 'date', label: 'Date', defaultWidth: 90, minWidth: 70, resizable: true },
+    { key: 'payee', label: 'Payee', defaultWidth: 300, minWidth: 100, resizable: true },
+    { key: 'amount', label: 'Amount', defaultWidth: 110, minWidth: 70, resizable: true },
+    { key: 'cleared', label: 'Cleared', defaultWidth: 34, minWidth: 34, resizable: false },
+    { key: 'notes', label: 'Notes', defaultWidth: null, minWidth: 80, resizable: false },
+  ];
+  const DTX_COLUMN_LAYOUT_KEY = 'mnab-dtx-column-layout-v1'; // separate key from the Transactions page's own layout
+
+  function dtxDefaultColumnLayout() {
+    const visible = {};
+    const widths = {};
+    DTX_COLUMNS.forEach((c) => { visible[c.key] = true; widths[c.key] = c.defaultWidth; });
+    return { visible, widths };
+  }
+
+  function dtxLoadColumnLayout() {
+    const layout = dtxDefaultColumnLayout();
+    try {
+      const raw = localStorage.getItem(DTX_COLUMN_LAYOUT_KEY);
+      if (raw) {
+        const saved = JSON.parse(raw);
+        DTX_COLUMNS.forEach((c) => {
+          if (saved.visible && typeof saved.visible[c.key] === 'boolean') {
+            layout.visible[c.key] = saved.visible[c.key];
+          }
+          if (c.resizable && saved.widths && Number.isFinite(saved.widths[c.key])) {
+            layout.widths[c.key] = Math.max(c.minWidth, saved.widths[c.key]);
+          }
+        });
+      }
+    } catch (err) {
+      // Corrupt/unavailable localStorage -- fall back to defaults.
+    }
+    if (!DTX_COLUMNS.some((c) => layout.visible[c.key])) {
+      DTX_COLUMNS.forEach((c) => { layout.visible[c.key] = true; });
+    }
+    return layout;
+  }
+
+  let dtxColumnLayout = dtxLoadColumnLayout();
+
+  function dtxSaveColumnLayout() {
+    try {
+      localStorage.setItem(DTX_COLUMN_LAYOUT_KEY, JSON.stringify(dtxColumnLayout));
+    } catch (err) {
+      // Storage full/unavailable -- layout just won't persist this time.
+    }
+  }
+
+  function dtxApplyColumnLayout() {
+    DTX_COLUMNS.forEach((c) => {
+      const col = document.querySelector(`#dtx-colgroup col[data-col="${c.key}"]`);
+      if (!col) return;
+      col.style.visibility = dtxColumnLayout.visible[c.key] ? '' : 'collapse';
+      if (c.resizable) {
+        const w = dtxColumnLayout.widths[c.key] || c.defaultWidth;
+        col.style.width = w + 'px';
+      }
+    });
+  }
+
+  function dtxVisibleColumnCount() {
+    // +2 for the always-visible Pending and trailing "open" columns, same
+    // convention as the Transactions page.
+    return DTX_COLUMNS.filter((c) => dtxColumnLayout.visible[c.key]).length + 2;
+  }
+
+  const DTX_SORT_COLUMNS = [
+    { key: 'date', label: 'Date' },
+    { key: 'payee', label: 'Payee' },
+    { key: 'amount', label: 'Amount' },
+    { key: 'cleared', label: 'Cleared' },
+  ];
+
+  function dtxRefreshColumnCheckboxes() {
+    const container = document.getElementById('dtx-columns-checkboxes');
+    container.innerHTML = DTX_COLUMNS.map((c) => `
+      <label>
+        <input type="checkbox" data-col-toggle="${c.key}" ${dtxColumnLayout.visible[c.key] ? 'checked' : ''} />
+        ${c.label}
+      </label>
+    `).join('');
+    container.querySelectorAll('input[data-col-toggle]').forEach((cb) => {
+      cb.addEventListener('change', () => {
+        const key = cb.dataset.colToggle;
+        const nextVisible = { ...dtxColumnLayout.visible, [key]: cb.checked };
+        if (!DTX_COLUMNS.some((c) => nextVisible[c.key])) {
+          cb.checked = true;
+          return;
+        }
+        dtxColumnLayout.visible[key] = cb.checked;
+        dtxApplyColumnLayout();
+        dtxSaveColumnLayout();
+        renderDetailTable(dtxLastVisible);
+      });
+    });
+  }
+
+  function dtxInitColumnResizers() {
+    let dragCol = null;
+    let dragMinWidth = 0;
+    let dragKey = null;
+    let startX = 0;
+    let startWidth = 0;
+
+    function onMouseMove(e) {
+      if (!dragCol) return;
+      const next = Math.max(dragMinWidth, startWidth + (e.clientX - startX));
+      dragCol.style.width = next + 'px';
+    }
+    function onMouseUp() {
+      if (!dragCol) return;
+      dtxColumnLayout.widths[dragKey] = parseInt(dragCol.style.width, 10);
+      dtxSaveColumnLayout();
+      document.body.classList.remove('dtx-resizing');
+      dragCol = null;
+      dragKey = null;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    }
+
+    DTX_COLUMNS.filter((c) => c.resizable).forEach((c) => {
+      const th = document.querySelector(`#dtx-table th[data-col="${c.key}"]`);
+      if (!th) return;
+      const handle = document.createElement('div');
+      handle.className = 'dtx-col-resizer';
+      handle.addEventListener('click', (e) => e.stopPropagation());
+      handle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCol = document.querySelector(`#dtx-colgroup col[data-col="${c.key}"]`);
+        dragKey = c.key;
+        dragMinWidth = c.minWidth;
+        startX = e.clientX;
+        startWidth = dragCol.getBoundingClientRect().width;
+        document.body.classList.add('dtx-resizing');
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+      });
+      th.appendChild(handle);
+    });
+  }
+
+  function dtxInitColumnControls() {
+    dtxApplyColumnLayout();
+    dtxRefreshColumnCheckboxes();
+    dtxInitColumnResizers();
+
+    const panel = document.getElementById('dtx-columns-panel');
+    const btn = document.getElementById('dtx-columns-btn');
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      panel.classList.toggle('open');
+    });
+    document.addEventListener('mousedown', (e) => {
+      if (panel.classList.contains('open') && !panel.contains(e.target) && e.target !== btn) {
+        panel.classList.remove('open');
+      }
+    });
+
+    document.getElementById('dtx-columns-reset').addEventListener('click', () => {
+      dtxColumnLayout = dtxDefaultColumnLayout();
+      dtxApplyColumnLayout();
+      dtxSaveColumnLayout();
+      dtxRefreshColumnCheckboxes();
+      renderDetailTable(dtxLastVisible);
+    });
+
+    const sortBySelect = document.getElementById('dtx-f-sortby');
+    sortBySelect.innerHTML = DTX_SORT_COLUMNS.map((c) => `<option value="${c.key}">${c.label}</option>`).join('');
+    sortBySelect.value = dtxSort.key;
+    sortBySelect.addEventListener('change', () => {
+      const key = sortBySelect.value;
+      if (dtxSort.key === key) return;
+      dtxSort = { key, dir: (key === 'date' || key === 'amount') ? 'desc' : 'asc' };
+      renderDetailTable(dtxLastVisible);
+    });
+
+    const sortDirBtn = document.getElementById('dtx-f-sortdir');
+    sortDirBtn.textContent = dtxSort.dir === 'asc' ? '▲' : '▼';
+    sortDirBtn.addEventListener('click', () => {
+      dtxSort.dir = dtxSort.dir === 'asc' ? 'desc' : 'asc';
+      renderDetailTable(dtxLastVisible);
+    });
+  }
+
+  function dtxMatchesFilters(t) {
+    const search = dtxFilterEls.search.value.trim().toLowerCase();
+    if (search) {
+      const haystack = `${t.payee || ''} ${t.notes || ''}`.toLowerCase();
+      if (!haystack.includes(search)) return false;
+    }
+    if (dtxFilterEls.type.value && t.type !== dtxFilterEls.type.value) return false;
+    if (dtxFilterEls.cleared.value) {
+      const wantCleared = dtxFilterEls.cleared.value === 'Cleared';
+      if (!!t.isCleared !== wantCleared) return false;
+    }
+    if (dtxFilterEls.from.value && (!t.date || t.date < dtxFilterEls.from.value)) return false;
+    if (dtxFilterEls.to.value && (!t.date || t.date > dtxFilterEls.to.value)) return false;
+    return true;
+  }
+
+  function dtxSortRows(list) {
+    const { key, dir } = dtxSort;
+    const mul = dir === 'asc' ? 1 : -1;
+    return [...list].sort((a, b) => {
+      let av, bv;
+      if (key === 'amount') {
+        av = Number(a.amount) || 0;
+        bv = Number(b.amount) || 0;
+      } else if (key === 'cleared') {
+        av = a.isCleared ? 1 : 0;
+        bv = b.isCleared ? 1 : 0;
+      } else {
+        av = (a[key] || '').toString().toLowerCase();
+        bv = (b[key] || '').toString().toLowerCase();
+      }
+      if (av < bv) return -1 * mul;
+      if (av > bv) return 1 * mul;
+      return (b.rowNumber || 0) - (a.rowNumber || 0);
+    });
+  }
+
+  function dtxUpdateSortIndicators() {
+    document.querySelectorAll('#dtx-table th[data-sort]').forEach((th) => {
+      const arrow = th.querySelector('.dtx-sort-arrow');
+      const isActive = th.dataset.sort === dtxSort.key;
+      th.classList.toggle('dtx-sorted', isActive);
+      arrow.textContent = isActive ? (dtxSort.dir === 'asc' ? '▲' : '▼') : '';
+    });
+    const sortBySelect = document.getElementById('dtx-f-sortby');
+    const sortDirBtn = document.getElementById('dtx-f-sortdir');
+    if (sortBySelect && sortBySelect.value !== dtxSort.key) sortBySelect.value = dtxSort.key;
+    if (sortDirBtn) sortDirBtn.textContent = dtxSort.dir === 'asc' ? '▲' : '▼';
+  }
+
+  // -- keyboard-driven row editing (issue #86 keyboard follow-up) --
+  // Mirrors the Transactions page's txtKbd* system (public/transactions/
+  // index.html) almost exactly, scoped to `dtxKbd` and with no sof/type
+  // fields (this table has no Account column -- every row already belongs
+  // to the current account). Down/Up arrow highlights a row and cycles
+  // through the visible rows; Enter opens every editable cell of the
+  // highlighted row at once (leftmost column first), Tab/Shift-Tab moves
+  // between them (wrapping around), and only Enter (save, whole row in one
+  // request) or Escape (discard) ever touches the network -- nothing is
+  // sent while merely moving between columns. This is a separate editing
+  // surface from the single-cell click-to-edit above: that one auto-saves a
+  // single field on blur, this one is all-or-nothing for the whole row and
+  // is driven entirely from the keyboard.
+  //
+  // Transfer (card payment) legs are never opened for row-edit -- same
+  // restriction as the single-cell editor -- Enter on a highlighted
+  // transfer row opens the undo-payment menu instead (matching the pencil
+  // button and the mobile card list's own Enter behavior).
+  //
+  // Backspace on a highlighted row reuses handleKeyboardDeleteTxn() below
+  // (the same showConfirm-sheet-then-delete path the mobile card list's
+  // Backspace shortcut already uses), just pointed at this table's own
+  // highlight state instead of the card list's.
+  const DTX_KBD_FIELDS = ['date', 'payee', 'amount', 'cleared', 'notes'];
+  let dtxKbdHighlightIndex = -1;
+  let dtxKbdEditRowNumber = null; // rowNumber currently open for row-edit, or null
+  let dtxKbdEditDraft = null; // uncommitted field values for that row -- never sent until Enter
+  let dtxKbdEditInputs = null; // { field: <input> } for the currently open row
+  let dtxKbdSaving = false;
+  let dtxKbdDeleting = false; // guards a second Backspace while a delete is in flight
+
+  function dtxRowEls() {
+    return Array.from(dtxTableBodyEl.querySelectorAll('tr[data-row]'));
+  }
+
+  function setDtxHighlight(index) {
+    const rows = dtxRowEls();
+    rows.forEach((r) => r.classList.remove('dtx-kbd-highlight'));
+    if (!rows.length) { dtxKbdHighlightIndex = -1; return; }
+    dtxKbdHighlightIndex = Math.max(0, Math.min(index, rows.length - 1));
+    const row = rows[dtxKbdHighlightIndex];
+    row.classList.add('dtx-kbd-highlight');
+    row.scrollIntoView({ block: 'nearest' });
+  }
+
+  function dtxCurrentHighlightedTxn() {
+    const rows = dtxRowEls();
+    if (dtxKbdHighlightIndex < 0 || dtxKbdHighlightIndex >= rows.length) return null;
+    const rowNumber = parseInt(rows[dtxKbdHighlightIndex].dataset.row, 10);
+    return dtxLastVisible.find((t) => t.rowNumber === rowNumber) || null;
+  }
+
+  // Re-finds a row by rowNumber after a renderDetailTable() rebuild (which
+  // always resets the highlight -- see the comment at the top of
+  // renderDetailTable) and re-highlights it, so the keyboard row-edit
+  // save/cancel paths can leave the user right where they were instead of
+  // dropping the highlight.
+  function dtxRestoreHighlightByRowNumber(rowNumber) {
+    if (rowNumber == null) return;
+    const idx = dtxRowEls().findIndex((r) => parseInt(r.dataset.row, 10) === rowNumber);
+    if (idx !== -1) setDtxHighlight(idx);
+  }
+
+  // Issue #49 keyboard follow-up: the Confirm button sits in the tab cycle
+  // for a pending row (see dtxKbdFieldOrder below), in its actual column
+  // position between Cleared and Notes -- it's a real <button>, not one of
+  // DTX_KBD_FIELDS' inputs, so it's focused directly instead of through
+  // dtxKbdEditInputs.
+  function dtxKbdFocusField(field) {
+    if (field === 'confirm') {
+      const row = dtxRowEls()[dtxKbdHighlightIndex];
+      const btn = row && row.querySelector('.txn-confirm-btn');
+      if (btn) btn.focus();
+      return;
+    }
+    const input = dtxKbdEditInputs && dtxKbdEditInputs[field];
+    if (!input) return;
+    input.focus();
+    if (typeof input.select === 'function' && input.type !== 'checkbox') input.select();
+  }
+
+  // Tab order for the row-edit session, left to right same as the table's
+  // own columns -- 'confirm' (the Confirm button) is only spliced in for a
+  // pending row, right where its column actually sits.
+  function dtxKbdFieldOrder(txn) {
+    const order = ['date', 'payee', 'amount', 'cleared'];
+    if (txn && txn.pending) order.push('confirm');
+    order.push('notes');
+    return order;
+  }
+
+  // Pulls whatever's currently in a field's input into the draft. Called
+  // before moving focus away from a field (Tab/Shift-Tab) and again right
+  // before Enter saves, so the draft always reflects the field the user was
+  // just looking at.
+  function dtxKbdCommitField(field) {
+    const input = dtxKbdEditInputs[field];
+    if (!input) return;
+    if (field === 'cleared') return; // kept in sync live by the checkbox's own change handler
+    if (field === 'amount') {
+      const parsed = parseFloat(String(input.value).replace(/[^\d.]/g, ''));
+      dtxKbdEditDraft.amount = Number.isFinite(parsed) ? parsed : NaN;
+    } else {
+      dtxKbdEditDraft[field] = input.value.trim();
+    }
+  }
+
+  function dtxKbdInputKeydown(e) {
+    const field = e.target.dataset.field;
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      dtxKbdCommitField(field);
+      const order = dtxKbdFieldOrder(dtxLastVisible.find((t) => t.rowNumber === dtxKbdEditRowNumber));
+      const idx = order.indexOf(field);
+      const nextIdx = e.shiftKey
+        ? (idx - 1 + order.length) % order.length
+        : (idx + 1) % order.length;
+      dtxKbdFocusField(order[nextIdx]);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      dtxKbdCommitField(field);
+      dtxKbdSaveEdit(field);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      dtxKbdCancelEdit();
+    }
+  }
+
+  // Opens every editable cell of the highlighted row at once, starting with
+  // the leftmost column (Date). Nothing here talks to the network -- it
+  // only builds inputs seeded from a cloned draft of the row's current
+  // values, which Tab/Shift-Tab and typing mutate locally until Enter
+  // (save) or Escape (cancel/discard) resolve the whole session.
+  function startDtxKbdEdit(txn) {
+    if (dtxKbdEditRowNumber !== null) return; // already editing a row
+    if (txn.transfer) return; // transfer legs aren't editable inline -- see .dtx-transfer-row
+    const row = dtxRowEls()[dtxKbdHighlightIndex];
+    if (!row) return;
+
+    dtxKbdEditRowNumber = txn.rowNumber;
+    dtxKbdEditDraft = {
+      payee: txn.payee, type: txn.type, sof: txn.sof, amount: txn.amount,
+      date: txn.date, month: txn.month, notes: txn.notes,
+      cleared: txn.isCleared ? 'Cleared' : 'Uncleared',
+    };
+
+    const inputs = {};
+    DTX_KBD_FIELDS.forEach((field) => {
+      const td = row.querySelector(`td[data-field="${field}"]`);
+      if (!td) return;
+      td.classList.add('dtx-editing');
+      td.innerHTML = '';
+
+      let input;
+      if (field === 'cleared') {
+        input = document.createElement('input');
+        input.type = 'checkbox';
+        input.className = 'dtx-cell-checkbox';
+        input.checked = dtxKbdEditDraft.cleared === 'Cleared';
+        input.addEventListener('change', () => {
+          dtxKbdEditDraft.cleared = input.checked ? 'Cleared' : 'Uncleared';
+        });
+      } else if (field === 'date') {
+        input = document.createElement('input');
+        input.type = 'date';
+        input.className = 'dtx-cell-input';
+        input.value = dtxKbdEditDraft.date || '';
+      } else if (field === 'amount') {
+        input = document.createElement('input');
+        input.type = 'text';
+        input.inputMode = 'decimal';
+        input.className = 'dtx-cell-input';
+        input.value = dtxKbdEditDraft.amount != null ? String(dtxKbdEditDraft.amount) : '';
+      } else {
+        input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'dtx-cell-input';
+        input.value = dtxKbdEditDraft[field] || '';
+        if (field === 'payee') {
+          // Shared datalist -- see createDtxCellEditor() above.
+          input.setAttribute('list', 'txf-payee-list');
+          input.autocomplete = 'off';
+        }
+      }
+
+      input.dataset.field = field;
+      // The td itself still carries the single-cell click-to-edit listener
+      // from above (its innerHTML was cleared, not the td node) -- stop the
+      // click here so focusing/clicking inside this input can't also
+      // re-trigger that handler or the status column's click-to-toggle
+      // handler underneath it.
+      input.addEventListener('click', (e) => e.stopPropagation());
+      input.addEventListener('keydown', dtxKbdInputKeydown);
+      td.appendChild(input);
+      inputs[field] = input;
+    });
+
+    dtxKbdEditInputs = inputs;
+    // The pencil button would otherwise open the full sheet (or the
+    // undo-payment menu) against the still-unsaved original row data while
+    // this draft is in flight -- disable it for the duration of the edit
+    // session instead of trying to reconcile the two editing surfaces.
+    const openBtn = row.querySelector('.dtx-open-btn');
+    if (openBtn) openBtn.disabled = true;
+
+    dtxKbdFocusField(DTX_KBD_FIELDS[0]); // leftmost column
+  }
+
+  function dtxKbdCancelEdit() {
+    if (dtxKbdEditRowNumber === null) return;
+    const rowNumber = dtxKbdEditRowNumber;
+    dtxKbdEditRowNumber = null;
+    dtxKbdEditDraft = null;
+    dtxKbdEditInputs = null;
+    renderDetailTable(dtxLastVisible); // rebuild -- discards the draft, no save
+    dtxRestoreHighlightByRowNumber(rowNumber);
+  }
+
+  // The only place this whole editing surface ever calls the API -- Enter
+  // committed the field under the cursor into the draft already (see
+  // dtxKbdInputKeydown), so this just validates and sends the full row,
+  // same shape/convention as saveDtxCellEdit() above. `sof` is always this
+  // account, same as saveDtxCellEdit() -- there's no Account column/field
+  // to edit here.
+  async function dtxKbdSaveEdit(focusFieldOnError) {
+    if (dtxKbdEditRowNumber === null || dtxKbdSaving) return;
+    const draft = dtxKbdEditDraft;
+    const rowNumber = dtxKbdEditRowNumber;
+
+    if (!draft.payee || !draft.date) {
+      alert('Payee and Date are required.');
+      dtxKbdFocusField(focusFieldOnError);
+      return;
+    }
+    if (!Number.isFinite(draft.amount) || draft.amount <= 0) {
+      alert('Amount must be a positive number.');
+      dtxKbdFocusField(focusFieldOnError);
+      return;
+    }
+
+    const original = dtxLastVisible.find((t) => t.rowNumber === rowNumber);
+    const payload = {
+      rowNumber,
+      payee: draft.payee,
+      type: draft.type,
+      sof: draft.sof,
+      amount: draft.amount,
+      date: draft.date,
+      month: draft.month,
+      notes: draft.notes,
+      cleared: draft.cleared,
+    };
+    // No Month field in this editing surface either -- same re-guess as the
+    // single-cell Date edit above, only when the date actually changed so
+    // an untouched row keeps its (possibly hand-picked) Month.
+    if (original && draft.date !== original.date) {
+      payload.month = TransactionForm.guessBillingMonth(draft.date);
+    }
+
+    const row = dtxRowEls()[dtxKbdHighlightIndex];
+    dtxKbdSaving = true;
+    if (row) row.classList.add('dtx-kbd-row-saving');
+    try {
+      const res = await fetch('/api/transactions-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      dtxKbdEditRowNumber = null;
+      dtxKbdEditDraft = null;
+      dtxKbdEditInputs = null;
+      await fetchAndRenderAccountDetail(currentAccount);
+      dtxRestoreHighlightByRowNumber(rowNumber);
+    } catch (err) {
+      alert(err.message);
+      if (row) row.classList.remove('dtx-kbd-row-saving');
+      dtxKbdFocusField(focusFieldOnError);
+    } finally {
+      dtxKbdSaving = false;
+    }
+  }
+
+  // Issue #49 keyboard follow-up: reached by tabbing to the Confirm button
+  // during a row-edit session (see dtxKbdFieldOrder above) -- Enter/Space
+  // on it (native button activation, handled by the button's own 'click'
+  // listener in renderDetailTable()) saves whatever's currently filled in
+  // the row AND confirms it (Pending -> FALSE) in one action, so fixing a
+  // mis-parsed import doesn't take two separate steps. Same validation as
+  // dtxKbdSaveEdit; two sequential requests since transactions-update has
+  // no single combined action.
+  async function dtxKbdConfirmAndSaveEdit() {
+    if (dtxKbdEditRowNumber === null || dtxKbdSaving) return;
+    const draft = dtxKbdEditDraft;
+    const rowNumber = dtxKbdEditRowNumber;
+
+    if (!draft.payee || !draft.date) {
+      alert('Payee and Date are required.');
+      return;
+    }
+    if (!Number.isFinite(draft.amount) || draft.amount <= 0) {
+      alert('Amount must be a positive number.');
+      return;
+    }
+
+    const original = dtxLastVisible.find((t) => t.rowNumber === rowNumber);
+    const payload = {
+      rowNumber,
+      payee: draft.payee,
+      type: draft.type,
+      sof: draft.sof,
+      amount: draft.amount,
+      date: draft.date,
+      month: draft.month,
+      notes: draft.notes,
+      cleared: draft.cleared,
+    };
+    if (original && draft.date !== original.date) {
+      payload.month = TransactionForm.guessBillingMonth(draft.date);
+    }
+
+    const row = dtxRowEls()[dtxKbdHighlightIndex];
+    dtxKbdSaving = true;
+    if (row) row.classList.add('dtx-kbd-row-saving');
+    try {
+      const res = await fetch('/api/transactions-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+
+      const confirmRes = await fetch('/api/transactions-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rowNumber, action: 'confirmPending' }),
+      });
+      const confirmData = await confirmRes.json();
+      if (confirmData.error) throw new Error(confirmData.error);
+
+      dtxKbdEditRowNumber = null;
+      dtxKbdEditDraft = null;
+      dtxKbdEditInputs = null;
+      await fetchAndRenderAccountDetail(currentAccount);
+      dtxRestoreHighlightByRowNumber(rowNumber);
+    } catch (err) {
+      if (row) row.classList.remove('dtx-kbd-row-saving');
+      throw err; // surfaced to the caller (the Confirm button's click handler), which shows/resets its own label
+    } finally {
+      dtxKbdSaving = false;
+    }
+  }
+
+  // Backspace on a highlighted row -- analogous to Enter opening it for
+  // edit, but simpler: always confirms first via the same showConfirm sheet
+  // the mobile card list's own Backspace shortcut uses (see
+  // handleKeyboardDeleteTxn below), then reuses deleteDetailTxnViaSwipe
+  // (which already branches on txn.transfer to call the right endpoint and
+  // re-renders both views), same delete path as the mobile list's
+  // swipe-left gesture and the full Add/Edit sheet's own Delete link.
+  function dtxKbdHandleDelete(txn) {
+    const isPayment = !!txn.transfer;
+    const message = isPayment
+      ? `Undo this card payment ("${txn.payee}")? This removes BOTH the charge on the card and the matching entry on the paying account.`
+      : `Delete "${txn.payee}"?`;
+    showConfirm(
+      message,
+      async () => {
+        // The confirm sheet has owned the keyboard up to now (via the
+        // shared `.open` check), so the table hasn't changed underneath it
+        // -- dtxKbdHighlightIndex still points at the right row.
+        const index = dtxKbdHighlightIndex;
+        const row = dtxRowEls()[index];
+        dtxKbdDeleting = true;
+        if (row) row.classList.add('dtx-kbd-row-saving');
+        try {
+          await deleteDetailTxnViaSwipe(txn);
+          // deleteDetailTxnViaSwipe() -> fetchAndRenderAccountDetail()
+          // rebuilds the table (renderDetailTable() always resets the
+          // highlight -- see its own comment), so re-highlight by the same
+          // index: the row that slides into the deleted row's spot, or the
+          // new last row if it was last.
+          setDtxHighlight(index);
+        } catch (err) {
+          if (row) row.classList.remove('dtx-kbd-row-saving');
+          showAlert(err.message, isPayment ? 'Undo failed' : 'Delete failed');
+        } finally {
+          dtxKbdDeleting = false;
+        }
+      },
+      { title: isPayment ? 'Undo payment' : 'Delete transaction', confirmLabel: isPayment ? 'Undo Payment' : 'Delete', danger: true }
+    );
+  }
+
+  // A click anywhere outside the row currently open for keyboard editing
+  // discards it (same as Escape, no save) -- a click on another field
+  // inside that same row is left alone and just focuses it normally.
+  // mousedown (not click/focusout) is used deliberately: it fires only for
+  // real pointer input, so it can't be tripped by the alert() dialogs above
+  // stealing focus, or by our own Tab handler moving focus between fields
+  // within the row.
+  document.addEventListener('mousedown', (e) => {
+    if (dtxKbdEditRowNumber === null) return;
+    const editingRow = dtxRowEls().find((r) => parseInt(r.dataset.row, 10) === dtxKbdEditRowNumber);
+    if (editingRow && editingRow.contains(e.target)) return;
+    dtxKbdCancelEdit();
+  });
+
+  function dtxEditableColumnLabel(field) {
+    return { date: 'Date', payee: 'Payee', amount: 'Amount', notes: 'Notes' }[field] || field;
+  }
+
+  function createDtxCellEditor(field, txn) {
+    const input = document.createElement('input');
+    input.className = 'dtx-cell-input';
+    if (field === 'date') {
+      input.type = 'date';
+      input.value = txn.date || '';
+    } else if (field === 'amount') {
+      input.type = 'text';
+      input.inputMode = 'decimal';
+      input.value = txn.amount != null ? String(txn.amount) : '';
+    } else {
+      input.type = 'text';
+      input.value = txn[field] || '';
+      if (field === 'payee') {
+        // Reuses the same <datalist> the full Add/Edit sheet populates on
+        // mount (shared/transaction-form.js's loadPayees()).
+        input.setAttribute('list', 'txf-payee-list');
+        input.autocomplete = 'off';
+      }
+    }
+    return input;
+  }
+
+  function startDtxCellEdit(td, txn, field) {
+    if (td.classList.contains('dtx-editing')) return;
+    const input = createDtxCellEditor(field, txn);
+    td.innerHTML = '';
+    td.classList.add('dtx-editing');
+    td.appendChild(input);
+    input.focus();
+    if (typeof input.select === 'function') input.select();
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commitDtxCellEdit(td, txn, field, input);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        input.dataset.handled = '1';
+        renderDetailTable(dtxLastVisible);
+      }
+    });
+    input.addEventListener('blur', () => commitDtxCellEdit(td, txn, field, input));
+  }
+
+  async function commitDtxCellEdit(td, txn, field, input) {
+    if (input.dataset.handled) return;
+    input.dataset.handled = '1';
+
+    let newValue = input.value;
+    if (field === 'amount') {
+      newValue = parseFloat(String(newValue).replace(/[^\d.]/g, ''));
+    } else {
+      newValue = newValue.trim();
+    }
+
+    const unchanged = field === 'amount'
+      ? Number(newValue) === Number(txn.amount)
+      : newValue === (txn[field] || '');
+    if (unchanged) {
+      renderDetailTable(dtxLastVisible);
+      return;
+    }
+
+    if ((field === 'payee' || field === 'date') && !newValue) {
+      alert(`${dtxEditableColumnLabel(field)} is required.`);
+      renderDetailTable(dtxLastVisible);
+      return;
+    }
+    if (field === 'amount' && (!Number.isFinite(newValue) || newValue <= 0)) {
+      alert('Amount must be a positive number.');
+      renderDetailTable(dtxLastVisible);
+      return;
+    }
+
+    td.classList.add('dtx-cell-saving');
+    input.disabled = true;
+    try {
+      await saveDtxCellEdit(txn, field, newValue);
+      await fetchAndRenderAccountDetail(currentAccount);
+    } catch (err) {
+      alert(err.message);
+      renderDetailTable(dtxLastVisible); // revert to the last-known-good values
+    }
+  }
+
+  // Sends the whole row back, same convention as toggleDetailTxnClearedViaSwipe
+  // above -- transactions-update rewrites the full row. `sof` is always this
+  // account (there's no Account column/field to edit here).
+  async function saveDtxCellEdit(txn, field, newValue) {
+    const payload = {
+      rowNumber: txn.rowNumber,
+      payee: txn.payee,
+      type: txn.type,
+      sof: txn.sof,
+      amount: txn.amount,
+      date: txn.date,
+      month: txn.month,
+      notes: txn.notes,
+      cleared: txn.isCleared ? 'Cleared' : 'Uncleared',
+    };
+
+    if (field === 'date') {
+      payload.date = newValue;
+      payload.month = TransactionForm.guessBillingMonth(newValue);
+    } else {
+      payload[field] = newValue;
+    }
+
+    const res = await fetch('/api/transactions-update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+  }
+
+  function renderDetailTable(sourceList) {
+    dtxLastVisible = sourceList;
+    // Rows are rebuilt from scratch below, so any previous highlight/edit
+    // DOM state is gone -- callers that want to keep the highlight (the
+    // keyboard row-edit save/cancel paths) restore it by rowNumber right
+    // after calling this, via dtxRestoreHighlightByRowNumber().
+    dtxKbdHighlightIndex = -1;
+    const todayStr = TransactionForm.todayISO();
+    const rows = dtxSortRows(sourceList.filter(dtxMatchesFilters));
+    dtxUpdateSortIndicators();
+
+    if (!rows.length) {
+      dtxTableBodyEl.innerHTML = `<tr class="dtx-empty-row"><td colspan="${dtxVisibleColumnCount()}">No transactions match.</td></tr>`;
+      return;
+    }
+
+    dtxTableBodyEl.innerHTML = rows.map((t) => {
+      const isIncome = t.type === 'Income';
+      const isUpcoming = !!(t.date && t.date > todayStr);
+      const amountText = (isIncome ? '+' : '') + formatIDR(t.amount);
+      const statusHtml = t.isCleared ? '☑️' : '';
+      const payee = t.payee || '';
+      const notes = t.notes || '';
+      const pendingHtml = t.pending ? '<button type="button" class="txn-confirm-btn" title="Confirm this pending transaction">Confirm</button>' : '';
+      const isTransfer = !!t.transfer;
+      // Transfer legs aren't inline-editable (see the .dtx-transfer-row CSS
+      // comment above) -- .dtx-editable is simply omitted for those rows so
+      // the click-to-edit listeners below have nothing to attach to.
+      const editableCls = isTransfer ? '' : ' dtx-editable';
+      const rowClasses = [
+        isUpcoming ? 'dtx-upcoming-row' : '',
+        t.pending ? 'dtx-pending-row' : '',
+        t.reconciled ? 'dtx-reconciled-row' : '',
+        isTransfer ? 'dtx-transfer-row' : '',
+      ].filter(Boolean).join(' ');
+      return `
+        <tr data-row="${t.rowNumber}" class="${rowClasses}">
+          <td class="${editableCls.trim()}" data-field="date">${t.date || ''}</td>
+          <td class="dtx-truncate${editableCls}" data-field="payee" title="${payee.replace(/"/g, '&quot;')}">${payee}</td>
+          <td class="dtx-amount${editableCls} ${isIncome ? 'income' : ''}" data-field="amount">${amountText}</td>
+          <td class="dtx-status-col" data-field="cleared">${statusHtml}</td>
+          <td class="dtx-pending-col">${pendingHtml}</td>
+          <td class="dtx-truncate${editableCls}" data-field="notes" title="${notes.replace(/"/g, '&quot;')}">${notes}</td>
+          <td class="dtx-open-col"><button type="button" class="dtx-open-btn" title="${isTransfer ? 'Card payment options' : 'Open full editor'}">&#9998;</button></td>
+        </tr>
+      `;
+    }).join('');
+
+    dtxTableBodyEl.querySelectorAll('tr[data-row]').forEach((row) => {
+      const rowNumber = parseInt(row.dataset.row, 10);
+      const txn = dtxLastVisible.find((t) => t.rowNumber === rowNumber);
+      if (!txn) return;
+
+      row.querySelectorAll('td.dtx-editable').forEach((td) => {
+        td.addEventListener('click', () => startDtxCellEdit(td, txn, td.dataset.field));
+      });
+
+      const statusTd = row.querySelector('td.dtx-status-col');
+      statusTd.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (txn.transfer) return; // transfer legs: use the pencil button's undo-payment menu instead
+        if (statusTd.classList.contains('dtx-cell-saving')) return;
+        statusTd.classList.add('dtx-cell-saving');
+        try {
+          await toggleDetailTxnClearedViaSwipe(txn);
+        } catch (err) {
+          alert(err.message);
+          statusTd.classList.remove('dtx-cell-saving');
+        }
+      });
+
+      row.querySelector('.dtx-open-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (txn.transfer) openUndoPaymentMenu(txn);
+        else TransactionForm.open(txn);
+      });
+
+      const confirmBtn = row.querySelector('.txn-confirm-btn');
+      if (confirmBtn) {
+        confirmBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          // Issue #49 keyboard follow-up: this row is mid keyboard-edit
+          // (tabbed here from an open field, not just moused straight to
+          // Confirm) -- save the draft AND confirm in one action instead
+          // of the plain confirm-only path. A native Enter/Space on this
+          // focused button lands here too (the browser fires 'click' for
+          // both), so this single handler covers mouse and keyboard.
+          const isEditingThisRow = dtxKbdEditRowNumber === txn.rowNumber;
+          confirmBtn.disabled = true;
+          confirmBtn.textContent = isEditingThisRow ? 'Saving…' : 'Confirming…';
+          try {
+            if (isEditingThisRow) {
+              await dtxKbdConfirmAndSaveEdit();
+            } else {
+              await confirmDetailTxnPending(txn);
+            }
+          } catch (err) {
+            alert(err.message);
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = 'Confirm';
+          }
+        });
+        // Tab/Shift-Tab move on to the field on either side of this
+        // button's actual column position (Cleared before it, Notes after
+        // -- see dtxKbdFieldOrder); Escape cancels the edit same as any
+        // other field. Only active while this specific row is the one
+        // being edited -- otherwise this is just a plain button.
+        confirmBtn.addEventListener('keydown', (e) => {
+          if (dtxKbdEditRowNumber !== txn.rowNumber) return;
+          if (e.key === 'Tab') {
+            e.preventDefault();
+            dtxKbdFocusField(e.shiftKey ? 'cleared' : 'notes');
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            dtxKbdCancelEdit();
+          }
+        });
+      }
+    });
+  }
+
+  const detailUpcomingToggleEl = document.getElementById('detail-upcoming-toggle');
+  const detailUpcomingSwitchEl = document.getElementById('detail-upcoming-switch');
+  const detailUpcomingLabelEl = document.getElementById('detail-upcoming-label');
+  detailUpcomingToggleEl.addEventListener('click', () => {
+    showUpcomingDetail = !showUpcomingDetail;
+    renderDetailTxnList(currentAccountTxns);
+  });
+
+  const detailPendingToggleEl = document.getElementById('detail-pending-toggle');
+  const detailPendingLabelEl = document.getElementById('detail-pending-label');
+  detailPendingToggleEl.addEventListener('click', () => {
+    showPendingOnlyDetail = !showPendingOnlyDetail;
+    renderDetailTxnList(currentAccountTxns);
+  });
+
+  async function fetchAndRenderAccountDetail(name) {
+    const data = await apiGet('/api/reconcile?action=detail&name=' + encodeURIComponent(name));
+    currentAccountMeta = data.account;
+    const isCredit = (data.account.type || '').toLowerCase().includes('credit');
+
+    document.getElementById('detail-name').textContent = data.account.name;
+    document.getElementById('detail-type').textContent = data.account.type || '';
+
+    document.getElementById('detail-pay-btn').style.display = isCredit ? 'block' : 'none';
+
+    const balEl = document.getElementById('detail-balance');
+    const isBad = data.stats.runningTotal > 0;
+    const creditSuffix = isCredit && !isBad ? ' CR' : '';
+    balEl.textContent = formatIDR(Math.abs(data.stats.runningTotal)) + creditSuffix;
+    balEl.className = 'acct-header-balance ' + (isCredit ? (isBad ? 'owed' : 'positive') : '');
+
+    const metaEl = document.getElementById('detail-meta');
+    const clearedIsBad = data.stats.clearedTotal > 0;
+    const clearedCreditSuffix = isCredit && !clearedIsBad ? ' CR' : '';
+    const clearedLine = `${formatIDR(Math.abs(data.stats.clearedTotal))}${clearedCreditSuffix} cleared`;
+    const reconLine = data.account.lastReconciledThrough ? `Last reconciled through ${data.account.lastReconciledThrough}` : 'Never reconciled';
+    metaEl.innerHTML = `<div>${clearedLine}</div><div>${reconLine}</div>`;
+
+    currentAccountTxns = data.transactions;
+    renderDetailTxnList(currentAccountTxns);
+    return data;
+  }
+
+  async function openAccountDetail(name) {
+    currentAccount = name;
+    goto('detail');
+    document.getElementById('detail-title').textContent = name;
+
+    const loadingEl = document.getElementById('detail-loading');
+    const errorEl = document.getElementById('detail-error');
+    const contentEl = document.getElementById('detail-content');
+    const listEl = document.getElementById('detail-txn-pull');
+    loadingEl.style.display = 'block';
+    errorEl.style.display = 'none';
+    contentEl.style.display = 'none';
+    listEl.style.display = 'none';
+
+    try {
+      await fetchAndRenderAccountDetail(name);
+      loadingEl.style.display = 'none';
+      contentEl.style.display = 'block';
+      // Clear the inline "none" set above (rather than setting an inline
+      // "block") so the issue #86 wide-viewport media query -- which hides
+      // this mobile list at >=1024px in favor of .dtx-table-wrap -- can
+      // still govern it; an inline style would otherwise always win over
+      // that stylesheet rule regardless of viewport.
+      listEl.style.display = '';
+    } catch (err) {
+      loadingEl.style.display = 'none';
+      errorEl.textContent = 'Couldn\'t load this account: ' + err.message;
+      errorEl.style.display = 'block';
+    }
+  }
+
+  function renderDetailTxnList(rows) {
+    txnHighlightIndex = -1;
+    const listEl = document.getElementById('detail-txn-list');
+    const todayStr = TransactionForm.todayISO();
+
+    const upcomingCount = rows.filter((t) => t.date && t.date > todayStr).length;
+    detailUpcomingSwitchEl.classList.toggle('on', showUpcomingDetail);
+    detailUpcomingLabelEl.textContent = showUpcomingDetail
+      ? (upcomingCount ? `Showing ${upcomingCount} upcoming` : 'No upcoming transactions')
+      : (upcomingCount ? `${upcomingCount} upcoming hidden` : 'No upcoming transactions');
+
+    // Issue #49 feedback follow-up: "Review Pending" is a mode switch, not a
+    // show/hide filter -- hide the button entirely when there's nothing to
+    // review, same as the Transactions page (see its own comment for the
+    // full rationale). Stays visible while actively reviewing even if the
+    // last pending row gets confirmed mid-session, so there's still a way
+    // back to the full list.
+    const pendingCount = rows.filter((t) => t.pending).length;
+    if (pendingCount || showPendingOnlyDetail) {
+      detailPendingToggleEl.style.display = '';
+      detailPendingToggleEl.classList.toggle('active', showPendingOnlyDetail);
+      detailPendingLabelEl.textContent = showPendingOnlyDetail
+        ? '← Back to all transactions'
+        : `Review Pending (${pendingCount})`;
+    } else {
+      detailPendingToggleEl.style.display = 'none';
+    }
+
+    let visible = showUpcomingDetail ? rows : rows.filter((t) => !t.date || t.date <= todayStr);
+    if (showPendingOnlyDetail) visible = visible.filter((t) => t.pending);
+
+    // Wide-viewport table (issue #86) renders from the same
+    // upcoming/pending-filtered list as the mobile cards, then applies its
+    // own column filters/sort on top -- see renderDetailTable().
+    renderDetailTable(visible);
+
+    if (!visible.length) {
+      listEl.innerHTML = '<div class="sub">No transactions for this account yet.</div>';
+      return;
+    }
+    let html = '';
+    let lastLabel = null;
+    visible.forEach((t) => {
+      const isUpcoming = !!(t.date && t.date > todayStr);
+      const label = t.date || '(no date)';
+      if (label !== lastLabel) {
+        html += `<div class="date-header ${isUpcoming ? 'upcoming' : ''}">${label}</div>`;
+        lastLabel = label;
+      }
+      const isIncome = t.type === 'Income';
+      const amountText = (isIncome ? '+' : '') + formatIDR(t.amount);
+      const metaBits = [];
+      if (!t.isCleared) metaBits.push('<span class="uncleared">uncleared</span>');
+      if (t.reconciled) metaBits.push('<span class="reconciled-tag">reconciled</span>');
+      if (isUpcoming) metaBits.push('<span class="upcoming-tag">upcoming</span>');
+      if (t.transfer) metaBits.push('<span class="transfer-tag">payment</span>');
+      if (t.pending) metaBits.push('<span class="pending-tag">pending</span>');
+      // Issue #49: lightweight Confirm action, same as the Transactions page.
+      const confirmHtml = t.pending
+        ? `<button type="button" class="txn-confirm-btn" data-row="${t.rowNumber}">Confirm</button>`
+        : '';
+      const rowInner = `
+          <div>
+            <div class="txn-name">${t.payee}</div>
+            <div class="txn-meta">${metaBits.join(' &middot; ') || '&nbsp;'}</div>
+          </div>
+          <div class="txn-amount-block">
+            <div class="txn-amount ${isIncome ? 'income' : ''}">${amountText}</div>
+            ${confirmHtml}
+          </div>
+      `;
+      html += SwipeActions.rowHTML(t.rowNumber, `txn-row ${t.reconciled ? 'reconciled' : ''} ${isUpcoming ? 'upcoming' : ''} ${t.pending ? 'pending' : ''}`, rowInner, t.isCleared, t.transfer);
+    });
+    listEl.innerHTML = html;
+
+    listEl.querySelectorAll('.txn-row').forEach((row) => {
+      row.addEventListener('click', () => {
+        const rowNumber = parseInt(row.closest('.swx-wrap').dataset.row, 10);
+        const txn = rows.find((t) => t.rowNumber === rowNumber);
+        if (!txn) return;
+        if (txn.transfer) {
+          openUndoPaymentMenu(txn);
+        } else {
+          TransactionForm.open(txn);
+        }
+      });
+    });
+
+    // Issue #49: stopPropagation keeps this from bubbling up to the row's
+    // own click listener above (which would open the edit sheet, or the
+    // undo-payment menu for a transfer leg).
+    listEl.querySelectorAll('.txn-confirm-btn').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const rowNumber = parseInt(btn.dataset.row, 10);
+        const txn = rows.find((t) => t.rowNumber === rowNumber);
+        if (!txn) return;
+        btn.disabled = true;
+        btn.textContent = 'Confirming…';
+        try {
+          await confirmDetailTxnPending(txn);
+        } catch (err) {
+          alert(err.message);
+          btn.disabled = false;
+          btn.textContent = 'Confirm';
+        }
+      });
+    });
+
+    SwipeActions.init(listEl, {
+      getRow: (rowNumber) => rows.find((t) => t.rowNumber === rowNumber),
+      onDelete: deleteDetailTxnViaSwipe,
+      onToggleClear: toggleDetailTxnClearedViaSwipe,
+      onError: (err) => alert(err.message),
+    });
+  }
+
+  // Issue #49: sets Pending=FALSE for one row via the lightweight
+  // confirmPending action on transactions-update -- same helper concept as
+  // the Transactions page's confirmPendingTransaction(), just re-fetching
+  // this account's detail view afterward instead of the flat list.
+  async function confirmDetailTxnPending(txn) {
+    const res = await fetch('/api/transactions-update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rowNumber: txn.rowNumber, action: 'confirmPending' }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    await fetchAndRenderAccountDetail(currentAccount);
+  }
+
+  async function deleteDetailTxnViaSwipe(txn) {
+    if (txn.transfer) {
+      if (!txn.paymentId) {
+        throw new Error('This payment predates Payment ID tracking and can\'t be auto-undone -- delete each leg manually instead.');
+      }
+      await apiPost('/api/reconcile', { action: 'undo-payment', paymentId: txn.paymentId });
+      await fetchAndRenderAccountDetail(currentAccount);
+      return;
+    }
+    const res = await fetch('/api/transactions-delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ rowNumber: txn.rowNumber }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    await fetchAndRenderAccountDetail(currentAccount);
+  }
+
+  async function toggleDetailTxnClearedViaSwipe(txn) {
+    const res = await fetch('/api/transactions-update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        rowNumber: txn.rowNumber,
+        payee: txn.payee,
+        type: txn.type,
+        sof: txn.sof,
+        amount: txn.amount,
+        date: txn.date,
+        month: txn.month,
+        notes: txn.notes,
+        cleared: txn.isCleared ? 'Uncleared' : 'Cleared',
+      }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    await fetchAndRenderAccountDetail(currentAccount);
+  }
+
+  const PULL_THRESHOLD = 64;
+  const PULL_MAX = 100;
+  let pull = null;
+
+  function setupPullToRefresh() {
+    const wrapEl = document.getElementById('detail-txn-pull');
+    const indicatorEl = document.getElementById('pull-indicator');
+    const labelEl = document.getElementById('pull-label');
+
+    function setPull(px, animate) {
+      indicatorEl.style.transition = animate ? 'height 0.2s' : '';
+      indicatorEl.style.height = px + 'px';
+    }
+
+    function onPointerDown(e) {
+      if (pull && pull.refreshing) return;
+      if (window.scrollY > 0) return;
+      pull = { startX: e.clientX, startY: e.clientY, pointerId: e.pointerId, dragging: false, refreshing: false };
+    }
+
+    function onPointerMove(e) {
+      if (!pull || pull.refreshing || pull.pointerId !== e.pointerId) return;
+      const dy = e.clientY - pull.startY;
+      const dx = e.clientX - pull.startX;
+      if (dy <= 0 || window.scrollY > 0 || Math.abs(dx) > Math.abs(dy)) {
+        if (pull.dragging) { pull.dragging = false; setPull(0, true); }
+        return;
+      }
+      pull.dragging = true;
+      if (e.cancelable) e.preventDefault();
+      const pulled = Math.min(dy * 0.5, PULL_MAX);
+      setPull(pulled, false);
+      labelEl.textContent = pulled >= PULL_THRESHOLD ? 'Release to refresh' : 'Pull to refresh';
+    }
+
+    async function onPointerUp(e) {
+      if (!pull || pull.pointerId !== e.pointerId) return;
+      const dy = e.clientY - pull.startY;
+      const pulled = Math.min(Math.max(dy, 0) * 0.5, PULL_MAX);
+      if (!pull.dragging || pulled < PULL_THRESHOLD) {
+        pull = null;
+        setPull(0, true);
+        return;
+      }
+      pull.refreshing = true;
+      labelEl.textContent = 'Refreshing…';
+      setPull(PULL_THRESHOLD, true);
+      try {
+        await fetchAndRenderAccountDetail(currentAccount);
+      } catch (err) {
+      }
+      pull = null;
+      setPull(0, true);
+      labelEl.textContent = 'Pull to refresh';
+    }
+
+    function onPointerCancel(e) {
+      if (!pull || pull.pointerId !== e.pointerId) return;
+      pull = null;
+      setPull(0, true);
+    }
+
+    wrapEl.addEventListener('pointerdown', onPointerDown);
+    wrapEl.addEventListener('pointermove', onPointerMove, { passive: false });
+    wrapEl.addEventListener('pointerup', onPointerUp);
+    wrapEl.addEventListener('pointercancel', onPointerCancel);
+  }
+
+  let rcState = null;
+
+  function openReconcile() {
+    const account = currentAccountMeta;
+    document.getElementById('rc-account-name').textContent = currentAccount;
+    document.getElementById('rc-asof-date').value = todayISO();
+    document.getElementById('rc-statement-amount').value = '';
+    document.getElementById('rc-result-box').style.display = 'none';
+    document.getElementById('rc-compare-box').style.display = 'none';
+    document.getElementById('rc-actions').style.display = 'none';
+    document.getElementById('rc-add-form').style.display = 'none';
+    document.getElementById('rc-clear-form').style.display = 'none';
+
+    const isCredit = (account.type || '').toLowerCase().includes('credit');
+    document.getElementById('rc-amount-label').textContent = isCredit
+      ? 'New charges shown on the actual card statement for this cycle'
+      : 'Actual total per your bank/cash records for this period';
+
+    rcState = null;
+    document.getElementById('rc-overlay').classList.add('open');
+  }
+  function closeReconcile() {
+    document.getElementById('rc-overlay').classList.remove('open');
+  }
+  function rcSetBusy(busy) {
+    document.querySelectorAll('#rc-overlay button').forEach((b) => { b.disabled = busy; });
+  }
+
+  async function rcCalculate() {
+    const asOfDate = document.getElementById('rc-asof-date').value;
+    if (!asOfDate) { showAlert('Pick a date.'); return; }
+    const raw = document.getElementById('rc-statement-amount').value;
+    const statementAmount = Number(String(raw).replace(/[^0-9.-]/g, ''));
+    if (isNaN(statementAmount) || raw.trim() === '') { showAlert("That doesn't look like a number.", "Statement amount"); return; }
+
+    rcSetBusy(true);
+    let calc;
+    try {
+      calc = await apiPost('/api/reconcile', { action: 'calculate', account: currentAccount, asOfDate });
+    } catch (err) {
+      rcSetBusy(false);
+      showAlert(err.message, 'Calculation failed');
+      return;
+    }
+    rcSetBusy(false);
+
+    rcState = {
+      account: currentAccount,
+      asOfDate,
+      statementAmount,
+      cumulativeSum: calc.cumulativeSum,
+      matchedCount: calc.matchedCount,
+      sinceDateLabel: calc.sinceDateLabel,
+      sinceDateIso: calc.sinceDateIso,
+    };
+
+    document.getElementById('rc-result-date').textContent = asOfDate;
+    document.getElementById('rc-result-sum').textContent = rcState.cumulativeSum.toLocaleString();
+    document.getElementById('rc-since-label').textContent = rcState.sinceDateLabel;
+    document.getElementById('rc-matched-count').textContent = rcState.matchedCount + ' txn(s)';
+    document.getElementById('rc-result-box').style.display = 'block';
+    document.getElementById('rc-add-form').style.display = 'none';
+    document.getElementById('rc-clear-form').style.display = 'none';
+
+    const variance = Math.round((statementAmount - rcState.cumulativeSum) * 100) / 100;
+    rcState.variance = variance;
+
+    const box = document.getElementById('rc-compare-box');
+    const actions = document.getElementById('rc-actions');
+    box.style.display = 'block';
+    actions.style.display = 'flex';
+    actions.innerHTML = '';
+
+    if (variance === 0) {
+      box.className = 'rc-result-box match';
+      box.innerHTML = `<b>These match.</b> Ready to reconcile ${rcState.matchedCount} transaction(s).`;
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-primary btn-block';
+      btn.textContent = 'Confirm & Reconcile';
+      btn.onclick = rcConfirmReconcile;
+      actions.appendChild(btn);
+    } else {
+      box.className = 'rc-result-box mismatch';
+      box.innerHTML = `
+        <b>These do not match.</b>
+        <div class="rc-row"><span>Book balance</span><span>${rcState.cumulativeSum.toLocaleString()}</span></div>
+        <div class="rc-row"><span>You entered</span><span>${statementAmount.toLocaleString()}</span></div>
+        <div class="rc-row"><b>Variance</b><b>${variance.toLocaleString()}</b></div>
+        <p class="rc-hint">Positive variance = statement is higher than what's logged (something's missing). Negative = statement is lower (over-logged or a refund).</p>
+      `;
+      const row = document.createElement('div');
+      row.className = 'rc-actions-row';
+
+      const backBtn = document.createElement('button');
+      backBtn.className = 'btn btn-danger';
+      backBtn.textContent = 'Back out';
+      backBtn.onclick = closeReconcile;
+
+      const adjBtn = document.createElement('button');
+      adjBtn.className = 'btn btn-secondary';
+      adjBtn.textContent = 'Add adjustment';
+      adjBtn.onclick = rcConfirmInsertAdjustment;
+
+      row.appendChild(backBtn);
+      row.appendChild(adjBtn);
+      actions.appendChild(row);
+
+      const clearBtn = document.createElement('button');
+      clearBtn.className = 'btn btn-ghost btn-block';
+      clearBtn.textContent = 'Clear existing transactions';
+      clearBtn.onclick = rcShowClearForm;
+      actions.appendChild(clearBtn);
+
+      const addBtn = document.createElement('button');
+      addBtn.className = 'btn btn-ghost btn-block';
+      addBtn.textContent = 'Add transaction';
+      addBtn.onclick = rcShowAddForm;
+      actions.appendChild(addBtn);
+    }
+  }
+
+  function rcConfirmReconcile() {
+    showConfirm(
+      `This will mark ${rcState.matchedCount} transaction(s) as reconciled and update ${rcState.account}'s "Last Reconciled" info. Continue?`,
+      async () => {
+        rcSetBusy(true);
+        try {
+          const r = await apiPost('/api/reconcile', {
+            action: 'confirm',
+            account: rcState.account,
+            asOfDate: rcState.asOfDate,
+            statementAmount: rcState.statementAmount,
+          });
+          rcSetBusy(false);
+          showAlert(`Reconciled. ${r.matchedCount} transaction(s) marked, Accounts tab updated.`, 'Done');
+          closeReconcile();
+          openAccountDetail(currentAccount);
+        } catch (err) {
+          rcSetBusy(false);
+          showAlert(err.message, 'Reconcile failed');
+        }
+      },
+      { title: 'Confirm & Reconcile', confirmLabel: 'Confirm & Reconcile' }
+    );
+  }
+
+  function rcConfirmInsertAdjustment() {
+    const projType = rcState.variance > 0 ? 'Expense' : 'Income';
+    const projAmount = Math.abs(rcState.variance);
+    showConfirm(
+      `This will insert one new "Reconciliation" ${projType} transaction for ${projAmount.toLocaleString()} dated ${rcState.asOfDate}, and mark ${rcState.matchedCount + 1} transaction(s) as reconciled.\n\nYou can undo this afterward via "View / undo last reconciliation", but only until this account is reconciled again. Continue?`,
+      async () => {
+        rcSetBusy(true);
+        try {
+          const r = await apiPost('/api/reconcile', {
+            action: 'add-adjustment',
+            account: rcState.account,
+            asOfDate: rcState.asOfDate,
+            statementAmount: rcState.statementAmount,
+          });
+          rcSetBusy(false);
+          showAlert(`Inserted a Reconciliation ${r.type} row for ${r.amount.toLocaleString()}. ${r.matchedCount} transaction(s) total marked reconciled.`, 'Done');
+          closeReconcile();
+          openAccountDetail(currentAccount);
+        } catch (err) {
+          rcSetBusy(false);
+          showAlert(err.message, 'Add adjustment failed');
+        }
+      },
+      { title: 'Add adjustment row', confirmLabel: 'Add adjustment row' }
+    );
+  }
+
+  function guessBillingMonth(dateStr) {
+    const d = new Date(dateStr + 'T00:00:00');
+    if (d.getDate() > 12) {
+      d.setDate(1);
+      d.setMonth(d.getMonth() + 1);
+    }
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  }
+
+  let rcAddType = 'Expense';
+  function rcSetAddType(type) {
+    rcAddType = type;
+    document.getElementById('rc-add-type-expense').classList.toggle('active', type === 'Expense');
+    document.getElementById('rc-add-type-income').classList.toggle('active', type === 'Income');
+  }
+
+  let addMonthTouched = false;
+  document.getElementById('rc-add-month').addEventListener('input', () => { addMonthTouched = true; });
+  document.getElementById('rc-add-date').addEventListener('change', () => {
+    if (!addMonthTouched) {
+      document.getElementById('rc-add-month').value = guessBillingMonth(document.getElementById('rc-add-date').value);
+    }
+  });
+
+  function rcShowAddForm() {
+    document.getElementById('rc-clear-form').style.display = 'none';
+    document.getElementById('rc-add-name').value = '';
+    document.getElementById('rc-add-amount').value = '';
+    rcSetAddType('Expense');
+    document.getElementById('rc-add-date').value = rcState.asOfDate;
+    document.getElementById('rc-add-month').value = guessBillingMonth(rcState.asOfDate);
+    addMonthTouched = false;
+    document.getElementById('rc-add-form').style.display = 'block';
+    document.getElementById('rc-add-form').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+  function rcHideAddForm() {
+    document.getElementById('rc-add-form').style.display = 'none';
+  }
+
+  let rcClearSelection = new Set();
+
+  function rcShowClearForm() {
+    document.getElementById('rc-add-form').style.display = 'none';
+
+    const candidates = currentAccountTxns.filter((t) =>
+      t.sof === currentAccount && !t.isCleared && t.date && t.date <= rcState.asOfDate
+    );
+
+    rcClearSelection = new Set();
+    const listEl = document.getElementById('rc-clear-list');
+
+    if (!candidates.length) {
+      listEl.innerHTML = '<div class="rc-clear-empty">No uncleared transactions found on this account dated on or before ' + rcState.asOfDate + '.</div>';
+    } else {
+      listEl.innerHTML = candidates.map((t) => {
+        const isIncome = t.type === 'Income';
+        const amountText = (isIncome ? '+' : '') + formatIDR(t.amount);
+        const metaBits = [t.date];
+        if (t.transfer) metaBits.push('payment');
+        return `
+          <label class="rc-clear-item">
+            <input type="checkbox" data-row="${t.rowNumber}" onchange="rcOnClearItemToggle(${t.rowNumber}, this.checked)">
+            <div class="rc-clear-item-main">
+              <div class="rc-clear-item-payee">${t.payee}</div>
+              <div class="rc-clear-item-meta">${metaBits.join(' &middot; ')}</div>
+            </div>
+            <div class="rc-clear-item-amount ${isIncome ? 'income' : ''}">${amountText}</div>
+          </label>
+        `;
+      }).join('');
+    }
+
+    rcUpdateClearSelectionUI();
+    document.getElementById('rc-clear-form').style.display = 'block';
+    document.getElementById('rc-clear-form').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  function rcHideClearForm() {
+    document.getElementById('rc-clear-form').style.display = 'none';
+  }
+
+  function rcOnClearItemToggle(rowNumber, checked) {
+    if (checked) rcClearSelection.add(rowNumber);
+    else rcClearSelection.delete(rowNumber);
+    rcUpdateClearSelectionUI();
+  }
+
+  function rcUpdateClearSelectionUI() {
+    const selected = currentAccountTxns.filter((t) => rcClearSelection.has(t.rowNumber));
+    const total = selected.reduce((s, t) => s + (t.type === 'Income' ? -t.amount : t.amount), 0);
+    document.getElementById('rc-clear-selected-total').textContent = total.toLocaleString();
+    document.getElementById('rc-clear-save-btn').disabled = selected.length === 0;
+  }
+
+  async function rcSaveClearSelection() {
+    const rowNumbers = Array.from(rcClearSelection);
+    if (!rowNumbers.length) return;
+    rcSetBusy(true);
+    try {
+      await apiPost('/api/reconcile', {
+        action: 'clear-transactions',
+        account: currentAccount,
+        rowNumbers,
+      });
+      rcSetBusy(false);
+      rcHideClearForm();
+      await fetchAndRenderAccountDetail(currentAccount);
+      rcCalculate();
+    } catch (err) {
+      rcSetBusy(false);
+      showAlert(err.message, 'Clear transactions failed');
+    }
+  }
+
+  async function rcSaveTransaction() {
+    const name = document.getElementById('rc-add-name').value.trim();
+    const dateStr = document.getElementById('rc-add-date').value;
+    const monthStr = document.getElementById('rc-add-month').value;
+    const rawAmount = document.getElementById('rc-add-amount').value;
+    const amount = Number(String(rawAmount).replace(/[^0-9.-]/g, ''));
+
+    if (!name) { showAlert('Enter a name for the transaction.'); return; }
+    if (!dateStr) { showAlert('Pick a date.'); return; }
+    if (!monthStr) { showAlert('Pick a billing month.'); return; }
+    if (isNaN(amount) || amount <= 0) { showAlert('Enter a positive amount.'); return; }
+
+    const tooOld = rcState.sinceDateIso && dateStr <= rcState.sinceDateIso;
+    const tooNew = dateStr > rcState.asOfDate;
+    if (tooOld || tooNew) {
+      const windowLabel = (rcState.sinceDateIso || '(beginning)') + ' → ' + rcState.asOfDate;
+      showConfirm(
+        `This date is outside the current reconciliation window (${windowLabel}).\n\nAdd it anyway?`,
+        () => rcDoSaveTransaction(name, dateStr, monthStr, amount),
+        { title: 'Outside reconciliation window', confirmLabel: 'Add anyway' }
+      );
+      return;
+    }
+    rcDoSaveTransaction(name, dateStr, monthStr, amount);
+  }
+
+  async function rcDoSaveTransaction(name, dateStr, monthStr, amount) {
+    rcSetBusy(true);
+    try {
+      await apiPost('/api/reconcile', {
+        action: 'add-transaction',
+        account: currentAccount,
+        name,
+        type: rcAddType,
+        date: dateStr,
+        amount,
+        month: monthStr,
+      });
+      rcSetBusy(false);
+      rcHideAddForm();
+      rcCalculate();
+    } catch (err) {
+      rcSetBusy(false);
+      showAlert(err.message, 'Add transaction failed');
+    }
+  }
+
+  let cashAccountsCache = null;
+  async function getCashAccounts() {
+    if (cashAccountsCache) return cashAccountsCache;
+    const data = await apiGet('/api/accounts-list');
+    cashAccountsCache = data.accounts.filter((a) => !(a.type || '').toLowerCase().includes('credit'));
+    return cashAccountsCache;
+  }
+
+  function monthMinusOne(monthStr) {
+    const [y, m] = monthStr.split('-').map(Number);
+    const d = new Date(Date.UTC(y, m - 1, 1));
+    d.setUTCMonth(d.getUTCMonth() - 1);
+    return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
+  }
+
+  function digitsOnly(str) {
+    return (str || '').replace(/[^\d]/g, '');
+  }
+  function formatAmountDisplay(digits) {
+    return digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  }
+  function resizePayAmountInput() {
+    const el = document.getElementById('pay-amount');
+    el.style.width = (el.value.length + 1) + 'ch';
+  }
+
+  let payMonthTouched = false;
+  let payAmountTouched = false;
+  let payAmountRequestId = 0;
+
+  document.getElementById('pay-amount').addEventListener('input', () => {
+    const el = document.getElementById('pay-amount');
+    el.value = formatAmountDisplay(digitsOnly(el.value));
+    resizePayAmountInput();
+    payAmountTouched = true;
+  });
+  document.getElementById('pay-month').addEventListener('input', () => {
+    payMonthTouched = true;
+    refreshPrefillAmount();
+  });
+  document.getElementById('pay-date').addEventListener('change', () => {
+    if (!payMonthTouched) {
+      document.getElementById('pay-month').value = monthMinusOne(guessBillingMonth(document.getElementById('pay-date').value));
+      refreshPrefillAmount();
+    }
+  });
+
+  async function refreshPrefillAmount() {
+    if (payAmountTouched) return;
+    const monthStr = document.getElementById('pay-month').value;
+    if (!currentAccount || !monthStr) return;
+    const requestId = ++payAmountRequestId;
+    const hintEl = document.getElementById('pay-amount-hint');
+    try {
+      const data = await apiGet('/api/reconcile?action=billed-amount&cardAccount=' + encodeURIComponent(currentAccount) + '&month=' + encodeURIComponent(monthStr));
+      if (requestId !== payAmountRequestId || payAmountTouched) return;
+      if (data.found) {
+        const el = document.getElementById('pay-amount');
+        el.value = formatAmountDisplay(digitsOnly(String(Math.round(data.amount))));
+        resizePayAmountInput();
+        hintEl.textContent = `Pre-filled from ${currentAccount}'s Billed statement for ${monthStr}. Editable.`;
+      } else {
+        hintEl.textContent = ' ';
+      }
+    } catch (err) {
+    }
+  }
+
+  async function openPayCard() {
+    document.getElementById('pay-account-name').textContent = currentAccount;
+    document.getElementById('pay-account-name-2').textContent = currentAccount;
+    payAmountTouched = false;
+    document.getElementById('pay-amount').value = '';
+    document.getElementById('pay-amount-hint').textContent = ' ';
+    resizePayAmountInput();
+    const todayStr = todayISO();
+    document.getElementById('pay-date').value = todayStr;
+    payMonthTouched = false;
+    document.getElementById('pay-month').value = monthMinusOne(guessBillingMonth(todayStr));
+
+    const cashSelect = document.getElementById('pay-cash-account');
+    cashSelect.innerHTML = '<option value="">Loading…</option>';
+    document.getElementById('pay-overlay').classList.add('open');
+    document.getElementById('pay-amount').focus();
+    refreshPrefillAmount();
+    try {
+      const cashAccounts = await getCashAccounts();
+      cashSelect.innerHTML = cashAccounts.length
+        ? cashAccounts.map((a) => `<option value="${a.name}">${a.name}</option>`).join('')
+        : '<option value="">No cash/bank accounts found</option>';
+    } catch (err) {
+      cashSelect.innerHTML = '<option value="">Error loading accounts</option>';
+    }
+  }
+  function closePayCard() {
+    document.getElementById('pay-overlay').classList.remove('open');
+  }
+  function paySetBusy(busy) {
+    document.querySelectorAll('#pay-overlay button').forEach((b) => { b.disabled = busy; });
+  }
+
+  async function savePayCard() {
+    const amountDigits = digitsOnly(document.getElementById('pay-amount').value);
+    const amount = Number(amountDigits);
+    const cashAccount = document.getElementById('pay-cash-account').value;
+    const dateStr = document.getElementById('pay-date').value;
+    const monthStr = document.getElementById('pay-month').value;
+
+    if (!amountDigits || isNaN(amount) || amount <= 0) { showAlert('Enter a positive amount.'); return; }
+    if (!cashAccount) { showAlert('Choose which account is paying.'); return; }
+    if (!dateStr) { showAlert('Pick a payment date.'); return; }
+    if (!monthStr) { showAlert('Pick a billing month.'); return; }
+
+    paySetBusy(true);
+    try {
+      const r = await apiPost('/api/reconcile', {
+        action: 'pay-card',
+        cardAccount: currentAccount,
+        cashAccount,
+        amount,
+        date: dateStr,
+        month: monthStr,
+      });
+      paySetBusy(false);
+      closePayCard();
+      const flipNote = r.diaryFlipped ? ` ${currentAccount}'s Diary bill for ${monthStr} was marked Paid.` : '';
+      showAlert(`Payment logged on both ${currentAccount} and ${cashAccount}.${flipNote}`, 'Payment saved');
+      openAccountDetail(currentAccount);
+    } catch (err) {
+      paySetBusy(false);
+      showAlert(err.message, 'Payment failed');
+    }
+  }
+
+  function openUndoPaymentMenu(txn) {
+    showConfirm(
+      `"${txn.payee}" is one leg of a card payment. Undoing it removes BOTH this entry and its matching entry on the other account.`,
+      () => doUndoPayment(txn),
+      { title: 'Card payment', confirmLabel: 'Undo Payment', cancelLabel: 'Close', danger: true }
+    );
+  }
+  async function doUndoPayment(txn) {
+    if (!txn.paymentId) {
+      showAlert('This payment predates Payment ID tracking and can\'t be auto-undone -- delete each leg manually instead.', 'Cannot undo');
+      return;
+    }
+    try {
+      const r = await apiPost('/api/reconcile', { action: 'undo-payment', paymentId: txn.paymentId });
+      const flipNote = r.diaryFlipped ? ' Its Diary bill was marked Billed again.' : '';
+      showAlert(`Removed ${r.deletedCount} transaction(s).${flipNote}`, 'Payment undone');
+      await fetchAndRenderAccountDetail(currentAccount);
+    } catch (err) {
+      showAlert(err.message, 'Undo failed');
+    }
+  }
+
+  async function openUndo() {
+    document.getElementById('undo-account-name').textContent = currentAccount;
+    const body = document.getElementById('undo-body');
+    body.innerHTML = '<p class="sub">Looking up…</p>';
+    document.getElementById('undo-overlay').classList.add('open');
+
+    let e;
+    try {
+      e = await apiGet('/api/reconcile?action=last&account=' + encodeURIComponent(currentAccount));
+    } catch (err) {
+      body.innerHTML = `<p class="error">${err.message}</p>`;
+      return;
+    }
+
+    if (!e.found) {
+      body.innerHTML = '<p class="sub">No reconciliation history found for this account.</p>';
+      return;
+    }
+
+    const adj = e.adjustmentType
+      ? `<div class="rc-row"><span>Adjustment row</span><span>${e.adjustmentType} ${e.adjustmentAmount.toLocaleString()}</span></div>`
+      : '';
+    body.innerHTML = `
+      <div class="rc-result-box rc-log-entry">
+        <div class="rc-row"><span>Period</span><span>${e.periodStartLabel} → ${e.periodEndLabel}</span></div>
+        <div class="rc-row"><span>System total</span><span>${e.systemTotal.toLocaleString()}</span></div>
+        <div class="rc-row"><span>Statement amount</span><span>${e.statementAmount.toLocaleString()}</span></div>
+        <div class="rc-row"><span>Variance</span><span>${e.variance.toLocaleString()}</span></div>
+        <div class="rc-row"><span>Transactions marked reconciled</span><span>${e.matchedCount}</span></div>
+        ${adj}
+      </div>
+    `;
+    if (e.isCurrent) {
+      const btn = document.createElement('button');
+      btn.className = 'btn btn-danger btn-block';
+      btn.style.marginTop = '12px';
+      btn.textContent = 'Undo this reconciliation';
+      btn.onclick = () => {
+        showConfirm(
+          'This will un-mark those transactions as reconciled, delete the auto-inserted adjustment row (if there was one), and restore the Accounts tab to its prior state. Continue?',
+          async () => {
+            document.querySelectorAll('#undo-overlay button').forEach((b) => { b.disabled = true; });
+            try {
+              const r = await apiPost('/api/reconcile', { action: 'undo', account: currentAccount });
+              document.querySelectorAll('#undo-overlay button').forEach((b) => { b.disabled = false; });
+              showAlert('Undone. ' + r.restoredCount + ' transaction(s) un-reconciled' + (r.deletedAdjustment ? ', adjustment row deleted' : '') + '.', 'Done');
+              closeUndo();
+              openAccountDetail(currentAccount);
+            } catch (err) {
+              document.querySelectorAll('#undo-overlay button').forEach((b) => { b.disabled = false; });
+              showAlert(err.message, 'Undo failed');
+            }
+          },
+          { title: 'Undo this reconciliation', confirmLabel: 'Undo', danger: true }
+        );
+      };
+      body.appendChild(btn);
+    } else {
+      body.innerHTML += '<p class="error" style="margin-top:10px;">This account has been reconciled again since this entry — undoing it now is not safe and is disabled.</p>';
+    }
+  }
+  function closeUndo() {
+    document.getElementById('undo-overlay').classList.remove('open');
+  }
+
+  // ---- Hardware-keyboard shortcuts within this page (issue #63) ----
+  // Global H/B/T/A page-nav lives in shared/keyboard-nav.js (KeyboardNav.mount()
+  // below); everything here is specific to the Accounts list/detail screens.
+
+  function acctRowEls() {
+    return Array.from(document.querySelectorAll('#screen-accounts .acct-row'));
+  }
+
+  // Moves the accounts-list highlight to `index`, clamped to the row range
+  // (no wraparound -- Up at the top / Down at the bottom just stays put).
+  function setAcctHighlight(index) {
+    const rows = acctRowEls();
+    rows.forEach((r) => r.classList.remove('kbd-focus'));
+    if (!rows.length) { acctHighlightIndex = -1; return; }
+    acctHighlightIndex = Math.max(0, Math.min(index, rows.length - 1));
+    const row = rows[acctHighlightIndex];
+    row.classList.add('kbd-focus');
+    row.scrollIntoView({ block: 'nearest' });
+  }
+
+  function txnRowEls() {
+    return Array.from(document.querySelectorAll('#detail-txn-list .txn-row'));
+  }
+
+  function setTxnHighlight(index) {
+    const rows = txnRowEls();
+    rows.forEach((r) => r.classList.remove('kbd-focus'));
+    if (!rows.length) { txnHighlightIndex = -1; return; }
+    txnHighlightIndex = Math.max(0, Math.min(index, rows.length - 1));
+    const row = rows[txnHighlightIndex];
+    row.classList.add('kbd-focus');
+    row.scrollIntoView({ block: 'nearest' });
+  }
+
+  // Maps the currently-highlighted transaction ROW ELEMENT back to its data
+  // object via the same data-row/rowNumber lookup the row's own click
+  // handler uses (renderDetailTxnList above) -- rows aren't necessarily in
+  // currentAccountTxns' raw array order once the upcoming-filter is applied.
+  function currentHighlightedTxn() {
+    const rows = txnRowEls();
+    if (txnHighlightIndex < 0 || txnHighlightIndex >= rows.length) return null;
+    const wrap = rows[txnHighlightIndex].closest('.swx-wrap');
+    const rowNumber = wrap ? parseInt(wrap.dataset.row, 10) : NaN;
+    return currentAccountTxns.find((t) => t.rowNumber === rowNumber) || null;
+  }
+
+  // Marks the highlighted row as busy (or reverts it) while a keyboard-
+  // triggered C/Backspace action is in flight, so a slow clear/delete
+  // doesn't look like the keypress was dropped. Swaps the row's meta line
+  // for a spinner + label the same way runBusyAction() in
+  // shared/swipe-actions.js does for the swipe buttons, just applied to the
+  // whole row instead of one action button -- there's nothing to swap text
+  // into here otherwise. `busy: false` restores the row's original meta
+  // markup; only called on error, since success replaces the row entirely
+  // via the normal list re-render.
+  function setRowKbdBusy(row, busy, label) {
+    if (!row) return;
+    row.classList.toggle('kbd-row-busy', busy);
+    const meta = row.querySelector('.txn-meta');
+    if (!meta) return;
+    if (busy) {
+      if (meta.dataset.kbdOrig === undefined) meta.dataset.kbdOrig = meta.innerHTML;
+      meta.innerHTML = `<span class="kbd-busy-meta"><span class="swx-spinner" aria-hidden="true"></span>${label}</span>`;
+    } else if (meta.dataset.kbdOrig !== undefined) {
+      meta.innerHTML = meta.dataset.kbdOrig;
+      delete meta.dataset.kbdOrig;
+    }
+  }
+
+  // Backspace on a highlighted transaction -- always confirms first (via the
+  // same showConfirm sheet used everywhere else on this page, rather than a
+  // plain browser confirm()), then reuses deleteDetailTxnViaSwipe, which
+  // already branches on txn.transfer to call the right endpoint (a normal
+  // delete, or reconcile's undo-payment for one leg of a card payment).
+  function handleKeyboardDeleteTxn(txn) {
+    const isPayment = !!txn.transfer;
+    const message = isPayment
+      ? `Undo this card payment ("${txn.payee}")? This removes BOTH the charge on the card and the matching entry on the paying account.`
+      : `Delete "${txn.payee}"?`;
+    showConfirm(
+      message,
+      async () => {
+        // The confirm sheet is what's owned the keyboard up to now (via the
+        // shared `.open` check), so the row list hasn't changed underneath
+        // it -- txnHighlightIndex still points at the right row.
+        const row = txnRowEls()[txnHighlightIndex];
+        kbdActionBusy = true;
+        setRowKbdBusy(row, true, isPayment ? 'Undoing…' : 'Deleting…');
+        try {
+          await deleteDetailTxnViaSwipe(txn);
+        } catch (err) {
+          setRowKbdBusy(row, false);
+          showAlert(err.message, isPayment ? 'Undo failed' : 'Delete failed');
+        } finally {
+          kbdActionBusy = false;
+        }
+      },
+      { title: isPayment ? 'Undo payment' : 'Delete transaction', confirmLabel: isPayment ? 'Undo Payment' : 'Delete', danger: true }
+    );
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+
+    const t = e.target;
+    const tag = t && t.tagName;
+    // offsetParent === null also catches a field that's still focused but
+    // now hidden -- none of this page's close*() functions blur their
+    // sheet's input on close, so e.g. closing Reconcile right after typing
+    // in rc-statement-amount would otherwise leave every hotkey silently
+    // swallowed (isTextField still true) until the user clicks elsewhere.
+    // BUTTON included (issue #49 keyboard follow-up) so native Tab focus on
+    // a real button -- the Confirm button, the pencil "open editor" button,
+    // etc. -- gets plain native Enter/Space-activates-the-button behavior
+    // instead of also being intercepted here, which tracks a highlighted
+    // row (mouse/arrow-key driven), not real DOM focus, and could
+    // otherwise fire against a different row than the focused button.
+    const isTextField = (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || (t && t.isContentEditable)) && t.offsetParent !== null;
+    if (isTextField) return;
+    // Any sheet/overlay (Add/Edit transaction, reconcile, payment, confirm
+    // dialog, undo-last-reconciliation) is currently open -- let it own the
+    // keyboard rather than also acting on the screen underneath it.
+    if (document.querySelector('.open')) return;
+
+    const onAccountsList = document.getElementById('screen-accounts').style.display !== 'none';
+    const onDetail = document.getElementById('screen-detail').style.display !== 'none';
+
+    if (onAccountsList) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setAcctHighlight(acctHighlightIndex + 1);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setAcctHighlight(acctHighlightIndex - 1);
+      } else if (e.key === 'Enter' || e.key === ' ') {
+        if (acctHighlightIndex < 0) return;
+        const row = acctRowEls()[acctHighlightIndex];
+        if (row) { e.preventDefault(); row.click(); }
+      }
+      return;
+    }
+
+    if (!onDetail) return;
+
+    const key = e.key.toLowerCase();
+    if (key === 'r') {
+      e.preventDefault();
+      openReconcile();
+    } else if (key === 'p') {
+      const payBtn = document.getElementById('detail-pay-btn');
+      if (payBtn.style.display === 'none') return; // not a credit account -- no Add Payment here
+      e.preventDefault();
+      openPayCard();
+    } else if (key === 'v') {
+      e.preventDefault();
+      openUndo();
+    } else if (getComputedStyle(document.getElementById('detail-txn-pull')).display === 'none') {
+      // Wide-viewport data table (issue #86) is the visible view instead of
+      // the mobile card list (#detail-txn-list) -- Up/Down/Enter/Backspace
+      // here drive the table's own keyboard row-editing (dtxKbd* above),
+      // mirroring the Transactions page's own txtKbd* document handler.
+      if (dtxKbdEditRowNumber !== null) return; // the row's own inputs own the keyboard now (dtxKbdInputKeydown)
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setDtxHighlight(dtxKbdHighlightIndex + 1);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setDtxHighlight(dtxKbdHighlightIndex - 1);
+      } else if (e.key === 'Enter' || e.key === ' ') {
+        const txn = dtxCurrentHighlightedTxn();
+        if (!txn) return;
+        e.preventDefault();
+        // Transfer legs aren't editable inline (see startDtxKbdEdit) --
+        // Enter opens the undo-payment menu instead, same as the pencil
+        // button and the mobile card list's own Enter behavior.
+        if (txn.transfer) openUndoPaymentMenu(txn);
+        else startDtxKbdEdit(txn);
+      } else if (e.key === 'Backspace') {
+        const txn = dtxCurrentHighlightedTxn();
+        if (!txn || dtxKbdDeleting) return;
+        e.preventDefault();
+        dtxKbdHandleDelete(txn);
+      }
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setTxnHighlight(txnHighlightIndex + 1);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setTxnHighlight(txnHighlightIndex - 1);
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      const txn = currentHighlightedTxn();
+      if (!txn) return;
+      e.preventDefault();
+      if (txn.transfer) openUndoPaymentMenu(txn);
+      else TransactionForm.open(txn);
+    } else if (key === 'c') {
+      const txn = currentHighlightedTxn();
+      if (!txn || kbdActionBusy) return;
+      e.preventDefault();
+      const row = txnRowEls()[txnHighlightIndex];
+      kbdActionBusy = true;
+      setRowKbdBusy(row, true, txn.isCleared ? 'Unclearing…' : 'Clearing…');
+      toggleDetailTxnClearedViaSwipe(txn)
+        .catch((err) => {
+          setRowKbdBusy(row, false);
+          showAlert(err.message, 'Failed');
+        })
+        .finally(() => { kbdActionBusy = false; });
+    } else if (e.key === 'Backspace') {
+      const txn = currentHighlightedTxn();
+      if (!txn || kbdActionBusy) return;
+      e.preventDefault();
+      handleKeyboardDeleteTxn(txn);
+    }
+  });
+
+  document.querySelectorAll('#dtx-table th[data-sort]').forEach((th) => {
+    th.addEventListener('click', () => {
+      const key = th.dataset.sort;
+      if (dtxSort.key === key) {
+        dtxSort.dir = dtxSort.dir === 'asc' ? 'desc' : 'asc';
+      } else {
+        dtxSort = { key, dir: (key === 'date' || key === 'amount') ? 'desc' : 'asc' };
+      }
+      renderDetailTable(dtxLastVisible);
+    });
+  });
+
+  Object.values(dtxFilterEls).forEach((el) => {
+    el.addEventListener('input', () => renderDetailTable(dtxLastVisible));
+  });
+  document.getElementById('dtx-f-clear').addEventListener('click', () => {
+    Object.values(dtxFilterEls).forEach((el) => { el.value = ''; });
+    renderDetailTable(dtxLastVisible);
+  });
+  dtxInitColumnControls();
+
+  TransactionForm.mount(document.getElementById('txf-root'), {
+    supportEditDelete: true,
+    onSaved: () => { if (currentAccount) fetchAndRenderAccountDetail(currentAccount); },
+    onDeleted: () => { if (currentAccount) fetchAndRenderAccountDetail(currentAccount); },
+  });
+
+  document.getElementById('txf-fab').addEventListener('click', () => {
+    const sofEl = document.getElementById('txf-f-sof');
+    if (sofEl && currentAccount) sofEl.value = currentAccount;
+  });
+
+  BottomNav.mount(document.getElementById('bnv-root'), { active: 'accounts' });
+  KeyboardNav.mount();
+
+  setupPullToRefresh();
+  loadAccountsList();
+</script>
+</body>
+</html>
