@@ -236,6 +236,7 @@
     .txt-table th:hover { color: var(--text); }
     .txt-table th .txt-sort-arrow { margin-left: 3px; opacity: 0.6; }
     .txt-table th.txt-sorted .txt-sort-arrow { opacity: 1; }
+    .txt-table-wrap { overflow-x: auto; }
     .txt-table td { padding: 8px 10px; border-top: 1px solid #22262f; white-space: nowrap; }
     .txt-table td.txt-amount { text-align: right; }
     .txt-table td.txt-truncate,
@@ -299,6 +300,104 @@
     .txt-table tbody tr.txt-kbd-highlight { outline: 2px solid var(--accent); outline-offset: -2px; }
     .txt-table tbody tr.txt-kbd-row-saving { opacity: 0.6; }
     .txt-cell-checkbox { width: 16px; height: 16px; cursor: pointer; }
+
+    /* -- column show/hide + draggable column widths (issue #79) --
+       Visibility and width both apply at the <colgroup> level, so the
+       picker panel and the resize handles only ever touch <col> elements,
+       not individual cells. Hiding uses `visibility: collapse` on the
+       <col>, not `display: none` -- collapse is the CSS table-column value
+       that actually removes a whole column (header cell included) from
+       the rendered table and lets the other columns reclaim its width;
+       `display: none` on a <col> is a no-op in current browsers (the `col`
+       element itself isn't a rendered box to begin with, so hiding it
+       doesn't hide the cells it's paired with). See the "column layout
+       (issue #79)" comment above the script block below for the
+       persisted-layout details. */
+    .txt-table th { position: relative; }
+    .txt-col-resizer {
+      position: absolute;
+      top: 0;
+      right: -4px;
+      width: 8px;
+      height: 100%;
+      cursor: col-resize;
+      z-index: 1;
+      touch-action: none;
+    }
+    .txt-col-resizer:hover { background: rgba(255, 255, 255, 0.12); }
+    body.txt-resizing { cursor: col-resize; user-select: none; }
+    body.txt-resizing .txt-col-resizer { background: rgba(255, 255, 255, 0.12); }
+
+    .txt-col-picker { position: relative; }
+    .txt-columns-btn {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid #2a2e37;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 0.85rem;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    .txt-columns-btn:hover { color: var(--text); border-color: #3a3f4b; }
+    .txt-columns-panel {
+      display: none;
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      z-index: 5;
+      background: var(--card);
+      border: 1px solid #2a2e37;
+      border-radius: 10px;
+      padding: 10px 12px;
+      min-width: 160px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+    .txt-columns-panel.open { display: block; }
+    .txt-columns-panel label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.85rem;
+      padding: 4px 0;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .txt-columns-panel label input { cursor: pointer; }
+    .txt-columns-reset {
+      display: block;
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      border: none;
+      border-top: 1px solid #2a2e37;
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-family: inherit;
+      padding: 8px 0 2px;
+      margin-top: 4px;
+      cursor: pointer;
+    }
+    .txt-columns-reset:hover { color: var(--text); }
+
+    .txt-sortby-group { display: flex; align-items: center; gap: 0; }
+    .txt-sortby-group select {
+      border-top-right-radius: 0;
+      border-bottom-right-radius: 0;
+    }
+    .txt-sortby-dir {
+      background: var(--card);
+      color: var(--muted);
+      border: 1px solid #2a2e37;
+      border-left: none;
+      border-top-right-radius: 8px;
+      border-bottom-right-radius: 8px;
+      padding: 8px 10px;
+      font-size: 0.85rem;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    .txt-sortby-dir:hover { color: var(--text); }
   }
 </style>
 </head>
@@ -339,32 +438,52 @@
       <input type="date" id="txt-f-from" title="From date" />
       <input type="date" id="txt-f-to" title="To date" />
       <button type="button" class="txt-filter-clear" id="txt-f-clear">Clear filters</button>
+
+      <!-- Sort-by, decoupled from the column headers (issue #79) -- a
+           column hidden via the picker below still has its header (and
+           therefore its click-to-sort control) hidden along with it, so
+           this pair is the only way to sort by that column while it's
+           hidden. Clicking a visible header still works too and keeps
+           this select in sync -- see txtUpdateSortIndicators(). -->
+      <div class="txt-sortby-group">
+        <select id="txt-f-sortby" title="Sort by"></select>
+        <button type="button" class="txt-sortby-dir" id="txt-f-sortdir" title="Toggle sort direction"></button>
+      </div>
+
+      <!-- Column show/hide (issue #79) -->
+      <div class="txt-col-picker">
+        <button type="button" class="txt-columns-btn" id="txt-columns-btn">Columns ▾</button>
+        <div class="txt-columns-panel" id="txt-columns-panel">
+          <div id="txt-columns-checkboxes"></div>
+          <button type="button" class="txt-columns-reset" id="txt-columns-reset">Reset to defaults</button>
+        </div>
+      </div>
     </div>
 
     <div id="list"><div class="sub">Loading…</div></div>
 
     <div class="txt-table-wrap">
       <table class="txt-table" id="txt-table">
-        <colgroup>
-          <col style="width: 90px" />   <!-- Date -->
-          <col style="width: 300px" />  <!-- Payee -->
-          <col style="width: 140px" />  <!-- Account -->
-          <col style="width: 110px" />  <!-- Amount -->
-          <col style="width: 34px" />   <!-- Status (C) -->
-          <col style="width: 78px" />  <!-- Pending / Confirm (issue #49) -->
-          <col />                        <!-- Notes: takes the rest -->
-          <col style="width: 28px" />   <!-- Open full sheet (issue #77) -->
+        <colgroup id="txt-colgroup">
+          <col data-col="date" style="width: 90px" />   <!-- Date -->
+          <col data-col="payee" style="width: 300px" />  <!-- Payee -->
+          <col data-col="sof" style="width: 140px" />  <!-- Account -->
+          <col data-col="amount" style="width: 110px" />  <!-- Amount -->
+          <col data-col="cleared" style="width: 34px" />   <!-- Status (C) -->
+          <col data-col="pending" style="width: 78px" />  <!-- Pending / Confirm (issue #49) -- not part of the issue #79 show/hide+resize picker: see COLUMNS comment below -->
+          <col data-col="notes" />                        <!-- Notes: takes the rest -->
+          <col data-col="open" style="width: 28px" />   <!-- Open full sheet (issue #77) -->
         </colgroup>
         <thead>
           <tr>
-            <th data-sort="date">Date <span class="txt-sort-arrow"></span></th>
-            <th data-sort="payee" class="txt-truncate">Payee <span class="txt-sort-arrow"></span></th>
-            <th data-sort="sof">Account <span class="txt-sort-arrow"></span></th>
-            <th data-sort="amount">Amount <span class="txt-sort-arrow"></span></th>
-            <th data-sort="cleared" class="txt-status-col" title="Cleared">C <span class="txt-sort-arrow"></span></th>
-            <th data-sort="pending" class="txt-pending-col" title="Pending">Pending <span class="txt-sort-arrow"></span></th>
-            <th class="txt-truncate">Notes</th>
-            <th></th>
+            <th data-sort="date" data-col="date">Date <span class="txt-sort-arrow"></span></th>
+            <th data-sort="payee" data-col="payee" class="txt-truncate">Payee <span class="txt-sort-arrow"></span></th>
+            <th data-sort="sof" data-col="sof">Account <span class="txt-sort-arrow"></span></th>
+            <th data-sort="amount" data-col="amount">Amount <span class="txt-sort-arrow"></span></th>
+            <th data-sort="cleared" data-col="cleared" class="txt-status-col" title="Cleared">C <span class="txt-sort-arrow"></span></th>
+            <th data-sort="pending" data-col="pending" class="txt-pending-col" title="Pending">Pending <span class="txt-sort-arrow"></span></th>
+            <th data-col="notes" class="txt-truncate">Notes</th>
+            <th data-col="open"></th>
           </tr>
         </thead>
         <tbody id="txt-table-body"></tbody>
@@ -428,6 +547,241 @@
     const txtTableBodyEl = document.getElementById('txt-table-body');
     let txtSort = { key: 'date', dir: 'desc' };
     let txtLastVisible = [];
+
+    // -- column show/hide + draggable column widths (issue #79) --
+    // COLUMNS is the single source of truth for every data column the
+    // picker/resizer touch -- deliberately excludes the trailing "open full
+    // sheet" action column (data-col="open"), which is neither a data
+    // column nor mentioned in the issue's own list. `resizable: false`
+    // (Cleared) keeps that column at its fixed icon-sized width -- dragging
+    // a 34px status column to arbitrary widths has no real use, and the
+    // issue's own "override the built-in default widths" framing was about
+    // Date/Account/Amount/Payee/Notes. Notes is hideable but not resizable:
+    // it's the one column with no default width (colgroup has no `width`
+    // for it) so it can soak up whatever space the fixed-width columns
+    // leave -- giving it a persisted pixel width would turn it into just
+    // another fixed column and defeat that "takes the rest" role table-wide.
+    const COLUMNS = [
+      { key: 'date', label: 'Date', defaultWidth: 90, minWidth: 70, resizable: true },
+      { key: 'payee', label: 'Payee', defaultWidth: 300, minWidth: 100, resizable: true },
+      { key: 'sof', label: 'Account', defaultWidth: 140, minWidth: 80, resizable: true },
+      { key: 'amount', label: 'Amount', defaultWidth: 110, minWidth: 70, resizable: true },
+      { key: 'cleared', label: 'Cleared', defaultWidth: 34, minWidth: 34, resizable: false },
+      { key: 'notes', label: 'Notes', defaultWidth: null, minWidth: 80, resizable: false },
+    ];
+    const TXT_COLUMN_LAYOUT_KEY = 'mnab-txt-column-layout-v1';
+
+    function txtDefaultColumnLayout() {
+      const visible = {};
+      const widths = {};
+      COLUMNS.forEach((c) => { visible[c.key] = true; widths[c.key] = c.defaultWidth; });
+      return { visible, widths };
+    }
+
+    // Reads the persisted layout and merges it over the defaults rather
+    // than trusting it wholesale -- a column added since the layout was
+    // saved (or a widths/visible object malformed by hand-editing
+    // localStorage) should degrade back to its default, not disappear or
+    // throw, per the issue's own "should degrade gracefully" note.
+    function txtLoadColumnLayout() {
+      const layout = txtDefaultColumnLayout();
+      try {
+        const raw = localStorage.getItem(TXT_COLUMN_LAYOUT_KEY);
+        if (!raw) return layout;
+        const saved = JSON.parse(raw);
+        COLUMNS.forEach((c) => {
+          if (saved.visible && typeof saved.visible[c.key] === 'boolean') {
+            layout.visible[c.key] = saved.visible[c.key];
+          }
+          if (c.resizable && saved.widths && Number.isFinite(saved.widths[c.key])) {
+            layout.widths[c.key] = Math.max(c.minWidth, saved.widths[c.key]);
+          }
+        });
+      } catch (err) {
+        // Corrupt/unavailable localStorage (private browsing, hand-edited
+        // JSON, etc.) -- fall back to defaults rather than breaking the page.
+      }
+      // Never allow every column to end up hidden -- there'd be nothing
+      // left to click to bring one back.
+      if (!COLUMNS.some((c) => layout.visible[c.key])) {
+        COLUMNS.forEach((c) => { layout.visible[c.key] = true; });
+      }
+      return layout;
+    }
+
+    let txtColumnLayout = txtLoadColumnLayout();
+
+    function txtSaveColumnLayout() {
+      try {
+        localStorage.setItem(TXT_COLUMN_LAYOUT_KEY, JSON.stringify(txtColumnLayout));
+      } catch (err) {
+        // Storage full/unavailable -- the layout just won't persist across
+        // visits this time; the in-memory state for this page load is
+        // unaffected.
+      }
+    }
+
+    // Applies txtColumnLayout to the <colgroup> -- visibility and width both
+    // live at the <col> level, so this is the only place either one needs
+    // to be written to the DOM. `visibility: collapse` removes the whole
+    // column (header cell included) from the rendered table -- see the CSS
+    // comment above for why `display: none` doesn't work here.
+    function txtApplyColumnLayout() {
+      COLUMNS.forEach((c) => {
+        const col = document.querySelector(`#txt-colgroup col[data-col="${c.key}"]`);
+        if (!col) return;
+        col.style.visibility = txtColumnLayout.visible[c.key] ? '' : 'collapse';
+        if (c.resizable) {
+          const w = txtColumnLayout.widths[c.key] || c.defaultWidth;
+          col.style.width = w + 'px';
+        }
+      });
+    }
+
+    function txtVisibleColumnCount() {
+      // +2 for the always-visible Pending (issue #49) and trailing "open
+      // full sheet" columns -- neither is part of COLUMNS/the issue #79
+      // show/hide picker (see the <colgroup> comment above), so they're
+      // never counted in the filter() below but always render.
+      return COLUMNS.filter((c) => txtColumnLayout.visible[c.key]).length + 2;
+    }
+
+    // Sort-by dropdown mirrors exactly the columns whose header already
+    // supports click-to-sort (th[data-sort] in the markup above) -- Notes
+    // isn't one of those today, so it isn't offered here either, keeping
+    // this control an alternate path to the same sort behavior rather than
+    // a new one.
+    const TXT_SORT_COLUMNS = [
+      { key: 'date', label: 'Date' },
+      { key: 'payee', label: 'Payee' },
+      { key: 'sof', label: 'Account' },
+      { key: 'amount', label: 'Amount' },
+      { key: 'cleared', label: 'Cleared' },
+    ];
+
+    function txtRefreshColumnCheckboxes() {
+      const container = document.getElementById('txt-columns-checkboxes');
+      container.innerHTML = COLUMNS.map((c) => `
+        <label>
+          <input type="checkbox" data-col-toggle="${c.key}" ${txtColumnLayout.visible[c.key] ? 'checked' : ''} />
+          ${c.label}
+        </label>
+      `).join('');
+      container.querySelectorAll('input[data-col-toggle]').forEach((cb) => {
+        cb.addEventListener('change', () => {
+          const key = cb.dataset.colToggle;
+          const nextVisible = { ...txtColumnLayout.visible, [key]: cb.checked };
+          // Never let the picker hide every column -- revert this one
+          // checkbox rather than leaving the table with nothing to show.
+          if (!COLUMNS.some((c) => nextVisible[c.key])) {
+            cb.checked = true;
+            return;
+          }
+          txtColumnLayout.visible[key] = cb.checked;
+          txtApplyColumnLayout();
+          txtSaveColumnLayout();
+          renderTable(txtLastVisible);
+        });
+      });
+    }
+
+    // Column drag-resize -- one resizer handle per resizable th, created
+    // once since the <thead> itself is static (only the <tbody> is
+    // rebuilt by renderTable). Dragging updates the <col>'s width live and
+    // persists once on mouseup, not on every mousemove.
+    function txtInitColumnResizers() {
+      let dragCol = null;
+      let dragMinWidth = 0;
+      let dragKey = null;
+      let startX = 0;
+      let startWidth = 0;
+
+      function onMouseMove(e) {
+        if (!dragCol) return;
+        const next = Math.max(dragMinWidth, startWidth + (e.clientX - startX));
+        dragCol.style.width = next + 'px';
+      }
+      function onMouseUp() {
+        if (!dragCol) return;
+        txtColumnLayout.widths[dragKey] = parseInt(dragCol.style.width, 10);
+        txtSaveColumnLayout();
+        document.body.classList.remove('txt-resizing');
+        dragCol = null;
+        dragKey = null;
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+      }
+
+      COLUMNS.filter((c) => c.resizable).forEach((c) => {
+        const th = document.querySelector(`#txt-table th[data-col="${c.key}"]`);
+        if (!th) return;
+        const handle = document.createElement('div');
+        handle.className = 'txt-col-resizer';
+        // A drag starts on mousedown (stopPropagation there keeps it from
+        // also reaching the header's own click-to-sort listener), but the
+        // browser still fires a 'click' on mouseup if the pointer didn't
+        // move -- stop that one too, so a plain click that lands on the
+        // 8px handle strip doesn't also toggle sort.
+        handle.addEventListener('click', (e) => e.stopPropagation());
+        handle.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          e.stopPropagation(); // don't also trigger the header's sort-click handler
+          dragCol = document.querySelector(`#txt-colgroup col[data-col="${c.key}"]`);
+          dragKey = c.key;
+          dragMinWidth = c.minWidth;
+          startX = e.clientX;
+          startWidth = dragCol.getBoundingClientRect().width;
+          document.body.classList.add('txt-resizing');
+          document.addEventListener('mousemove', onMouseMove);
+          document.addEventListener('mouseup', onMouseUp);
+        });
+        th.appendChild(handle);
+      });
+    }
+
+    function txtInitColumnControls() {
+      txtApplyColumnLayout();
+      txtRefreshColumnCheckboxes();
+      txtInitColumnResizers();
+
+      const panel = document.getElementById('txt-columns-panel');
+      const btn = document.getElementById('txt-columns-btn');
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        panel.classList.toggle('open');
+      });
+      document.addEventListener('mousedown', (e) => {
+        if (panel.classList.contains('open') && !panel.contains(e.target) && e.target !== btn) {
+          panel.classList.remove('open');
+        }
+      });
+
+      document.getElementById('txt-columns-reset').addEventListener('click', () => {
+        txtColumnLayout = txtDefaultColumnLayout();
+        txtApplyColumnLayout();
+        txtSaveColumnLayout();
+        txtRefreshColumnCheckboxes();
+        renderTable(txtLastVisible);
+      });
+
+      const sortBySelect = document.getElementById('txt-f-sortby');
+      sortBySelect.innerHTML = TXT_SORT_COLUMNS.map((c) => `<option value="${c.key}">${c.label}</option>`).join('');
+      sortBySelect.value = txtSort.key;
+      sortBySelect.addEventListener('change', () => {
+        const key = sortBySelect.value;
+        if (txtSort.key === key) return;
+        // Same default-direction rule the header click uses below.
+        txtSort = { key, dir: (key === 'date' || key === 'amount') ? 'desc' : 'asc' };
+        renderTable(txtLastVisible);
+      });
+
+      const sortDirBtn = document.getElementById('txt-f-sortdir');
+      sortDirBtn.textContent = txtSort.dir === 'asc' ? '▲' : '▼';
+      sortDirBtn.addEventListener('click', () => {
+        txtSort.dir = txtSort.dir === 'asc' ? 'desc' : 'asc';
+        renderTable(txtLastVisible);
+      });
+    }
 
     // -- keyboard-driven row editing --
     // Down/Up arrow highlights a row and cycles through the visible rows;
@@ -512,6 +866,13 @@
         th.classList.toggle('txt-sorted', isActive);
         arrow.textContent = isActive ? (txtSort.dir === 'asc' ? '▲' : '▼') : '';
       });
+      // Keep the decoupled sort-by control (issue #79) in sync whichever
+      // side changed it -- a header click updates txtSort, this reflects
+      // it back into the select/direction button.
+      const sortBySelect = document.getElementById('txt-f-sortby');
+      const sortDirBtn = document.getElementById('txt-f-sortdir');
+      if (sortBySelect && sortBySelect.value !== txtSort.key) sortBySelect.value = txtSort.key;
+      if (sortDirBtn) sortDirBtn.textContent = txtSort.dir === 'asc' ? '▲' : '▼';
     }
 
     function renderTable(sourceList) {
@@ -526,7 +887,7 @@
       txtUpdateSortIndicators();
 
       if (!rows.length) {
-        txtTableBodyEl.innerHTML = '<tr class="txt-empty-row"><td colspan="8">No transactions match.</td></tr>';
+        txtTableBodyEl.innerHTML = `<tr class="txt-empty-row"><td colspan="${txtVisibleColumnCount()}">No transactions match.</td></tr>`;
         return;
       }
 
@@ -1456,6 +1817,7 @@
       renderList();
     });
 
+    txtInitColumnControls();
     loadTransactions();
     loadAccountFilterOptions();
   </script>
