@@ -382,6 +382,231 @@
     align-items: center;
     gap: 5px;
   }
+
+  /* -- account-detail wide-viewport data table (issue #86, sibling of
+     transactions' issue #65/#77/#79/#49) -- same conventions as the
+     Transactions page's own wide-viewport table, minus an Account column
+     (every row here already belongs to the one account this page is
+     showing). Below 1024px this is all display:none and the existing
+     mobile card list (#detail-txn-pull) is what renders -- same
+     underlying per-account transaction data, just a different view. No
+     device/viewport JS check needed -- pure CSS, same breakpoint
+     shared/responsive.css itself bumps --page-max-width at. */
+  .dtx-filters, .dtx-table-wrap { display: none; }
+
+  @media (min-width: 1024px) {
+    #detail-txn-pull { display: none; }
+    .dtx-filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+    .dtx-filters input,
+    .dtx-filters select {
+      background: var(--card);
+      color: var(--text);
+      border: 1px solid #2a2e37;
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 0.85rem;
+      font-family: inherit;
+    }
+    .dtx-filters input[type="search"] { flex: 1 1 200px; }
+    .dtx-filters input[type="date"] { flex: 0 1 150px; }
+    .dtx-filter-clear {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid #2a2e37;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 0.85rem;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    .dtx-filter-clear:hover { color: var(--text); border-color: #3a3f4b; }
+
+    .dtx-table-wrap { display: block; overflow-x: auto; }
+    /* table-layout: fixed + the <colgroup> widths below are the same
+       one-line-by-default convention as .txt-table: Date/Amount get a
+       fixed px width, Payee gets a fixed default width, and Notes (no
+       width set) soaks up whatever's left. */
+    .dtx-table { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 0.85rem; }
+    .dtx-table th {
+      text-align: left;
+      color: var(--muted);
+      font-weight: 500;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 8px 10px;
+      cursor: pointer;
+      user-select: none;
+      white-space: nowrap;
+      position: relative;
+    }
+    .dtx-table th:hover { color: var(--text); }
+    .dtx-table th .dtx-sort-arrow { margin-left: 3px; opacity: 0.6; }
+    .dtx-table th.dtx-sorted .dtx-sort-arrow { opacity: 1; }
+    .dtx-table td { padding: 8px 10px; border-top: 1px solid #22262f; white-space: nowrap; }
+    .dtx-table td.dtx-amount { text-align: right; }
+    .dtx-table td.dtx-truncate,
+    .dtx-table th.dtx-truncate { overflow: hidden; text-overflow: ellipsis; }
+    .dtx-table td.dtx-status-col,
+    .dtx-table th.dtx-status-col { text-align: center; padding-left: 4px; padding-right: 4px; }
+    .dtx-table tbody tr { cursor: default; }
+    .dtx-table tbody tr:hover { background: var(--card); }
+    .dtx-table .dtx-amount.income { color: var(--accent); }
+    .dtx-table .dtx-upcoming-row td { color: var(--upcoming, #60a5fa); }
+    /* Pending row tint (issue #49) -- listed after upcoming so it wins on a
+       row that's both, same convention as the mobile card CSS above. */
+    .dtx-table .dtx-pending-row td { background: rgba(167,139,250,0.08); }
+    .dtx-table .dtx-pending-row:hover td { background: rgba(167,139,250,0.14); }
+    .dtx-table td.dtx-pending-col { text-align: center; padding-left: 4px; padding-right: 4px; }
+    /* Reconciled rows: same dimmed treatment as .txn-row.reconciled on the
+       mobile card list -- still editable (only a transfer/payment row
+       blocks inline editing, see .dtx-transfer-row below). */
+    .dtx-table .dtx-reconciled-row td { opacity: 0.55; }
+    /* Transfer (card payment) legs: inline cell editing is disabled --
+       editing one leg's fields here would silently desync it from its
+       linked pair. The pencil button opens the undo-payment menu instead
+       of the full edit sheet for these rows -- see the script section. */
+    .dtx-table .dtx-transfer-row td.dtx-editable { cursor: default; }
+    .dtx-table .dtx-transfer-row td.dtx-editable:hover { background: none; }
+    .dtx-empty-row td { color: var(--muted); text-align: center; padding: 20px 10px; white-space: normal; }
+
+    /* -- inline cell editing (issue #77-style, single-cell) -- click a cell
+       to edit it in place; the trailing pencil button (.dtx-open-btn) opens
+       the full Add/Edit sheet for anything not covered here, or the
+       undo-payment menu for a transfer row.
+       -- keyboard whole-row editing (issue #86 keyboard follow-up, mirrors
+       the Transactions page's own txtKbd* system) -- Down/Up highlights a
+       row, Enter opens every editable field at once, Tab/Shift-Tab cycles
+       between them, Enter saves the whole row and Escape discards it. See
+       the dtxKbd* functions in the script section below. */
+    .dtx-table td.dtx-editable { cursor: text; }
+    .dtx-table td.dtx-editable:hover { background: rgba(255, 255, 255, 0.06); }
+    .dtx-table td.dtx-status-col { cursor: pointer; }
+    .dtx-table td.dtx-editing { padding: 4px 6px; }
+    .dtx-table td.dtx-cell-saving { opacity: 0.5; pointer-events: none; }
+    .dtx-table td.dtx-open-col { text-align: center; padding-left: 2px; padding-right: 2px; }
+    .dtx-table tbody tr.dtx-kbd-highlight { outline: 2px solid var(--accent); outline-offset: -2px; }
+    .dtx-table tbody tr.dtx-kbd-row-saving { opacity: 0.6; }
+    .dtx-cell-checkbox { width: 16px; height: 16px; cursor: pointer; }
+    .dtx-open-btn {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-size: 0.85rem;
+      cursor: pointer;
+      padding: 2px 4px;
+      line-height: 1;
+    }
+    .dtx-open-btn:hover { color: var(--text); }
+    .dtx-open-btn:disabled { opacity: 0.3; cursor: default; }
+    .dtx-table .txn-confirm-btn { padding: 2px 7px; font-size: 0.68rem; }
+    .dtx-cell-input {
+      width: 100%;
+      box-sizing: border-box;
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--accent);
+      border-radius: 4px;
+      padding: 4px 6px;
+      font: inherit;
+      color-scheme: dark;
+    }
+
+    /* -- column show/hide + draggable column widths (issue #79-style) --
+       Visibility and width both apply at the <colgroup> level. Hiding uses
+       `visibility: collapse` on the <col>, not `display: none` -- see the
+       Transactions page's own CSS comment (public/transactions/index.html)
+       for why `display: none` on a <col> is a no-op in current browsers. */
+    .dtx-col-resizer {
+      position: absolute;
+      top: 0;
+      right: -4px;
+      width: 8px;
+      height: 100%;
+      cursor: col-resize;
+      z-index: 1;
+      touch-action: none;
+    }
+    .dtx-col-resizer:hover { background: rgba(255, 255, 255, 0.12); }
+    body.dtx-resizing { cursor: col-resize; user-select: none; }
+    body.dtx-resizing .dtx-col-resizer { background: rgba(255, 255, 255, 0.12); }
+
+    .dtx-col-picker { position: relative; }
+    .dtx-columns-btn {
+      background: transparent;
+      color: var(--muted);
+      border: 1px solid #2a2e37;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-size: 0.85rem;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    .dtx-columns-btn:hover { color: var(--text); border-color: #3a3f4b; }
+    .dtx-columns-panel {
+      display: none;
+      position: absolute;
+      top: calc(100% + 6px);
+      right: 0;
+      z-index: 5;
+      background: var(--card);
+      border: 1px solid #2a2e37;
+      border-radius: 10px;
+      padding: 10px 12px;
+      min-width: 160px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+    .dtx-columns-panel.open { display: block; }
+    .dtx-columns-panel label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.85rem;
+      padding: 4px 0;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .dtx-columns-panel label input { cursor: pointer; }
+    .dtx-columns-reset {
+      display: block;
+      width: 100%;
+      text-align: left;
+      background: transparent;
+      border: none;
+      border-top: 1px solid #2a2e37;
+      color: var(--muted);
+      font-size: 0.8rem;
+      font-family: inherit;
+      padding: 8px 0 2px;
+      margin-top: 4px;
+      cursor: pointer;
+    }
+    .dtx-columns-reset:hover { color: var(--text); }
+
+    .dtx-sortby-group { display: flex; align-items: center; gap: 0; }
+    .dtx-sortby-group select {
+      border-top-right-radius: 0;
+      border-bottom-right-radius: 0;
+    }
+    .dtx-sortby-dir {
+      background: var(--card);
+      color: var(--muted);
+      border: 1px solid #2a2e37;
+      border-left: none;
+      border-top-right-radius: 8px;
+      border-bottom-right-radius: 8px;
+      padding: 8px 10px;
+      font-size: 0.85rem;
+      font-family: inherit;
+      cursor: pointer;
+    }
+    .dtx-sortby-dir:hover { color: var(--text); }
+  }
 </style>
 </head>
 <body>
@@ -445,6 +670,67 @@
       <span class="pull-spinner"></span><span id="pull-label">Pull to refresh</span>
     </div>
     <div id="detail-txn-list"></div>
+  </div>
+
+  <!-- Wide-viewport data table (issue #86) -- same view/filters convention
+       as public/transactions/index.html's .txt-table, minus an Account
+       column/filter (redundant here -- every row belongs to this one
+       account). Shares the mobile list's Upcoming/Pending-review state and
+       `visible` row array above; only filters/sorts/columns on top of it. -->
+  <div class="dtx-filters" id="dtx-filters">
+    <input type="search" id="dtx-f-search" placeholder="Search payee or notes" />
+    <select id="dtx-f-type">
+      <option value="">All types</option>
+      <option value="Expense">Expense</option>
+      <option value="Income">Income</option>
+    </select>
+    <select id="dtx-f-cleared">
+      <option value="">Cleared &amp; uncleared</option>
+      <option value="Cleared">Cleared</option>
+      <option value="Uncleared">Uncleared</option>
+    </select>
+    <input type="date" id="dtx-f-from" title="From date" />
+    <input type="date" id="dtx-f-to" title="To date" />
+    <button type="button" class="dtx-filter-clear" id="dtx-f-clear">Clear filters</button>
+
+    <div class="dtx-sortby-group">
+      <select id="dtx-f-sortby" title="Sort by"></select>
+      <button type="button" class="dtx-sortby-dir" id="dtx-f-sortdir" title="Toggle sort direction"></button>
+    </div>
+
+    <div class="dtx-col-picker">
+      <button type="button" class="dtx-columns-btn" id="dtx-columns-btn">Columns ▾</button>
+      <div class="dtx-columns-panel" id="dtx-columns-panel">
+        <div id="dtx-columns-checkboxes"></div>
+        <button type="button" class="dtx-columns-reset" id="dtx-columns-reset">Reset to defaults</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="dtx-table-wrap">
+    <table class="dtx-table" id="dtx-table">
+      <colgroup id="dtx-colgroup">
+        <col data-col="date" style="width: 90px" />    <!-- Date -->
+        <col data-col="payee" style="width: 300px" />  <!-- Payee -->
+        <col data-col="amount" style="width: 110px" /> <!-- Amount -->
+        <col data-col="cleared" style="width: 34px" /> <!-- Status (C) -->
+        <col data-col="pending" style="width: 78px" /> <!-- Pending / Confirm (issue #49) -- not part of the show/hide+resize picker, see DTX_COLUMNS comment below -->
+        <col data-col="notes" />                       <!-- Notes: takes the rest -->
+        <col data-col="open" style="width: 28px" />    <!-- Open full sheet / undo-payment menu -->
+      </colgroup>
+      <thead>
+        <tr>
+          <th data-sort="date" data-col="date">Date <span class="dtx-sort-arrow"></span></th>
+          <th data-sort="payee" data-col="payee" class="dtx-truncate">Payee <span class="dtx-sort-arrow"></span></th>
+          <th data-sort="amount" data-col="amount">Amount <span class="dtx-sort-arrow"></span></th>
+          <th data-sort="cleared" data-col="cleared" class="dtx-status-col" title="Cleared">C <span class="dtx-sort-arrow"></span></th>
+          <th data-col="pending" class="dtx-pending-col" title="Pending">Pending</th>
+          <th data-col="notes" class="dtx-truncate">Notes</th>
+          <th data-col="open"></th>
+        </tr>
+      </thead>
+      <tbody id="dtx-table-body"></tbody>
+    </table>
   </div>
 </div>
 
@@ -736,6 +1022,916 @@
   // (and C has no dialog at all) isn't covered by that.
   let kbdActionBusy = false;
 
+  // -- account-detail wide-viewport data table (issue #86) -- filter/sort
+  // state and the last upcoming/pending-filtered row list handed to it by
+  // renderDetailTxnList(), mirroring the Transactions page's txt* state
+  // (public/transactions/index.html) but scoped to `dtx` and with no
+  // Account column/filter -- every row already belongs to this one account.
+  const dtxFilterEls = {
+    search: document.getElementById('dtx-f-search'),
+    type: document.getElementById('dtx-f-type'),
+    cleared: document.getElementById('dtx-f-cleared'),
+    from: document.getElementById('dtx-f-from'),
+    to: document.getElementById('dtx-f-to'),
+  };
+  const dtxTableBodyEl = document.getElementById('dtx-table-body');
+  let dtxSort = { key: 'date', dir: 'desc' };
+  let dtxLastVisible = [];
+
+  // Column show/hide + draggable widths (issue #79-style), same rationale
+  // as the Transactions page's own COLUMNS: Cleared stays fixed-width
+  // (icon-sized status column), Notes is hideable but not resizable since
+  // it's the one column with no default width (soaks up whatever's left).
+  const DTX_COLUMNS = [
+    { key: 'date', label: 'Date', defaultWidth: 90, minWidth: 70, resizable: true },
+    { key: 'payee', label: 'Payee', defaultWidth: 300, minWidth: 100, resizable: true },
+    { key: 'amount', label: 'Amount', defaultWidth: 110, minWidth: 70, resizable: true },
+    { key: 'cleared', label: 'Cleared', defaultWidth: 34, minWidth: 34, resizable: false },
+    { key: 'notes', label: 'Notes', defaultWidth: null, minWidth: 80, resizable: false },
+  ];
+  const DTX_COLUMN_LAYOUT_KEY = 'mnab-dtx-column-layout-v1'; // separate key from the Transactions page's own layout
+
+  function dtxDefaultColumnLayout() {
+    const visible = {};
+    const widths = {};
+    DTX_COLUMNS.forEach((c) => { visible[c.key] = true; widths[c.key] = c.defaultWidth; });
+    return { visible, widths };
+  }
+
+  function dtxLoadColumnLayout() {
+    const layout = dtxDefaultColumnLayout();
+    try {
+      const raw = localStorage.getItem(DTX_COLUMN_LAYOUT_KEY);
+      if (raw) {
+        const saved = JSON.parse(raw);
+        DTX_COLUMNS.forEach((c) => {
+          if (saved.visible && typeof saved.visible[c.key] === 'boolean') {
+            layout.visible[c.key] = saved.visible[c.key];
+          }
+          if (c.resizable && saved.widths && Number.isFinite(saved.widths[c.key])) {
+            layout.widths[c.key] = Math.max(c.minWidth, saved.widths[c.key]);
+          }
+        });
+      }
+    } catch (err) {
+      // Corrupt/unavailable localStorage -- fall back to defaults.
+    }
+    if (!DTX_COLUMNS.some((c) => layout.visible[c.key])) {
+      DTX_COLUMNS.forEach((c) => { layout.visible[c.key] = true; });
+    }
+    return layout;
+  }
+
+  let dtxColumnLayout = dtxLoadColumnLayout();
+
+  function dtxSaveColumnLayout() {
+    try {
+      localStorage.setItem(DTX_COLUMN_LAYOUT_KEY, JSON.stringify(dtxColumnLayout));
+    } catch (err) {
+      // Storage full/unavailable -- layout just won't persist this time.
+    }
+  }
+
+  function dtxApplyColumnLayout() {
+    DTX_COLUMNS.forEach((c) => {
+      const col = document.querySelector(`#dtx-colgroup col[data-col="${c.key}"]`);
+      if (!col) return;
+      col.style.visibility = dtxColumnLayout.visible[c.key] ? '' : 'collapse';
+      if (c.resizable) {
+        const w = dtxColumnLayout.widths[c.key] || c.defaultWidth;
+        col.style.width = w + 'px';
+      }
+    });
+  }
+
+  function dtxVisibleColumnCount() {
+    // +2 for the always-visible Pending and trailing "open" columns, same
+    // convention as the Transactions page.
+    return DTX_COLUMNS.filter((c) => dtxColumnLayout.visible[c.key]).length + 2;
+  }
+
+  const DTX_SORT_COLUMNS = [
+    { key: 'date', label: 'Date' },
+    { key: 'payee', label: 'Payee' },
+    { key: 'amount', label: 'Amount' },
+    { key: 'cleared', label: 'Cleared' },
+  ];
+
+  function dtxRefreshColumnCheckboxes() {
+    const container = document.getElementById('dtx-columns-checkboxes');
+    container.innerHTML = DTX_COLUMNS.map((c) => `
+      <label>
+        <input type="checkbox" data-col-toggle="${c.key}" ${dtxColumnLayout.visible[c.key] ? 'checked' : ''} />
+        ${c.label}
+      </label>
+    `).join('');
+    container.querySelectorAll('input[data-col-toggle]').forEach((cb) => {
+      cb.addEventListener('change', () => {
+        const key = cb.dataset.colToggle;
+        const nextVisible = { ...dtxColumnLayout.visible, [key]: cb.checked };
+        if (!DTX_COLUMNS.some((c) => nextVisible[c.key])) {
+          cb.checked = true;
+          return;
+        }
+        dtxColumnLayout.visible[key] = cb.checked;
+        dtxApplyColumnLayout();
+        dtxSaveColumnLayout();
+        renderDetailTable(dtxLastVisible);
+      });
+    });
+  }
+
+  function dtxInitColumnResizers() {
+    let dragCol = null;
+    let dragMinWidth = 0;
+    let dragKey = null;
+    let startX = 0;
+    let startWidth = 0;
+
+    function onMouseMove(e) {
+      if (!dragCol) return;
+      const next = Math.max(dragMinWidth, startWidth + (e.clientX - startX));
+      dragCol.style.width = next + 'px';
+    }
+    function onMouseUp() {
+      if (!dragCol) return;
+      dtxColumnLayout.widths[dragKey] = parseInt(dragCol.style.width, 10);
+      dtxSaveColumnLayout();
+      document.body.classList.remove('dtx-resizing');
+      dragCol = null;
+      dragKey = null;
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+    }
+
+    DTX_COLUMNS.filter((c) => c.resizable).forEach((c) => {
+      const th = document.querySelector(`#dtx-table th[data-col="${c.key}"]`);
+      if (!th) return;
+      const handle = document.createElement('div');
+      handle.className = 'dtx-col-resizer';
+      handle.addEventListener('click', (e) => e.stopPropagation());
+      handle.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        dragCol = document.querySelector(`#dtx-colgroup col[data-col="${c.key}"]`);
+        dragKey = c.key;
+        dragMinWidth = c.minWidth;
+        startX = e.clientX;
+        startWidth = dragCol.getBoundingClientRect().width;
+        document.body.classList.add('dtx-resizing');
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+      });
+      th.appendChild(handle);
+    });
+  }
+
+  function dtxInitColumnControls() {
+    dtxApplyColumnLayout();
+    dtxRefreshColumnCheckboxes();
+    dtxInitColumnResizers();
+
+    const panel = document.getElementById('dtx-columns-panel');
+    const btn = document.getElementById('dtx-columns-btn');
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      panel.classList.toggle('open');
+    });
+    document.addEventListener('mousedown', (e) => {
+      if (panel.classList.contains('open') && !panel.contains(e.target) && e.target !== btn) {
+        panel.classList.remove('open');
+      }
+    });
+
+    document.getElementById('dtx-columns-reset').addEventListener('click', () => {
+      dtxColumnLayout = dtxDefaultColumnLayout();
+      dtxApplyColumnLayout();
+      dtxSaveColumnLayout();
+      dtxRefreshColumnCheckboxes();
+      renderDetailTable(dtxLastVisible);
+    });
+
+    const sortBySelect = document.getElementById('dtx-f-sortby');
+    sortBySelect.innerHTML = DTX_SORT_COLUMNS.map((c) => `<option value="${c.key}">${c.label}</option>`).join('');
+    sortBySelect.value = dtxSort.key;
+    sortBySelect.addEventListener('change', () => {
+      const key = sortBySelect.value;
+      if (dtxSort.key === key) return;
+      dtxSort = { key, dir: (key === 'date' || key === 'amount') ? 'desc' : 'asc' };
+      renderDetailTable(dtxLastVisible);
+    });
+
+    const sortDirBtn = document.getElementById('dtx-f-sortdir');
+    sortDirBtn.textContent = dtxSort.dir === 'asc' ? '▲' : '▼';
+    sortDirBtn.addEventListener('click', () => {
+      dtxSort.dir = dtxSort.dir === 'asc' ? 'desc' : 'asc';
+      renderDetailTable(dtxLastVisible);
+    });
+  }
+
+  function dtxMatchesFilters(t) {
+    const search = dtxFilterEls.search.value.trim().toLowerCase();
+    if (search) {
+      const haystack = `${t.payee || ''} ${t.notes || ''}`.toLowerCase();
+      if (!haystack.includes(search)) return false;
+    }
+    if (dtxFilterEls.type.value && t.type !== dtxFilterEls.type.value) return false;
+    if (dtxFilterEls.cleared.value) {
+      const wantCleared = dtxFilterEls.cleared.value === 'Cleared';
+      if (!!t.isCleared !== wantCleared) return false;
+    }
+    if (dtxFilterEls.from.value && (!t.date || t.date < dtxFilterEls.from.value)) return false;
+    if (dtxFilterEls.to.value && (!t.date || t.date > dtxFilterEls.to.value)) return false;
+    return true;
+  }
+
+  function dtxSortRows(list) {
+    const { key, dir } = dtxSort;
+    const mul = dir === 'asc' ? 1 : -1;
+    return [...list].sort((a, b) => {
+      let av, bv;
+      if (key === 'amount') {
+        av = Number(a.amount) || 0;
+        bv = Number(b.amount) || 0;
+      } else if (key === 'cleared') {
+        av = a.isCleared ? 1 : 0;
+        bv = b.isCleared ? 1 : 0;
+      } else {
+        av = (a[key] || '').toString().toLowerCase();
+        bv = (b[key] || '').toString().toLowerCase();
+      }
+      if (av < bv) return -1 * mul;
+      if (av > bv) return 1 * mul;
+      return (b.rowNumber || 0) - (a.rowNumber || 0);
+    });
+  }
+
+  function dtxUpdateSortIndicators() {
+    document.querySelectorAll('#dtx-table th[data-sort]').forEach((th) => {
+      const arrow = th.querySelector('.dtx-sort-arrow');
+      const isActive = th.dataset.sort === dtxSort.key;
+      th.classList.toggle('dtx-sorted', isActive);
+      arrow.textContent = isActive ? (dtxSort.dir === 'asc' ? '▲' : '▼') : '';
+    });
+    const sortBySelect = document.getElementById('dtx-f-sortby');
+    const sortDirBtn = document.getElementById('dtx-f-sortdir');
+    if (sortBySelect && sortBySelect.value !== dtxSort.key) sortBySelect.value = dtxSort.key;
+    if (sortDirBtn) sortDirBtn.textContent = dtxSort.dir === 'asc' ? '▲' : '▼';
+  }
+
+  // -- keyboard-driven row editing (issue #86 keyboard follow-up) --
+  // Mirrors the Transactions page's txtKbd* system (public/transactions/
+  // index.html) almost exactly, scoped to `dtxKbd` and with no sof/type
+  // fields (this table has no Account column -- every row already belongs
+  // to the current account). Down/Up arrow highlights a row and cycles
+  // through the visible rows; Enter opens every editable cell of the
+  // highlighted row at once (leftmost column first), Tab/Shift-Tab moves
+  // between them (wrapping around), and only Enter (save, whole row in one
+  // request) or Escape (discard) ever touches the network -- nothing is
+  // sent while merely moving between columns. This is a separate editing
+  // surface from the single-cell click-to-edit above: that one auto-saves a
+  // single field on blur, this one is all-or-nothing for the whole row and
+  // is driven entirely from the keyboard.
+  //
+  // Transfer (card payment) legs are never opened for row-edit -- same
+  // restriction as the single-cell editor -- Enter on a highlighted
+  // transfer row opens the undo-payment menu instead (matching the pencil
+  // button and the mobile card list's own Enter behavior).
+  //
+  // Backspace on a highlighted row reuses handleKeyboardDeleteTxn() below
+  // (the same showConfirm-sheet-then-delete path the mobile card list's
+  // Backspace shortcut already uses), just pointed at this table's own
+  // highlight state instead of the card list's.
+  const DTX_KBD_FIELDS = ['date', 'payee', 'amount', 'cleared', 'notes'];
+  let dtxKbdHighlightIndex = -1;
+  let dtxKbdEditRowNumber = null; // rowNumber currently open for row-edit, or null
+  let dtxKbdEditDraft = null; // uncommitted field values for that row -- never sent until Enter
+  let dtxKbdEditInputs = null; // { field: <input> } for the currently open row
+  let dtxKbdSaving = false;
+  let dtxKbdDeleting = false; // guards a second Backspace while a delete is in flight
+
+  function dtxRowEls() {
+    return Array.from(dtxTableBodyEl.querySelectorAll('tr[data-row]'));
+  }
+
+  function setDtxHighlight(index) {
+    const rows = dtxRowEls();
+    rows.forEach((r) => r.classList.remove('dtx-kbd-highlight'));
+    if (!rows.length) { dtxKbdHighlightIndex = -1; return; }
+    dtxKbdHighlightIndex = Math.max(0, Math.min(index, rows.length - 1));
+    const row = rows[dtxKbdHighlightIndex];
+    row.classList.add('dtx-kbd-highlight');
+    row.scrollIntoView({ block: 'nearest' });
+  }
+
+  function dtxCurrentHighlightedTxn() {
+    const rows = dtxRowEls();
+    if (dtxKbdHighlightIndex < 0 || dtxKbdHighlightIndex >= rows.length) return null;
+    const rowNumber = parseInt(rows[dtxKbdHighlightIndex].dataset.row, 10);
+    return dtxLastVisible.find((t) => t.rowNumber === rowNumber) || null;
+  }
+
+  // Re-finds a row by rowNumber after a renderDetailTable() rebuild (which
+  // always resets the highlight -- see the comment at the top of
+  // renderDetailTable) and re-highlights it, so the keyboard row-edit
+  // save/cancel paths can leave the user right where they were instead of
+  // dropping the highlight.
+  function dtxRestoreHighlightByRowNumber(rowNumber) {
+    if (rowNumber == null) return;
+    const idx = dtxRowEls().findIndex((r) => parseInt(r.dataset.row, 10) === rowNumber);
+    if (idx !== -1) setDtxHighlight(idx);
+  }
+
+  // Issue #49 keyboard follow-up: the Confirm button sits in the tab cycle
+  // for a pending row (see dtxKbdFieldOrder below), in its actual column
+  // position between Cleared and Notes -- it's a real <button>, not one of
+  // DTX_KBD_FIELDS' inputs, so it's focused directly instead of through
+  // dtxKbdEditInputs.
+  function dtxKbdFocusField(field) {
+    if (field === 'confirm') {
+      const row = dtxRowEls()[dtxKbdHighlightIndex];
+      const btn = row && row.querySelector('.txn-confirm-btn');
+      if (btn) btn.focus();
+      return;
+    }
+    const input = dtxKbdEditInputs && dtxKbdEditInputs[field];
+    if (!input) return;
+    input.focus();
+    if (typeof input.select === 'function' && input.type !== 'checkbox') input.select();
+  }
+
+  // Tab order for the row-edit session, left to right same as the table's
+  // own columns -- 'confirm' (the Confirm button) is only spliced in for a
+  // pending row, right where its column actually sits.
+  function dtxKbdFieldOrder(txn) {
+    const order = ['date', 'payee', 'amount', 'cleared'];
+    if (txn && txn.pending) order.push('confirm');
+    order.push('notes');
+    return order;
+  }
+
+  // Pulls whatever's currently in a field's input into the draft. Called
+  // before moving focus away from a field (Tab/Shift-Tab) and again right
+  // before Enter saves, so the draft always reflects the field the user was
+  // just looking at.
+  function dtxKbdCommitField(field) {
+    const input = dtxKbdEditInputs[field];
+    if (!input) return;
+    if (field === 'cleared') return; // kept in sync live by the checkbox's own change handler
+    if (field === 'amount') {
+      const parsed = parseFloat(String(input.value).replace(/[^\d.]/g, ''));
+      dtxKbdEditDraft.amount = Number.isFinite(parsed) ? parsed : NaN;
+    } else {
+      dtxKbdEditDraft[field] = input.value.trim();
+    }
+  }
+
+  function dtxKbdInputKeydown(e) {
+    const field = e.target.dataset.field;
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      dtxKbdCommitField(field);
+      const order = dtxKbdFieldOrder(dtxLastVisible.find((t) => t.rowNumber === dtxKbdEditRowNumber));
+      const idx = order.indexOf(field);
+      const nextIdx = e.shiftKey
+        ? (idx - 1 + order.length) % order.length
+        : (idx + 1) % order.length;
+      dtxKbdFocusField(order[nextIdx]);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      dtxKbdCommitField(field);
+      dtxKbdSaveEdit(field);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      dtxKbdCancelEdit();
+    }
+  }
+
+  // Opens every editable cell of the highlighted row at once, starting with
+  // the leftmost column (Date). Nothing here talks to the network -- it
+  // only builds inputs seeded from a cloned draft of the row's current
+  // values, which Tab/Shift-Tab and typing mutate locally until Enter
+  // (save) or Escape (cancel/discard) resolve the whole session.
+  function startDtxKbdEdit(txn) {
+    if (dtxKbdEditRowNumber !== null) return; // already editing a row
+    if (txn.transfer) return; // transfer legs aren't editable inline -- see .dtx-transfer-row
+    const row = dtxRowEls()[dtxKbdHighlightIndex];
+    if (!row) return;
+
+    dtxKbdEditRowNumber = txn.rowNumber;
+    dtxKbdEditDraft = {
+      payee: txn.payee, type: txn.type, sof: txn.sof, amount: txn.amount,
+      date: txn.date, month: txn.month, notes: txn.notes,
+      cleared: txn.isCleared ? 'Cleared' : 'Uncleared',
+    };
+
+    const inputs = {};
+    DTX_KBD_FIELDS.forEach((field) => {
+      const td = row.querySelector(`td[data-field="${field}"]`);
+      if (!td) return;
+      td.classList.add('dtx-editing');
+      td.innerHTML = '';
+
+      let input;
+      if (field === 'cleared') {
+        input = document.createElement('input');
+        input.type = 'checkbox';
+        input.className = 'dtx-cell-checkbox';
+        input.checked = dtxKbdEditDraft.cleared === 'Cleared';
+        input.addEventListener('change', () => {
+          dtxKbdEditDraft.cleared = input.checked ? 'Cleared' : 'Uncleared';
+        });
+      } else if (field === 'date') {
+        input = document.createElement('input');
+        input.type = 'date';
+        input.className = 'dtx-cell-input';
+        input.value = dtxKbdEditDraft.date || '';
+      } else if (field === 'amount') {
+        input = document.createElement('input');
+        input.type = 'text';
+        input.inputMode = 'decimal';
+        input.className = 'dtx-cell-input';
+        input.value = dtxKbdEditDraft.amount != null ? String(dtxKbdEditDraft.amount) : '';
+      } else {
+        input = document.createElement('input');
+        input.type = 'text';
+        input.className = 'dtx-cell-input';
+        input.value = dtxKbdEditDraft[field] || '';
+        if (field === 'payee') {
+          // Shared datalist -- see createDtxCellEditor() above.
+          input.setAttribute('list', 'txf-payee-list');
+          input.autocomplete = 'off';
+        }
+      }
+
+      input.dataset.field = field;
+      // The td itself still carries the single-cell click-to-edit listener
+      // from above (its innerHTML was cleared, not the td node) -- stop the
+      // click here so focusing/clicking inside this input can't also
+      // re-trigger that handler or the status column's click-to-toggle
+      // handler underneath it.
+      input.addEventListener('click', (e) => e.stopPropagation());
+      input.addEventListener('keydown', dtxKbdInputKeydown);
+      td.appendChild(input);
+      inputs[field] = input;
+    });
+
+    dtxKbdEditInputs = inputs;
+    // The pencil button would otherwise open the full sheet (or the
+    // undo-payment menu) against the still-unsaved original row data while
+    // this draft is in flight -- disable it for the duration of the edit
+    // session instead of trying to reconcile the two editing surfaces.
+    const openBtn = row.querySelector('.dtx-open-btn');
+    if (openBtn) openBtn.disabled = true;
+
+    dtxKbdFocusField(DTX_KBD_FIELDS[0]); // leftmost column
+  }
+
+  function dtxKbdCancelEdit() {
+    if (dtxKbdEditRowNumber === null) return;
+    const rowNumber = dtxKbdEditRowNumber;
+    dtxKbdEditRowNumber = null;
+    dtxKbdEditDraft = null;
+    dtxKbdEditInputs = null;
+    renderDetailTable(dtxLastVisible); // rebuild -- discards the draft, no save
+    dtxRestoreHighlightByRowNumber(rowNumber);
+  }
+
+  // The only place this whole editing surface ever calls the API -- Enter
+  // committed the field under the cursor into the draft already (see
+  // dtxKbdInputKeydown), so this just validates and sends the full row,
+  // same shape/convention as saveDtxCellEdit() above. `sof` is always this
+  // account, same as saveDtxCellEdit() -- there's no Account column/field
+  // to edit here.
+  async function dtxKbdSaveEdit(focusFieldOnError) {
+    if (dtxKbdEditRowNumber === null || dtxKbdSaving) return;
+    const draft = dtxKbdEditDraft;
+    const rowNumber = dtxKbdEditRowNumber;
+
+    if (!draft.payee || !draft.date) {
+      alert('Payee and Date are required.');
+      dtxKbdFocusField(focusFieldOnError);
+      return;
+    }
+    if (!Number.isFinite(draft.amount) || draft.amount <= 0) {
+      alert('Amount must be a positive number.');
+      dtxKbdFocusField(focusFieldOnError);
+      return;
+    }
+
+    const original = dtxLastVisible.find((t) => t.rowNumber === rowNumber);
+    const payload = {
+      rowNumber,
+      payee: draft.payee,
+      type: draft.type,
+      sof: draft.sof,
+      amount: draft.amount,
+      date: draft.date,
+      month: draft.month,
+      notes: draft.notes,
+      cleared: draft.cleared,
+    };
+    // No Month field in this editing surface either -- same re-guess as the
+    // single-cell Date edit above, only when the date actually changed so
+    // an untouched row keeps its (possibly hand-picked) Month.
+    if (original && draft.date !== original.date) {
+      payload.month = TransactionForm.guessBillingMonth(draft.date);
+    }
+
+    const row = dtxRowEls()[dtxKbdHighlightIndex];
+    dtxKbdSaving = true;
+    if (row) row.classList.add('dtx-kbd-row-saving');
+    try {
+      const res = await fetch('/api/transactions-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      dtxKbdEditRowNumber = null;
+      dtxKbdEditDraft = null;
+      dtxKbdEditInputs = null;
+      await fetchAndRenderAccountDetail(currentAccount);
+      dtxRestoreHighlightByRowNumber(rowNumber);
+    } catch (err) {
+      alert(err.message);
+      if (row) row.classList.remove('dtx-kbd-row-saving');
+      dtxKbdFocusField(focusFieldOnError);
+    } finally {
+      dtxKbdSaving = false;
+    }
+  }
+
+  // Issue #49 keyboard follow-up: reached by tabbing to the Confirm button
+  // during a row-edit session (see dtxKbdFieldOrder above) -- Enter/Space
+  // on it (native button activation, handled by the button's own 'click'
+  // listener in renderDetailTable()) saves whatever's currently filled in
+  // the row AND confirms it (Pending -> FALSE) in one action, so fixing a
+  // mis-parsed import doesn't take two separate steps. Same validation as
+  // dtxKbdSaveEdit; two sequential requests since transactions-update has
+  // no single combined action.
+  async function dtxKbdConfirmAndSaveEdit() {
+    if (dtxKbdEditRowNumber === null || dtxKbdSaving) return;
+    const draft = dtxKbdEditDraft;
+    const rowNumber = dtxKbdEditRowNumber;
+
+    if (!draft.payee || !draft.date) {
+      alert('Payee and Date are required.');
+      return;
+    }
+    if (!Number.isFinite(draft.amount) || draft.amount <= 0) {
+      alert('Amount must be a positive number.');
+      return;
+    }
+
+    const original = dtxLastVisible.find((t) => t.rowNumber === rowNumber);
+    const payload = {
+      rowNumber,
+      payee: draft.payee,
+      type: draft.type,
+      sof: draft.sof,
+      amount: draft.amount,
+      date: draft.date,
+      month: draft.month,
+      notes: draft.notes,
+      cleared: draft.cleared,
+    };
+    if (original && draft.date !== original.date) {
+      payload.month = TransactionForm.guessBillingMonth(draft.date);
+    }
+
+    const row = dtxRowEls()[dtxKbdHighlightIndex];
+    dtxKbdSaving = true;
+    if (row) row.classList.add('dtx-kbd-row-saving');
+    try {
+      const res = await fetch('/api/transactions-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+
+      const confirmRes = await fetch('/api/transactions-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rowNumber, action: 'confirmPending' }),
+      });
+      const confirmData = await confirmRes.json();
+      if (confirmData.error) throw new Error(confirmData.error);
+
+      dtxKbdEditRowNumber = null;
+      dtxKbdEditDraft = null;
+      dtxKbdEditInputs = null;
+      await fetchAndRenderAccountDetail(currentAccount);
+      dtxRestoreHighlightByRowNumber(rowNumber);
+    } catch (err) {
+      if (row) row.classList.remove('dtx-kbd-row-saving');
+      throw err; // surfaced to the caller (the Confirm button's click handler), which shows/resets its own label
+    } finally {
+      dtxKbdSaving = false;
+    }
+  }
+
+  // Backspace on a highlighted row -- analogous to Enter opening it for
+  // edit, but simpler: always confirms first via the same showConfirm sheet
+  // the mobile card list's own Backspace shortcut uses (see
+  // handleKeyboardDeleteTxn below), then reuses deleteDetailTxnViaSwipe
+  // (which already branches on txn.transfer to call the right endpoint and
+  // re-renders both views), same delete path as the mobile list's
+  // swipe-left gesture and the full Add/Edit sheet's own Delete link.
+  function dtxKbdHandleDelete(txn) {
+    const isPayment = !!txn.transfer;
+    const message = isPayment
+      ? `Undo this card payment ("${txn.payee}")? This removes BOTH the charge on the card and the matching entry on the paying account.`
+      : `Delete "${txn.payee}"?`;
+    showConfirm(
+      message,
+      async () => {
+        // The confirm sheet has owned the keyboard up to now (via the
+        // shared `.open` check), so the table hasn't changed underneath it
+        // -- dtxKbdHighlightIndex still points at the right row.
+        const index = dtxKbdHighlightIndex;
+        const row = dtxRowEls()[index];
+        dtxKbdDeleting = true;
+        if (row) row.classList.add('dtx-kbd-row-saving');
+        try {
+          await deleteDetailTxnViaSwipe(txn);
+          // deleteDetailTxnViaSwipe() -> fetchAndRenderAccountDetail()
+          // rebuilds the table (renderDetailTable() always resets the
+          // highlight -- see its own comment), so re-highlight by the same
+          // index: the row that slides into the deleted row's spot, or the
+          // new last row if it was last.
+          setDtxHighlight(index);
+        } catch (err) {
+          if (row) row.classList.remove('dtx-kbd-row-saving');
+          showAlert(err.message, isPayment ? 'Undo failed' : 'Delete failed');
+        } finally {
+          dtxKbdDeleting = false;
+        }
+      },
+      { title: isPayment ? 'Undo payment' : 'Delete transaction', confirmLabel: isPayment ? 'Undo Payment' : 'Delete', danger: true }
+    );
+  }
+
+  // A click anywhere outside the row currently open for keyboard editing
+  // discards it (same as Escape, no save) -- a click on another field
+  // inside that same row is left alone and just focuses it normally.
+  // mousedown (not click/focusout) is used deliberately: it fires only for
+  // real pointer input, so it can't be tripped by the alert() dialogs above
+  // stealing focus, or by our own Tab handler moving focus between fields
+  // within the row.
+  document.addEventListener('mousedown', (e) => {
+    if (dtxKbdEditRowNumber === null) return;
+    const editingRow = dtxRowEls().find((r) => parseInt(r.dataset.row, 10) === dtxKbdEditRowNumber);
+    if (editingRow && editingRow.contains(e.target)) return;
+    dtxKbdCancelEdit();
+  });
+
+  function dtxEditableColumnLabel(field) {
+    return { date: 'Date', payee: 'Payee', amount: 'Amount', notes: 'Notes' }[field] || field;
+  }
+
+  function createDtxCellEditor(field, txn) {
+    const input = document.createElement('input');
+    input.className = 'dtx-cell-input';
+    if (field === 'date') {
+      input.type = 'date';
+      input.value = txn.date || '';
+    } else if (field === 'amount') {
+      input.type = 'text';
+      input.inputMode = 'decimal';
+      input.value = txn.amount != null ? String(txn.amount) : '';
+    } else {
+      input.type = 'text';
+      input.value = txn[field] || '';
+      if (field === 'payee') {
+        // Reuses the same <datalist> the full Add/Edit sheet populates on
+        // mount (shared/transaction-form.js's loadPayees()).
+        input.setAttribute('list', 'txf-payee-list');
+        input.autocomplete = 'off';
+      }
+    }
+    return input;
+  }
+
+  function startDtxCellEdit(td, txn, field) {
+    if (td.classList.contains('dtx-editing')) return;
+    const input = createDtxCellEditor(field, txn);
+    td.innerHTML = '';
+    td.classList.add('dtx-editing');
+    td.appendChild(input);
+    input.focus();
+    if (typeof input.select === 'function') input.select();
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        commitDtxCellEdit(td, txn, field, input);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        input.dataset.handled = '1';
+        renderDetailTable(dtxLastVisible);
+      }
+    });
+    input.addEventListener('blur', () => commitDtxCellEdit(td, txn, field, input));
+  }
+
+  async function commitDtxCellEdit(td, txn, field, input) {
+    if (input.dataset.handled) return;
+    input.dataset.handled = '1';
+
+    let newValue = input.value;
+    if (field === 'amount') {
+      newValue = parseFloat(String(newValue).replace(/[^\d.]/g, ''));
+    } else {
+      newValue = newValue.trim();
+    }
+
+    const unchanged = field === 'amount'
+      ? Number(newValue) === Number(txn.amount)
+      : newValue === (txn[field] || '');
+    if (unchanged) {
+      renderDetailTable(dtxLastVisible);
+      return;
+    }
+
+    if ((field === 'payee' || field === 'date') && !newValue) {
+      alert(`${dtxEditableColumnLabel(field)} is required.`);
+      renderDetailTable(dtxLastVisible);
+      return;
+    }
+    if (field === 'amount' && (!Number.isFinite(newValue) || newValue <= 0)) {
+      alert('Amount must be a positive number.');
+      renderDetailTable(dtxLastVisible);
+      return;
+    }
+
+    td.classList.add('dtx-cell-saving');
+    input.disabled = true;
+    try {
+      await saveDtxCellEdit(txn, field, newValue);
+      await fetchAndRenderAccountDetail(currentAccount);
+    } catch (err) {
+      alert(err.message);
+      renderDetailTable(dtxLastVisible); // revert to the last-known-good values
+    }
+  }
+
+  // Sends the whole row back, same convention as toggleDetailTxnClearedViaSwipe
+  // above -- transactions-update rewrites the full row. `sof` is always this
+  // account (there's no Account column/field to edit here).
+  async function saveDtxCellEdit(txn, field, newValue) {
+    const payload = {
+      rowNumber: txn.rowNumber,
+      payee: txn.payee,
+      type: txn.type,
+      sof: txn.sof,
+      amount: txn.amount,
+      date: txn.date,
+      month: txn.month,
+      notes: txn.notes,
+      cleared: txn.isCleared ? 'Cleared' : 'Uncleared',
+    };
+
+    if (field === 'date') {
+      payload.date = newValue;
+      payload.month = TransactionForm.guessBillingMonth(newValue);
+    } else {
+      payload[field] = newValue;
+    }
+
+    const res = await fetch('/api/transactions-update', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+  }
+
+  function renderDetailTable(sourceList) {
+    dtxLastVisible = sourceList;
+    // Rows are rebuilt from scratch below, so any previous highlight/edit
+    // DOM state is gone -- callers that want to keep the highlight (the
+    // keyboard row-edit save/cancel paths) restore it by rowNumber right
+    // after calling this, via dtxRestoreHighlightByRowNumber().
+    dtxKbdHighlightIndex = -1;
+    const todayStr = TransactionForm.todayISO();
+    const rows = dtxSortRows(sourceList.filter(dtxMatchesFilters));
+    dtxUpdateSortIndicators();
+
+    if (!rows.length) {
+      dtxTableBodyEl.innerHTML = `<tr class="dtx-empty-row"><td colspan="${dtxVisibleColumnCount()}">No transactions match.</td></tr>`;
+      return;
+    }
+
+    dtxTableBodyEl.innerHTML = rows.map((t) => {
+      const isIncome = t.type === 'Income';
+      const isUpcoming = !!(t.date && t.date > todayStr);
+      const amountText = (isIncome ? '+' : '') + formatIDR(t.amount);
+      const statusHtml = t.isCleared ? '☑️' : '';
+      const payee = t.payee || '';
+      const notes = t.notes || '';
+      const pendingHtml = t.pending ? '<button type="button" class="txn-confirm-btn" title="Confirm this pending transaction">Confirm</button>' : '';
+      const isTransfer = !!t.transfer;
+      // Transfer legs aren't inline-editable (see the .dtx-transfer-row CSS
+      // comment above) -- .dtx-editable is simply omitted for those rows so
+      // the click-to-edit listeners below have nothing to attach to.
+      const editableCls = isTransfer ? '' : ' dtx-editable';
+      const rowClasses = [
+        isUpcoming ? 'dtx-upcoming-row' : '',
+        t.pending ? 'dtx-pending-row' : '',
+        t.reconciled ? 'dtx-reconciled-row' : '',
+        isTransfer ? 'dtx-transfer-row' : '',
+      ].filter(Boolean).join(' ');
+      return `
+        <tr data-row="${t.rowNumber}" class="${rowClasses}">
+          <td class="${editableCls.trim()}" data-field="date">${t.date || ''}</td>
+          <td class="dtx-truncate${editableCls}" data-field="payee" title="${payee.replace(/"/g, '&quot;')}">${payee}</td>
+          <td class="dtx-amount${editableCls} ${isIncome ? 'income' : ''}" data-field="amount">${amountText}</td>
+          <td class="dtx-status-col" data-field="cleared">${statusHtml}</td>
+          <td class="dtx-pending-col">${pendingHtml}</td>
+          <td class="dtx-truncate${editableCls}" data-field="notes" title="${notes.replace(/"/g, '&quot;')}">${notes}</td>
+          <td class="dtx-open-col"><button type="button" class="dtx-open-btn" title="${isTransfer ? 'Card payment options' : 'Open full editor'}">&#9998;</button></td>
+        </tr>
+      `;
+    }).join('');
+
+    dtxTableBodyEl.querySelectorAll('tr[data-row]').forEach((row) => {
+      const rowNumber = parseInt(row.dataset.row, 10);
+      const txn = dtxLastVisible.find((t) => t.rowNumber === rowNumber);
+      if (!txn) return;
+
+      row.querySelectorAll('td.dtx-editable').forEach((td) => {
+        td.addEventListener('click', () => startDtxCellEdit(td, txn, td.dataset.field));
+      });
+
+      const statusTd = row.querySelector('td.dtx-status-col');
+      statusTd.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (txn.transfer) return; // transfer legs: use the pencil button's undo-payment menu instead
+        if (statusTd.classList.contains('dtx-cell-saving')) return;
+        statusTd.classList.add('dtx-cell-saving');
+        try {
+          await toggleDetailTxnClearedViaSwipe(txn);
+        } catch (err) {
+          alert(err.message);
+          statusTd.classList.remove('dtx-cell-saving');
+        }
+      });
+
+      row.querySelector('.dtx-open-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (txn.transfer) openUndoPaymentMenu(txn);
+        else TransactionForm.open(txn);
+      });
+
+      const confirmBtn = row.querySelector('.txn-confirm-btn');
+      if (confirmBtn) {
+        confirmBtn.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          // Issue #49 keyboard follow-up: this row is mid keyboard-edit
+          // (tabbed here from an open field, not just moused straight to
+          // Confirm) -- save the draft AND confirm in one action instead
+          // of the plain confirm-only path. A native Enter/Space on this
+          // focused button lands here too (the browser fires 'click' for
+          // both), so this single handler covers mouse and keyboard.
+          const isEditingThisRow = dtxKbdEditRowNumber === txn.rowNumber;
+          confirmBtn.disabled = true;
+          confirmBtn.textContent = isEditingThisRow ? 'Saving…' : 'Confirming…';
+          try {
+            if (isEditingThisRow) {
+              await dtxKbdConfirmAndSaveEdit();
+            } else {
+              await confirmDetailTxnPending(txn);
+            }
+          } catch (err) {
+            alert(err.message);
+            confirmBtn.disabled = false;
+            confirmBtn.textContent = 'Confirm';
+          }
+        });
+        // Tab/Shift-Tab move on to the field on either side of this
+        // button's actual column position (Cleared before it, Notes after
+        // -- see dtxKbdFieldOrder); Escape cancels the edit same as any
+        // other field. Only active while this specific row is the one
+        // being edited -- otherwise this is just a plain button.
+        confirmBtn.addEventListener('keydown', (e) => {
+          if (dtxKbdEditRowNumber !== txn.rowNumber) return;
+          if (e.key === 'Tab') {
+            e.preventDefault();
+            dtxKbdFocusField(e.shiftKey ? 'cleared' : 'notes');
+          } else if (e.key === 'Escape') {
+            e.preventDefault();
+            dtxKbdCancelEdit();
+          }
+        });
+      }
+    });
+  }
+
   const detailUpcomingToggleEl = document.getElementById('detail-upcoming-toggle');
   const detailUpcomingSwitchEl = document.getElementById('detail-upcoming-switch');
   const detailUpcomingLabelEl = document.getElementById('detail-upcoming-label');
@@ -797,7 +1993,12 @@
       await fetchAndRenderAccountDetail(name);
       loadingEl.style.display = 'none';
       contentEl.style.display = 'block';
-      listEl.style.display = 'block';
+      // Clear the inline "none" set above (rather than setting an inline
+      // "block") so the issue #86 wide-viewport media query -- which hides
+      // this mobile list at >=1024px in favor of .dtx-table-wrap -- can
+      // still govern it; an inline style would otherwise always win over
+      // that stylesheet rule regardless of viewport.
+      listEl.style.display = '';
     } catch (err) {
       loadingEl.style.display = 'none';
       errorEl.textContent = 'Couldn\'t load this account: ' + err.message;
@@ -835,6 +2036,11 @@
 
     let visible = showUpcomingDetail ? rows : rows.filter((t) => !t.date || t.date <= todayStr);
     if (showPendingOnlyDetail) visible = visible.filter((t) => t.pending);
+
+    // Wide-viewport table (issue #86) renders from the same
+    // upcoming/pending-filtered list as the mobile cards, then applies its
+    // own column filters/sort on top -- see renderDetailTable().
+    renderDetailTable(visible);
 
     if (!visible.length) {
       listEl.innerHTML = '<div class="sub">No transactions for this account yet.</div>';
@@ -1751,6 +2957,33 @@
     } else if (key === 'v') {
       e.preventDefault();
       openUndo();
+    } else if (getComputedStyle(document.getElementById('detail-txn-pull')).display === 'none') {
+      // Wide-viewport data table (issue #86) is the visible view instead of
+      // the mobile card list (#detail-txn-list) -- Up/Down/Enter/Backspace
+      // here drive the table's own keyboard row-editing (dtxKbd* above),
+      // mirroring the Transactions page's own txtKbd* document handler.
+      if (dtxKbdEditRowNumber !== null) return; // the row's own inputs own the keyboard now (dtxKbdInputKeydown)
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setDtxHighlight(dtxKbdHighlightIndex + 1);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setDtxHighlight(dtxKbdHighlightIndex - 1);
+      } else if (e.key === 'Enter' || e.key === ' ') {
+        const txn = dtxCurrentHighlightedTxn();
+        if (!txn) return;
+        e.preventDefault();
+        // Transfer legs aren't editable inline (see startDtxKbdEdit) --
+        // Enter opens the undo-payment menu instead, same as the pencil
+        // button and the mobile card list's own Enter behavior.
+        if (txn.transfer) openUndoPaymentMenu(txn);
+        else startDtxKbdEdit(txn);
+      } else if (e.key === 'Backspace') {
+        const txn = dtxCurrentHighlightedTxn();
+        if (!txn || dtxKbdDeleting) return;
+        e.preventDefault();
+        dtxKbdHandleDelete(txn);
+      }
     } else if (e.key === 'ArrowDown') {
       e.preventDefault();
       setTxnHighlight(txnHighlightIndex + 1);
@@ -1783,6 +3016,27 @@
       handleKeyboardDeleteTxn(txn);
     }
   });
+
+  document.querySelectorAll('#dtx-table th[data-sort]').forEach((th) => {
+    th.addEventListener('click', () => {
+      const key = th.dataset.sort;
+      if (dtxSort.key === key) {
+        dtxSort.dir = dtxSort.dir === 'asc' ? 'desc' : 'asc';
+      } else {
+        dtxSort = { key, dir: (key === 'date' || key === 'amount') ? 'desc' : 'asc' };
+      }
+      renderDetailTable(dtxLastVisible);
+    });
+  });
+
+  Object.values(dtxFilterEls).forEach((el) => {
+    el.addEventListener('input', () => renderDetailTable(dtxLastVisible));
+  });
+  document.getElementById('dtx-f-clear').addEventListener('click', () => {
+    Object.values(dtxFilterEls).forEach((el) => { el.value = ''; });
+    renderDetailTable(dtxLastVisible);
+  });
+  dtxInitColumnControls();
 
   TransactionForm.mount(document.getElementById('txf-root'), {
     supportEditDelete: true,
