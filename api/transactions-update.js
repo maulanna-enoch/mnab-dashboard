@@ -66,12 +66,44 @@ module.exports = async (req, res) => {
     });
 
     const sheets = getWriteSheetsClient();
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: process.env.SHEET_ID,
-      range: `transactions!A${rowNumber}:K${rowNumber}`,
-      valueInputOption: 'RAW',
-      requestBody: { values: [row] },
-    });
+    const spreadsheetId = process.env.SHEET_ID;
+
+    // Issue #89: clearing a transaction through ANY save path (full-sheet
+    // edit, inline cell edit, keyboard row edit -- every one of them funnels
+    // through this one endpoint) implicitly means the user has also
+    // reviewed/confirmed it, so Pending must never be left TRUE on a row
+    // that's being saved as Cleared. Mirrors the `confirmPending` action's
+    // graceful-no-op handling above: Pending is a self-provisioned column
+    // (see EmailImport.gs / issue #38) that may not exist on this sheet yet,
+    // in which case there's nothing to clear.
+    const isNowCleared = String(cleared).trim().toLowerCase() === 'cleared';
+    let pendingCol = null;
+    if (isNowCleared) {
+      const headerMap = await getHeaderMap(sheets, spreadsheetId, 'transactions');
+      if (headerMap['Pending'] !== undefined) {
+        pendingCol = columnLetter(headerMap['Pending']);
+      }
+    }
+
+    if (pendingCol) {
+      await sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          valueInputOption: 'RAW',
+          data: [
+            { range: `transactions!A${rowNumber}:K${rowNumber}`, values: [row] },
+            { range: `transactions!${pendingCol}${rowNumber}`, values: [[false]] },
+          ],
+        },
+      });
+    } else {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `transactions!A${rowNumber}:K${rowNumber}`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [row] },
+      });
+    }
 
     res.status(200).json({ ok: true, updatedAt: new Date().toISOString() });
   } catch (err) {
