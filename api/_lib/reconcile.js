@@ -283,6 +283,20 @@ async function markRowsCleared(sheets, map, rowNumbers) {
     range: `${RECONCILE_SHEETS.transactions}!${clearedCol}${r}`,
     values: [['Cleared']],
   }));
+  // Issue #89: marking a transaction Cleared here (the reconcile flow's
+  // "Clear existing transactions" option) is another save path that sets
+  // CLEARED == TRUE outside of api/transactions-update.js's own row
+  // rewrite, so it needs the same Pending == FALSE enforcement -- clearing
+  // implicitly means the user has reviewed/confirmed the transaction.
+  // Pending is a self-provisioned column (see EmailImport.gs / issue #38)
+  // that may not exist on this sheet yet, in which case there's nothing to
+  // clear.
+  if (map['Pending'] !== undefined) {
+    const pendingCol = columnLetter(map['Pending']);
+    rowNumbers.forEach((r) => {
+      data.push({ range: `${RECONCILE_SHEETS.transactions}!${pendingCol}${r}`, values: [[false]] });
+    });
+  }
   await sheets.spreadsheets.values.batchUpdate({
     spreadsheetId: process.env.SHEET_ID,
     requestBody: { valueInputOption: 'RAW', data },

@@ -66,12 +66,41 @@ module.exports = async (req, res) => {
     });
 
     const sheets = getWriteSheetsClient();
-    await sheets.spreadsheets.values.update({
-      spreadsheetId: process.env.SHEET_ID,
-      range: `transactions!A${rowNumber}:K${rowNumber}`,
-      valueInputOption: 'RAW',
-      requestBody: { values: [row] },
-    });
+    const spreadsheetId = process.env.SHEET_ID;
+
+    // Issue #89: *saving* a transaction through ANY path here (full-sheet
+    // edit, inline cell edit, keyboard row edit -- every one of them funnels
+    // through this one endpoint) implicitly means the user has reviewed and
+    // confirmed it, regardless of what Cleared ends up being saved as --
+    // saving it back as Uncleared is still a deliberate save, not a no-op,
+    // so Pending must never be left TRUE on a row that's just been saved.
+    // (Originally this was scoped to "saved as Cleared" only; broadened per
+    // the user's follow-up -- see claude/MNAB-live-status.md.) Mirrors the
+    // `confirmPending` action's graceful-no-op handling above: Pending is a
+    // self-provisioned column (see EmailImport.gs / issue #38) that may not
+    // exist on this sheet yet, in which case there's nothing to clear.
+    const headerMap = await getHeaderMap(sheets, spreadsheetId, 'transactions');
+    const pendingCol = headerMap['Pending'] !== undefined ? columnLetter(headerMap['Pending']) : null;
+
+    if (pendingCol) {
+      await sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          valueInputOption: 'RAW',
+          data: [
+            { range: `transactions!A${rowNumber}:K${rowNumber}`, values: [row] },
+            { range: `transactions!${pendingCol}${rowNumber}`, values: [[false]] },
+          ],
+        },
+      });
+    } else {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `transactions!A${rowNumber}:K${rowNumber}`,
+        valueInputOption: 'RAW',
+        requestBody: { values: [row] },
+      });
+    }
 
     res.status(200).json({ ok: true, updatedAt: new Date().toISOString() });
   } catch (err) {
