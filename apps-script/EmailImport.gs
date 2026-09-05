@@ -732,8 +732,15 @@ function parseMandiriEmail_(subject, bodyHtml) {
 // ── mnab/ocbc PARSER ─────────────────────────────────────────────────────
 // OCBC sends multiple structurally unrelated templates from the same
 // sender — dispatches on subject line first. Validated against real
-// "Transfer Dana ... dengan BI Fast" (transfer, incl. a real failure
-// sample) and "Credit Card Transaction Notification" emails.
+// "Transfer Dana ... dengan BI Fast" (Indonesian-language transfer, incl. a
+// real failure sample), "Credit Card Transaction Notification",
+// "Successful Funds Transfer with BI Fast to <name>" / "...To Other Bank"
+// (English-language transfer — a separate template from the Indonesian
+// one above, not just a translation of it: different field labels, so it
+// needs its own parser, parseOcbcTransferEn_() below), and "Successful
+// Payment to <biller/e-wallet name>" (English-language bill payment,
+// covers e-wallet top-ups like DANA as well as any other OCBC biller,
+// parseOcbcBillPayment_() below) emails.
 
 function parseOcbcEmail_(subject, bodyHtml) {
   if (/credit card transaction/i.test(subject)) {
@@ -741,6 +748,12 @@ function parseOcbcEmail_(subject, bodyHtml) {
   }
   if (/transfer dana/i.test(subject)) {
     return parseOcbcTransfer_(bodyHtml);
+  }
+  if (/successful funds transfer/i.test(subject)) {
+    return parseOcbcTransferEn_(bodyHtml);
+  }
+  if (/successful payment to/i.test(subject)) {
+    return parseOcbcBillPayment_(bodyHtml);
   }
   return null; // unrecognized OCBC template → AI fallback
 }
@@ -790,6 +803,175 @@ function parseOcbcTransfer_(bodyHtml) {
     date: parseIndonesianDate_(dateMatch[1]),
     sof: 'ocbc',
     notes: 'OCBC BI Fast transfer — Ref ' + (refMatch ? refMatch[1] : 'unknown')
+  };
+}
+
+// ── mnab/ocbc PARSERS: English-language templates ───────────────────────
+// OCBC also sends English-language versions of its transfer/payment
+// notifications, structurally different from the Indonesian ones above
+// (different labels, and both put AMOUNT before TO rather than after) —
+// covers real "Successful Funds Transfer with BI Fast to <name>" /
+// "Successful Funds Transfer To Other Bank" (parseOcbcTransferEn_) and
+// "Successful Payment to <name>" / "Successful Bill Payment" (e-wallet
+// top-ups like DANA, or any other OCBC biller — parseOcbcBillPayment_)
+// samples. Both share the same FROM/TO/AMOUNT/DATE/Reference Number label
+// shape, so they're built on one shared field extractor below rather than
+// duplicating the boundary-regex logic twice.
+
+// OCBC's own "was successfully done" status span is HTML-commented out in
+// both real samples (a leftover from a template that also renders this
+// visibly on some other status), but htmlToText_'s blind tag-stripping
+// doesn't know that — and because that comment sits inside whichever table
+// cell happens to precede it (REMARK's cell on the transfer template, TO's
+// cell on the bill-payment template — it moves depending on the template's
+// row layout), it would otherwise trail onto the end of that field's
+// captured value. Stripped centrally here rather than patched per-field.
+var OCBC_STATUS_COMMENT_NOISE_RE = /was successfully done\s*-->/i;
+
+function cleanOcbcFieldValue_(value) {
+  if (!value) return value;
+  return value
+      .replace(OCBC_STATUS_COMMENT_NOISE_RE, '')
+      .split('\n')
+      .map(function (l) { return l.trim(); })
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+}
+
+// Generic label/value extractor for OCBC's English-language templates.
+// Each field label sits alone on its own line (surrounded by arbitrary
+// tabs/spaces left over from the source HTML's indentation) — same shape
+// as parseMandiriEmail_'s valueAfter() closure above, pulled out as a
+// standalone helper here since more than one OCBC template needs it.
+// `labels` must list every label that can appear in the template, IN THE
+// ORDER THEY APPEAR, so each field's boundary can be built from "any LATER
+// label" rather than just the immediate next one — that's what lets an
+// optional field (e.g. a transfer with no REMARK at all) simply be absent
+// without breaking extraction of the fields before or after it.
+//
+// The LAST label in `labels` has no later label to stop at, so it captures
+// everything through the end of the email — footer/signature/copyright
+// included. Don't trust that final field's value as-is; both templates
+// here put "Reference Number" last, so extractReferenceNumber_() below
+// pulls it with its own small dedicated regex instead.
+function extractOcbcEnglishFields_(text, labels) {
+  var values = {};
+  labels.forEach(function (label, idx) {
+    var laterLabels = labels.slice(idx + 1).map(function (l) { return l.replace(/[.]/g, '\\.'); });
+    var boundary = laterLabels.length ? '(?:' + laterLabels.join('|') + ')' : '$';
+    var escapedLabel = label.replace(/[.]/g, '\\.');
+    var re = new RegExp(
+        '(?:^|\\n)[ \\t]*' + escapedLabel + '[ \\t]*:?[ \\t]*\\n([\\s\\S]*?)' +
+        '(?:\\n[ \\t]*(?:' + boundary + ')[ \\t]*:?[ \\t]*(?:\\n|$)|$)',
+        'i'
+    );
+    var m = text.match(re);
+    values[label] = m ? cleanOcbcFieldValue_(m[1]) : null;
+  });
+  return values;
+}
+
+function firstNonBlankLine_(value) {
+  if (!value) return null;
+  var lines = value.split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
+  return lines.length ? lines[0] : null;
+}
+
+// Reference Number is always the last field in both English OCBC templates
+// (nothing after it to bound its capture — see extractOcbcEnglishFields_
+// above), so it's pulled directly with its own regex rather than trusted
+// from that generic extraction.
+function extractReferenceNumber_(text) {
+  var m = text.match(/Reference Number:?\s*\n\s*([A-Za-z0-9]+)/i);
+  return m ? m[1] : null;
+}
+
+// "Successful Funds Transfer with BI Fast to <name>" / "Successful Funds
+// Transfer To Other Bank" — English-language transfer to another bank
+// account. Validated against a real BI-Fast sample. FROM always shows a
+// real OCBC account number for this template (unlike the bill-payment
+// template below), so this confirms it the same conservative way the
+// Indonesian parseOcbcTransfer_() above does, before assuming the cash
+// account — it's still just a presence check, not a lookup, since OCBC_SOF_MAP
+// is keyed by card last-4 (credit card transactions only), not by the
+// account number a transfer's FROM block shows.
+var OCBC_TRANSFER_EN_LABELS = ['FROM', 'AMOUNT', 'TO', 'REMARK', 'TRANSFER DATE', 'INSTRUCTION DATE', 'Reference Number'];
+
+function parseOcbcTransferEn_(bodyHtml) {
+  var text = htmlToText_(bodyHtml);
+  var f = extractOcbcEnglishFields_(text, OCBC_TRANSFER_EN_LABELS);
+
+  var toName = firstNonBlankLine_(f['TO']);
+  if (!toName || !f['AMOUNT'] || !f['TRANSFER DATE']) return null; // → AI fallback
+
+  var fromAccountNumber = f['FROM'] && f['FROM'].match(/\b\d{9,}\b/);
+  if (!fromAccountNumber) return null; // couldn't confirm cash-account SOF → AI fallback
+
+  var date = parseIndonesianDate_(f['TRANSFER DATE']); // "04 Sep 2026 11:09:04 WIB" — same day/Mon/year shape parseIndonesianDate_ already handles
+  if (!date) return null;
+
+  // TO's 2nd+ lines are the destination bank + account number (e.g.
+  // "BANK BCA" then "2181524652") — folded into notes for reference.
+  var toLines = f['TO'].split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
+  var toDetailLine = toLines.length > 1 ? toLines.slice(1).join(' ') : null;
+
+  var notesParts = ['OCBC transfer to other bank'];
+  if (toDetailLine) notesParts.push(toDetailLine);
+  if (f['REMARK']) notesParts.push('Remark: ' + f['REMARK']);
+  notesParts.push('Ref ' + (extractReferenceNumber_(text) || 'unknown'));
+
+  return {
+    payee: toName,
+    type: 'Expense',
+    amount: parseWesternAmount_(f['AMOUNT']), // "IDR 370,000"
+    date: date,
+    sof: 'ocbc',
+    notes: notesParts.join(' — ')
+  };
+}
+
+// "Successful Payment to <name>" ("Successful Bill Payment" template) —
+// covers e-wallet top-ups (DANA, GoPay, OVO, etc. — shown as a phone
+// number under TO) as well as any other OCBC bill-pay biller. Validated
+// against a real DANA top-up sample. Confirmed with the user: unlike the
+// transfer template above, FROM here does NOT show a real source account
+// number — the real sample shows the payment's own reference number
+// repeated in that slot instead (an OCBC template quirk, not a genuine
+// account number), so there's nothing reliable to confirm there. Every
+// bill/e-wallet payment resolves to the 'ocbc' cash account regardless —
+// there's no per-biller card/account distinction to make for this
+// template, the same way transfers always resolve to 'ocbc' too.
+var OCBC_BILL_PAYMENT_EN_LABELS = ['FROM', 'PAYMENT AMOUNT', 'TO', 'PAYMENT DATE', 'INSTRUCTION DATE', 'Reference Number'];
+
+function parseOcbcBillPayment_(bodyHtml) {
+  var text = htmlToText_(bodyHtml);
+  var f = extractOcbcEnglishFields_(text, OCBC_BILL_PAYMENT_EN_LABELS);
+
+  var toName = firstNonBlankLine_(f['TO']);
+  if (!toName || !f['PAYMENT AMOUNT'] || !f['PAYMENT DATE']) return null; // → AI fallback
+
+  var date = parseIndonesianDate_(f['PAYMENT DATE']);
+  if (!date) return null;
+
+  // TO's 2nd line is the e-wallet phone number / biller customer ID, when
+  // there is one — only kept if it actually looks like one (short run of
+  // digits/dashes/spaces/bullets). This template's TO cell is also where
+  // the "was successfully done" status-comment noise happens to land (see
+  // OCBC_STATUS_COMMENT_NOISE_RE above), so this is a second guard against
+  // any of that leaking into notes if the shared regex ever misses a
+  // variant of it.
+  var toLines = f['TO'].split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
+  var toIdLine = (toLines.length > 1 && /^[\d\s\-•]{4,}$/.test(toLines[1])) ? toLines[1] : null;
+
+  return {
+    payee: toName,
+    type: 'Expense',
+    amount: parseWesternAmount_(f['PAYMENT AMOUNT']), // "IDR 100,000"
+    date: date,
+    sof: 'ocbc',
+    notes: 'OCBC bill payment' + (toIdLine ? ' — ' + toIdLine : '') +
+        ' — Ref ' + (extractReferenceNumber_(text) || 'unknown')
   };
 }
 
