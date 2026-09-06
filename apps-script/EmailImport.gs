@@ -912,7 +912,7 @@ function parseOcbcTransferEn_(bodyHtml) {
   if (!date) return null;
 
   // TO's 2nd+ lines are the destination bank + account number (e.g.
-  // "BANK BCA" then "2181524652"), folded into notes for reference.
+  // "BANK BCA" then "2181524652") — folded into notes for reference.
   var toLines = f['TO'].split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
   var toDetailLine = toLines.length > 1 ? toLines.slice(1).join(' ') : null;
 
