@@ -1309,6 +1309,7 @@
   let dtxKbdEditInputs = null; // { field: <input> } for the currently open row
   let dtxKbdSaving = false;
   let dtxKbdDeleting = false; // guards a second Backspace while a delete is in flight
+  let dtxKbdClearing = false; // guards a second C press while a clear/unclear is in flight
 
   function dtxRowEls() {
     return Array.from(dtxTableBodyEl.querySelectorAll('tr[data-row]'));
@@ -1673,6 +1674,35 @@
       },
       { title: isPayment ? 'Undo payment' : 'Delete transaction', confirmLabel: isPayment ? 'Undo Payment' : 'Delete', danger: true }
     );
+  }
+
+  // C on a highlighted row toggles Cleared/Uncleared directly -- no full
+  // row-edit session and no confirmation dialog (issue #88), mirroring the
+  // Transactions page's own txtKbdHandleClear and reusing the same
+  // toggleDetailTxnClearedViaSwipe() the status column's click-to-toggle
+  // and the mobile swipe gesture already use. Transfer legs are skipped
+  // the same way the status column's own click handler skips them --
+  // undo-payment (Enter, or the pencil button's menu) is the right way to
+  // unwind one, not a plain Cleared flip.
+  async function dtxKbdHandleClear(txn) {
+    const index = dtxKbdHighlightIndex;
+    const rowNumber = txn.rowNumber;
+    const row = dtxRowEls()[index];
+    dtxKbdClearing = true;
+    if (row) row.classList.add('dtx-kbd-row-saving');
+    try {
+      await toggleDetailTxnClearedViaSwipe(txn);
+      // toggleDetailTxnClearedViaSwipe() -> fetchAndRenderAccountDetail()
+      // rebuilds the table and always resets the highlight -- restore it
+      // by rowNumber (not index) since sorting by the Cleared column could
+      // have moved this row to a new position.
+      dtxRestoreHighlightByRowNumber(rowNumber);
+    } catch (err) {
+      if (row) row.classList.remove('dtx-kbd-row-saving');
+      showAlert(err.message, 'Failed');
+    } finally {
+      dtxKbdClearing = false;
+    }
   }
 
   // A click anywhere outside the row currently open for keyboard editing
@@ -2978,6 +3008,14 @@
         // button and the mobile card list's own Enter behavior.
         if (txn.transfer) openUndoPaymentMenu(txn);
         else startDtxKbdEdit(txn);
+      } else if (key === 'c') {
+        const txn = dtxCurrentHighlightedTxn();
+        if (!txn || dtxKbdClearing) return;
+        e.preventDefault();
+        // Transfer legs: use Enter's undo-payment menu (or the pencil
+        // button) instead -- same as the status column's own click handler.
+        if (txn.transfer) return;
+        dtxKbdHandleClear(txn);
       } else if (e.key === 'Backspace') {
         const txn = dtxCurrentHighlightedTxn();
         if (!txn || dtxKbdDeleting) return;
