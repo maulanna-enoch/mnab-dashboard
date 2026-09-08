@@ -885,12 +885,32 @@
     return new Date().toISOString().slice(0, 10);
   }
 
+  // Hotkeys for the confirm dialog currently open, or null when none apply
+  // (showAlert, or a showConfirm call that didn't opt in via opts.hotkeys).
+  // Read by the keydown listener below.
+  let modalHotkeys = null;
+
+  // Sets a modal button's label, underlining the first occurrence of
+  // `hotkey`'s letter (case-insensitive) as a visual signifier for the
+  // keyboard shortcut that activates it -- e.g. "Delete" -> "<u>D</u>elete".
+  // Falls back to a plain label when there's no hotkey, or the letter isn't
+  // actually present in it.
+  function setModalBtnLabel(btn, label, hotkey) {
+    const idx = hotkey ? label.toLowerCase().indexOf(hotkey.toLowerCase()) : -1;
+    if (idx === -1) {
+      btn.textContent = label;
+    } else {
+      btn.innerHTML = label.slice(0, idx) + '<u>' + label[idx] + '</u>' + label.slice(idx + 1);
+    }
+  }
+
   function showAlert(message, title) {
     document.getElementById('modal-title').textContent = title || 'Notice';
     document.getElementById('modal-message').textContent = message;
     document.getElementById('modal-cancel-btn').style.display = 'none';
     const okBtn = document.getElementById('modal-ok-btn');
     okBtn.textContent = 'OK';
+    modalHotkeys = null;
     okBtn.onclick = () => document.getElementById('modal-overlay').classList.remove('open');
     document.getElementById('modal-overlay').classList.add('open');
   }
@@ -901,14 +921,44 @@
     const cancelBtn = document.getElementById('modal-cancel-btn');
     const okBtn = document.getElementById('modal-ok-btn');
     cancelBtn.style.display = 'inline-block';
-    cancelBtn.textContent = opts.cancelLabel || 'Cancel';
-    okBtn.textContent = opts.confirmLabel || 'Confirm';
+    setModalBtnLabel(cancelBtn, opts.cancelLabel || 'Cancel', opts.hotkeys && opts.hotkeys.cancel);
+    setModalBtnLabel(okBtn, opts.confirmLabel || 'Confirm', opts.hotkeys && opts.hotkeys.confirm);
     okBtn.className = opts.danger ? 'btn btn-danger' : 'btn btn-primary';
-    const close = () => document.getElementById('modal-overlay').classList.remove('open');
+    modalHotkeys = opts.hotkeys || null;
+    const close = () => { document.getElementById('modal-overlay').classList.remove('open'); modalHotkeys = null; };
     cancelBtn.onclick = close;
     okBtn.onclick = () => { close(); onConfirm(); };
     document.getElementById('modal-overlay').classList.add('open');
   }
+
+  // D/C hotkeys for whichever showConfirm dialog opted in via opts.hotkeys
+  // (currently just the keyboard-delete confirmation below) -- matches the
+  // underlined letters setModalBtnLabel() renders onto the buttons above.
+  // Scoped to modalHotkeys being set AND the dialog actually being open, so
+  // it never fires for showAlert or a showConfirm call that didn't ask for
+  // it (e.g. "d" typed elsewhere shouldn't accidentally confirm a dialog
+  // that has no D-labeled action).
+  document.addEventListener('keydown', (e) => {
+    if (!modalHotkeys) return;
+    if (!document.getElementById('modal-overlay').classList.contains('open')) return;
+    if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+    const key = e.key.toLowerCase();
+    if (!(modalHotkeys.confirm && key === modalHotkeys.confirm) && !(modalHotkeys.cancel && key === modalHotkeys.cancel)) return;
+    e.preventDefault();
+    // Clicking ok/cancel below closes the dialog (removes "open")
+    // synchronously, in the same dispatch as this keydown -- without
+    // stopImmediatePropagation() the page's own keydown handler further
+    // down (registered on the same document, e.g. its "C" clear-toggle
+    // shortcut on the wide-viewport table) would then see the dialog
+    // already closed and act on this *same* keypress too. Stop the event
+    // here so only this dialog reacts to it.
+    e.stopImmediatePropagation();
+    if (modalHotkeys.confirm && key === modalHotkeys.confirm) {
+      document.getElementById('modal-ok-btn').click();
+    } else {
+      document.getElementById('modal-cancel-btn').click();
+    }
+  });
 
   function goto(id) {
     ['accounts', 'detail'].forEach((s) => {
@@ -1672,7 +1722,16 @@
           dtxKbdDeleting = false;
         }
       },
-      { title: isPayment ? 'Undo payment' : 'Delete transaction', confirmLabel: isPayment ? 'Undo Payment' : 'Delete', danger: true }
+      {
+        title: isPayment ? 'Undo payment' : 'Delete transaction',
+        confirmLabel: isPayment ? 'Undo Payment' : 'Delete',
+        danger: true,
+        // D/C hotkeys (issue #101, wide-viewport keyboard editing only),
+        // matching the underlined letters setModalBtnLabel() renders --
+        // "Delete"/"Undo Payment" both have a "d" to underline, "Cancel"
+        // always has its "c".
+        hotkeys: { confirm: 'd', cancel: 'c' },
+      }
     );
   }
 
