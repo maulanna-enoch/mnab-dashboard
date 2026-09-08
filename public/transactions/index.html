@@ -808,6 +808,7 @@
     let txtKbdEditInputs = null; // { field: <input/select> } for the currently open row
     let txtKbdSaving = false;
     let txtKbdDeleting = false; // guards a second Backspace while a delete is in flight
+    let txtKbdClearing = false; // guards a second C press while a clear/unclear is in flight
 
     async function loadAccountFilterOptions() {
       try {
@@ -1391,6 +1392,33 @@
       }
     }
 
+    // C on a highlighted row toggles Cleared/Uncleared directly -- no full
+    // row-edit session and no confirmation dialog (issue #88), just the
+    // existing toggleClearedViaSwipe() the status column's own
+    // click-to-toggle and the mobile swipe gesture already use. Reuses the
+    // same dimmed "busy" row look as a row-edit save/delete so a slow
+    // request doesn't look like the keypress was dropped.
+    async function txtKbdHandleClear(txn) {
+      const index = txtKbdHighlightIndex;
+      const rowNumber = txn.rowNumber;
+      const row = txtRowEls()[index];
+      txtKbdClearing = true;
+      if (row) row.classList.add('txt-kbd-row-saving');
+      try {
+        await toggleClearedViaSwipe(txn);
+        // toggleClearedViaSwipe() -> loadTransactions() rebuilds the table
+        // and always resets the highlight (see txtKbdHandleDelete's own
+        // comment) -- restore it by rowNumber (not index) since sorting by
+        // the Cleared column could have moved this row to a new position.
+        txtRestoreHighlightByRowNumber(rowNumber);
+      } catch (err) {
+        if (row) row.classList.remove('txt-kbd-row-saving');
+        alert(err.message);
+      } finally {
+        txtKbdClearing = false;
+      }
+    }
+
     // A click anywhere outside the row currently open for keyboard editing
     // discards it (same as Escape, no save) -- a click on another field
     // inside that same row is left alone and just focuses it normally.
@@ -1441,6 +1469,11 @@
         if (!txn) return;
         e.preventDefault();
         startTxtKbdEdit(txn);
+      } else if (e.key.toLowerCase() === 'c') {
+        const txn = txtCurrentHighlightedTxn();
+        if (!txn || txtKbdClearing) return;
+        e.preventDefault();
+        txtKbdHandleClear(txn);
       } else if (e.key === 'Backspace') {
         const txn = txtCurrentHighlightedTxn();
         if (!txn || txtKbdDeleting) return;
