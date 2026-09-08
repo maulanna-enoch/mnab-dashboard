@@ -6,4 +6,6 @@ The Apps Script project bound to the MNAB Google Sheet (`Reconcile.gs`, `Templat
 
 `Reconciliations.gs` (the file elsewhere in this repo's comments — e.g. `api/reconcile.js`, `api/_lib/reconcile.js` — referred to as `Reconcile.gs`; same macro, this is its tracked filename) is the second, current as of v3. Same rules apply: not auto-synced, paste the merged result into the Apps Script editor by hand after merging a change here.
 
-The other bound files (`Templates.gs`, `InstallmentsBills.gs`, `Payments.gs`) are not yet in this folder. Feel free to add them here the same way when they next need a tracked change.
+`InstallmentsBills.gs` is the third. Same rules apply: not auto-synced, paste the merged result into the Apps Script editor by hand after merging a change here.
+
+The other bound files (`Templates.gs`, `Payments.gs`) are not yet in this folder. Feel free to add them here the same way when they next need a tracked change.
