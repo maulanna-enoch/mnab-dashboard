@@ -340,7 +340,13 @@ function buildDialogHtml(accounts) {
   // you override, not an authoritative rule.
   function guessBillingMonth(dateStr) {
     const d = new Date(dateStr + 'T00:00:00');
-    if (d.getDate() > 12) d.setMonth(d.getMonth() + 1);
+    if (d.getDate() > 12) {
+      // Snap to day 1 BEFORE incrementing the month -- otherwise a date
+      // like Aug 31 overflows past September (30 days) into October
+      // instead of landing on September (#96).
+      d.setDate(1);
+      d.setMonth(d.getMonth() + 1);
+    }
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
   }
 
@@ -1217,7 +1223,14 @@ function firstOfMonth(date) {
  */
 function billingMonthForDate(date) {
   const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  if (d.getDate() > 12) d.setMonth(d.getMonth() + 1);
+  if (d.getDate() > 12) {
+    // Snap to day 1 BEFORE incrementing the month -- otherwise a date like
+    // Aug 31 overflows past September (30 days) into October instead of
+    // landing on September (#96).
+    d.setDate(1);
+    d.setMonth(d.getMonth() + 1);
+    return d;
+  }
   return firstOfMonth(d);
 }
 
