@@ -75,21 +75,42 @@ function todayWIBDate() {
   return new Date(Date.UTC(wibNow.getUTCFullYear(), wibNow.getUTCMonth(), wibNow.getUTCDate()));
 }
 
-// Rough default for which billing month a transaction belongs to: dates
-// early in the month (day <= 12) stay in that calendar month; later dates
-// roll into the next one. Fixed version of the bug that also existed here
-// and in public/shared/transaction-form.js: snap to day 1 *before*
-// incrementing the month, otherwise a date like Aug 31 overflows into
-// October (September only has 30 days) instead of landing on September.
-function billingMonthForDate(date) {
+// Rough default for which billing month a transaction belongs to. Two
+// heuristics, mirroring public/shared/transaction-form.js's
+// guessBillingMonth():
+//   - Credit cards (isCash falsy, the default -- see callers below): dates
+//     early in the month (day <= 12) stay in that calendar month; later
+//     dates roll into the next one. Fixed version of a bug that also existed
+//     here and client-side: snap to day 1 *before* incrementing the month,
+//     otherwise a date like Aug 31 overflows into October (September only
+//     has 30 days) instead of landing on September.
+//   - Cash/bank accounts (isCash truthy): the statement cycle runs the 25th
+//     of a month through the 24th of the next one, and the whole cycle is
+//     named after the month it *starts* in -- day 1-24 belongs to the
+//     previous month, day 25+ belongs to this one.
+function billingMonthForDate(date, isCash) {
   const d = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
-  if (d.getUTCDate() > 12) {
+  if (isCash) {
+    if (d.getUTCDate() < 25) {
+      d.setUTCDate(1);
+      d.setUTCMonth(d.getUTCMonth() - 1);
+    } else {
+      d.setUTCDate(1);
+    }
+  } else if (d.getUTCDate() > 12) {
     d.setUTCDate(1);
     d.setUTCMonth(d.getUTCMonth() + 1);
   } else {
     d.setUTCDate(1);
   }
   return d;
+}
+
+// Same "is this a credit card?" check used throughout the client-side pages
+// (isCredit / getCashAccounts() / TransactionForm.isCashAccountType()) --
+// blank/unknown type reads as cash, matching that convention.
+function isCashAccountType(type) {
+  return !(type || '').toLowerCase().includes('credit');
 }
 
 function parseISOMonth(text) {
@@ -320,7 +341,7 @@ async function unmarkRowsReconciled(sheets, map, rowNumbers) {
 
 // Appends a synthetic "Reconciliation" plug transaction for the delta
 // between book balance and statement amount.
-async function appendAdjustmentRow(sheets, map, amountHeader, payeeHeader, { account, type, amount, date }) {
+async function appendAdjustmentRow(sheets, map, amountHeader, payeeHeader, { account, type, amount, date, isCash }) {
   const spreadsheetId = process.env.SHEET_ID;
   const width = Math.max(...Object.values(map)) + 1;
   const row = new Array(width).fill('');
@@ -329,7 +350,7 @@ async function appendAdjustmentRow(sheets, map, amountHeader, payeeHeader, { acc
   if ('Income/Expense' in map) row[map['Income/Expense']] = type;
   if ('SOF' in map) row[map['SOF']] = account;
   if ('Date' in map) row[map['Date']] = dateToSerial(date);
-  if ('Month' in map) row[map['Month']] = dateToSerial(billingMonthForDate(date));
+  if ('Month' in map) row[map['Month']] = dateToSerial(billingMonthForDate(date, isCash));
   if ('Cleared' in map) row[map['Cleared']] = 'Cleared';
   const expense = type === 'Expense' ? amount : 0;
   const income = type === 'Income' ? amount : 0;
@@ -354,7 +375,7 @@ async function appendAdjustmentRow(sheets, map, amountHeader, payeeHeader, { acc
 // Appends a real, un-reconciled Cleared transaction -- something forgotten
 // from the sheet. Reconciled/Reconciled Date deliberately left blank so it
 // flows through the normal matching logic on the next recalculation.
-async function appendPlainTransactionRow(sheets, map, amountHeader, payeeHeader, { name, sof, type, amount, date, month }) {
+async function appendPlainTransactionRow(sheets, map, amountHeader, payeeHeader, { name, sof, type, amount, date, month, isCash }) {
   const spreadsheetId = process.env.SHEET_ID;
   const width = Math.max(...Object.values(map)) + 1;
   const row = new Array(width).fill('');
@@ -363,7 +384,7 @@ async function appendPlainTransactionRow(sheets, map, amountHeader, payeeHeader,
   if ('Income/Expense' in map) row[map['Income/Expense']] = type;
   if ('SOF' in map) row[map['SOF']] = sof;
   if ('Date' in map) row[map['Date']] = dateToSerial(date);
-  if ('Month' in map) row[map['Month']] = dateToSerial(month || billingMonthForDate(date));
+  if ('Month' in map) row[map['Month']] = dateToSerial(month || billingMonthForDate(date, isCash));
   if ('Cleared' in map) row[map['Cleared']] = 'Cleared';
   const expense = type === 'Expense' ? amount : 0;
   const income = type === 'Income' ? amount : 0;
@@ -878,6 +899,7 @@ module.exports = {
   todayWIBDate,
   parseISOMonth,
   billingMonthForDate,
+  isCashAccountType,
   fetchAccountsForReconcile,
   findAccount,
   fetchTransactionsForReconcile,

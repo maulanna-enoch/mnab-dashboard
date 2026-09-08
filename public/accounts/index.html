@@ -1536,7 +1536,7 @@
     // single-cell Date edit above, only when the date actually changed so
     // an untouched row keeps its (possibly hand-picked) Month.
     if (original && draft.date !== original.date) {
-      payload.month = TransactionForm.guessBillingMonth(draft.date);
+      payload.month = TransactionForm.guessBillingMonth(draft.date, await dtxAccountIsCash(draft.sof));
     }
 
     const row = dtxRowEls()[dtxKbdHighlightIndex];
@@ -1599,7 +1599,7 @@
       cleared: draft.cleared,
     };
     if (original && draft.date !== original.date) {
-      payload.month = TransactionForm.guessBillingMonth(draft.date);
+      payload.month = TransactionForm.guessBillingMonth(draft.date, await dtxAccountIsCash(draft.sof));
     }
 
     const row = dtxRowEls()[dtxKbdHighlightIndex];
@@ -1827,7 +1827,7 @@
 
     if (field === 'date') {
       payload.date = newValue;
-      payload.month = TransactionForm.guessBillingMonth(newValue);
+      payload.month = TransactionForm.guessBillingMonth(newValue, await dtxAccountIsCash(txn.sof));
     } else {
       payload[field] = newValue;
     }
@@ -2449,13 +2449,30 @@
     );
   }
 
-  function guessBillingMonth(dateStr) {
+  // Same two-heuristic guess as TransactionForm.guessBillingMonth() (see
+  // that file's comment) -- a separate copy because this dialog fills in the
+  // reconcile "Add transaction"/"Add adjustment" forms for whichever account
+  // is currently being reconciled, without mounting the shared form. `isCash`
+  // is resolved from currentAccountMeta.type at each call site below, since
+  // this dialog is always scoped to currentAccount.
+  function guessBillingMonth(dateStr, isCash) {
     const d = new Date(dateStr + 'T00:00:00');
-    if (d.getDate() > 12) {
+    if (isCash) {
+      if (d.getDate() < 25) {
+        d.setDate(1);
+        d.setMonth(d.getMonth() - 1);
+      } else {
+        d.setDate(1);
+      }
+    } else if (d.getDate() > 12) {
       d.setDate(1);
       d.setMonth(d.getMonth() + 1);
     }
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  }
+
+  function currentAccountIsCash() {
+    return TransactionForm.isCashAccountType(currentAccountMeta && currentAccountMeta.type);
   }
 
   let rcAddType = 'Expense';
@@ -2469,7 +2486,7 @@
   document.getElementById('rc-add-month').addEventListener('input', () => { addMonthTouched = true; });
   document.getElementById('rc-add-date').addEventListener('change', () => {
     if (!addMonthTouched) {
-      document.getElementById('rc-add-month').value = guessBillingMonth(document.getElementById('rc-add-date').value);
+      document.getElementById('rc-add-month').value = guessBillingMonth(document.getElementById('rc-add-date').value, currentAccountIsCash());
     }
   });
 
@@ -2479,7 +2496,7 @@
     document.getElementById('rc-add-amount').value = '';
     rcSetAddType('Expense');
     document.getElementById('rc-add-date').value = rcState.asOfDate;
-    document.getElementById('rc-add-month').value = guessBillingMonth(rcState.asOfDate);
+    document.getElementById('rc-add-month').value = guessBillingMonth(rcState.asOfDate, currentAccountIsCash());
     addMonthTouched = false;
     document.getElementById('rc-add-form').style.display = 'block';
     document.getElementById('rc-add-form').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -2610,12 +2627,28 @@
     }
   }
 
-  let cashAccountsCache = null;
-  async function getCashAccounts() {
-    if (cashAccountsCache) return cashAccountsCache;
+  let allAccountsCache = null;
+  async function getAllAccounts() {
+    if (allAccountsCache) return allAccountsCache;
     const data = await apiGet('/api/accounts-list');
-    cashAccountsCache = data.accounts.filter((a) => !(a.type || '').toLowerCase().includes('credit'));
-    return cashAccountsCache;
+    allAccountsCache = data.accounts || [];
+    return allAccountsCache;
+  }
+
+  async function getCashAccounts() {
+    const accounts = await getAllAccounts();
+    return accounts.filter((a) => TransactionForm.isCashAccountType(a.type));
+  }
+
+  // Resolves a SOF name against the accounts list to tell guessBillingMonth()
+  // which heuristic to use -- needed anywhere `sof` can be a *different*
+  // account than the one this page is currently showing (the keyboard
+  // row-editor's free-typed Account field). Defaults to cash, same
+  // unknown-reads-as-cash convention as isCashAccountType() itself.
+  async function dtxAccountIsCash(sofName) {
+    const accounts = await getAllAccounts();
+    const acct = accounts.find((a) => a.name === sofName);
+    return TransactionForm.isCashAccountType(acct ? acct.type : undefined);
   }
 
   function monthMinusOne(monthStr) {

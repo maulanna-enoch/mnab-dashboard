@@ -32,6 +32,7 @@ const {
   parseISODate,
   parseISOMonth,
   billingMonthForDate,
+  isCashAccountType,
   formatISODate,
   todayWIBDate,
   round2,
@@ -183,6 +184,7 @@ async function actionAddAdjustment(body, res) {
     type,
     amount,
     date: asOfDate,
+    isCash: isCashAccountType(account.type),
   });
 
   const allRows = matchedRows.concat([newRowNumber]);
@@ -231,13 +233,23 @@ async function actionAddTransaction(body, res) {
     return;
   }
 
-  const month = monthStr ? parseISOMonth(monthStr) : billingMonthForDate(date);
+  const sheets = getWriteSheetsClient();
+
+  let month = monthStr ? parseISOMonth(monthStr) : null;
+  if (!month) {
+    // monthStr should always be filled in by the client (it pre-fills the
+    // dialog's editable "Billing month" field), but fall back to the
+    // day-of-month guess if it's ever missing -- which heuristic applies
+    // depends on whether accountName is a cash account or a credit card.
+    const { accounts } = await fetchAccountsForReconcile(sheets);
+    const account = findAccount(accounts, accountName);
+    month = billingMonthForDate(date, isCashAccountType(account && account.type));
+  }
   if (!month) {
     res.status(400).json({ error: 'Invalid billing month.' });
     return;
   }
 
-  const sheets = getWriteSheetsClient();
   const { map, amountHeader, payeeHeader } = await fetchTransactionsForReconcile(sheets);
 
   await appendPlainTransactionRow(sheets, map, amountHeader, payeeHeader, {
@@ -329,6 +341,10 @@ async function actionPayCard(body, res) {
     res.status(400).json({ error: 'Invalid payment date.' });
     return;
   }
+  // Deliberately the card (credit) heuristic, not cashAccount's -- this
+  // guesses which of the CARD's own statement months a payment made now is
+  // most likely closing out, so it's never the cash-account 25th-cycle rule
+  // regardless of what's paying it.
   const month = monthStr ? parseISOMonth(monthStr) : shiftMonth(billingMonthForDate(date), -1);
   if (!month) {
     res.status(400).json({ error: 'Invalid billing month.' });

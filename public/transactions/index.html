@@ -810,11 +810,23 @@
     let txtKbdDeleting = false; // guards a second Backspace while a delete is in flight
     let txtKbdClearing = false; // guards a second C press while a clear/unclear is in flight
 
+    // Populated alongside the filter/datalist options below -- kept around so
+    // the keyboard row-editor's billing-month re-guess (txtAccountIsCash())
+    // knows whether a given SOF is a cash account or a credit card, since
+    // that editing surface lets `sof` itself be changed via the datalist.
+    let txtAccountsCache = [];
+
+    function txtAccountIsCash(sofName) {
+      const acct = txtAccountsCache.find((a) => a.name === sofName);
+      return TransactionForm.isCashAccountType(acct ? acct.type : undefined);
+    }
+
     async function loadAccountFilterOptions() {
       try {
         const res = await fetch('/api/accounts-list');
         const data = await res.json();
         if (data.error) throw new Error(data.error);
+        txtAccountsCache = data.accounts || [];
         const opts = (data.accounts || [])
           .map((a) => `<option value="${a.name}">${a.name}</option>`)
           .join('');
@@ -1261,7 +1273,7 @@
       // the single-cell Date edit above, only when the date actually
       // changed so an untouched row keeps its (possibly hand-picked) Month.
       if (original && draft.date !== original.date) {
-        payload.month = TransactionForm.guessBillingMonth(draft.date);
+        payload.month = TransactionForm.guessBillingMonth(draft.date, txtAccountIsCash(draft.sof));
       }
 
       const row = txtRowEls()[txtKbdHighlightIndex];
@@ -1324,7 +1336,7 @@
         cleared: draft.cleared,
       };
       if (original && draft.date !== original.date) {
-        payload.month = TransactionForm.guessBillingMonth(draft.date);
+        payload.month = TransactionForm.guessBillingMonth(draft.date, txtAccountIsCash(draft.sof));
       }
 
       const row = txtRowEls()[txtKbdHighlightIndex];
@@ -1616,7 +1628,7 @@
         // inline will replace that override -- use the full sheet instead
         // if that matters for this row.
         payload.date = newValue;
-        payload.month = TransactionForm.guessBillingMonth(newValue);
+        payload.month = TransactionForm.guessBillingMonth(newValue, txtAccountIsCash(txn.sof));
       } else {
         payload[field] = newValue;
       }
