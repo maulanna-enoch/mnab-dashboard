@@ -399,6 +399,62 @@
     }
     .txt-sortby-dir:hover { color: var(--text); }
   }
+
+  /* Custom confirm dialog for the wide-viewport keyboard-delete flow
+     (Backspace on a highlighted row) -- replaces the native confirm() so
+     the D-confirms/C-cancels hotkeys (issue #101) have somewhere to attach
+     and buttons to label. Reuses the ".open" convention the full Add/Edit
+     sheet already uses, so it's automatically covered by the document
+     keydown handler's existing `document.querySelector('.open')` guard --
+     table nav/shortcuts don't fire while this is up. */
+  .txt-kbd-confirm-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.55);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 40;
+  }
+  .txt-kbd-confirm-overlay.open { display: flex; }
+  .txt-kbd-confirm-sheet {
+    width: 100%;
+    max-width: 360px;
+    margin: 0 16px;
+    background: var(--card);
+    border-radius: 14px;
+    padding: 20px 18px;
+  }
+  .txt-kbd-confirm-message {
+    font-size: 0.9rem;
+    line-height: 1.5;
+    margin: 0 0 18px;
+  }
+  .txt-kbd-confirm-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+  }
+  .txt-kbd-confirm-btn {
+    border: none;
+    border-radius: 8px;
+    padding: 8px 16px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+  }
+  .txt-kbd-confirm-btn u { text-underline-offset: 2px; }
+  .txt-kbd-confirm-no {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid #2a2e37;
+  }
+  .txt-kbd-confirm-no:hover { color: var(--text); }
+  .txt-kbd-confirm-yes {
+    background: #e24b4a;
+    color: #fff;
+  }
 </style>
 </head>
 <body>
@@ -494,6 +550,16 @@
   <div id="txf-root"></div>
   <div id="bnv-root"></div>
   <datalist id="txt-account-list"></datalist>
+
+  <div class="txt-kbd-confirm-overlay" id="txt-kbd-confirm-overlay">
+    <div class="txt-kbd-confirm-sheet">
+      <p class="txt-kbd-confirm-message" id="txt-kbd-confirm-message"></p>
+      <div class="txt-kbd-confirm-actions">
+        <button type="button" class="txt-kbd-confirm-btn txt-kbd-confirm-no" id="txt-kbd-confirm-no-btn"><u>C</u>ancel</button>
+        <button type="button" class="txt-kbd-confirm-btn txt-kbd-confirm-yes" id="txt-kbd-confirm-yes-btn"><u>D</u>elete</button>
+      </div>
+    </div>
+  </div>
 
   <script src="/shared/transaction-form.js"></script>
   <script src="/shared/swipe-actions.js"></script>
@@ -1360,19 +1426,79 @@
       }
     }
 
+    // Custom confirm dialog backing Backspace-to-delete (issue #101) --
+    // replaces the native confirm() so a D/C hotkey pair can be wired to
+    // it and the buttons can carry an underline signifier for each. Shares
+    // the ".open" convention the full Add/Edit sheet already uses, so the
+    // document keydown handler's `document.querySelector('.open')` guard
+    // above automatically stops table nav/shortcuts (arrows, C-to-clear,
+    // another Backspace, ...) from also firing while this is up.
+    let txtKbdConfirmOnYes = null;
+
+    function txtKbdConfirmClose() {
+      document.getElementById('txt-kbd-confirm-overlay').classList.remove('open');
+      txtKbdConfirmOnYes = null;
+    }
+
+    function showTxtKbdConfirm(message, onConfirm) {
+      document.getElementById('txt-kbd-confirm-message').textContent = message;
+      txtKbdConfirmOnYes = onConfirm;
+      document.getElementById('txt-kbd-confirm-overlay').classList.add('open');
+    }
+
+    document.getElementById('txt-kbd-confirm-yes-btn').addEventListener('click', () => {
+      const fn = txtKbdConfirmOnYes;
+      txtKbdConfirmClose();
+      if (fn) fn();
+    });
+    document.getElementById('txt-kbd-confirm-no-btn').addEventListener('click', () => {
+      txtKbdConfirmClose();
+    });
+
+    // D confirms, C cancels (matching the underlined letters on the two
+    // buttons above) -- Enter/Escape work too as the usual dialog
+    // fallbacks. Scoped to only act while this dialog is actually open, so
+    // it doesn't interfere with the "C" clear-toggle hotkey the main table
+    // handler owns everywhere else.
+    document.addEventListener('keydown', (e) => {
+      const overlay = document.getElementById('txt-kbd-confirm-overlay');
+      if (!overlay.classList.contains('open')) return;
+      if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+      const key = e.key.toLowerCase();
+      if (key !== 'd' && key !== 'c' && e.key !== 'Enter' && e.key !== 'Escape') return;
+      e.preventDefault();
+      // Closing the dialog here (removing its "open" class) happens
+      // synchronously, in the same dispatch as this keydown -- without
+      // stopImmediatePropagation() the main table keydown handler further
+      // down (registered on the same document) would then see the overlay
+      // already closed and go on to act on this *same* keypress itself,
+      // e.g. "C" would also toggle Cleared on the row underneath right
+      // after cancelling. Stop the event here so only this dialog reacts.
+      e.stopImmediatePropagation();
+      if (key === 'd' || e.key === 'Enter') {
+        const fn = txtKbdConfirmOnYes;
+        txtKbdConfirmClose();
+        if (fn) fn();
+      } else {
+        txtKbdConfirmClose();
+      }
+    });
+
     // Backspace on a highlighted row -- analogous to Enter opening it for
     // edit, but simpler: always confirm first, then delete outright rather
     // than opening any fields. Reuses deleteTransactionViaSwipe() (defined
     // below), the same delete path the mobile list's swipe-left gesture and
     // the full Add/Edit sheet's own Delete link already use, so there's a
     // single place that talks to /api/transactions-delete.
-    async function txtKbdHandleDelete(txn) {
-      if (!confirm(`Delete "${txn.payee}"?`)) return;
-      // Capture the row/index before the confirm dialog's own event loop
-      // turn and the delete request -- txtKbdHighlightIndex itself doesn't
-      // change while this is in flight (nothing else can move it), but
-      // reading both up front keeps this in the same style as the row-edit
-      // save path above.
+    function txtKbdHandleDelete(txn) {
+      showTxtKbdConfirm(`Delete "${txn.payee}"?`, () => txtKbdDoDelete(txn));
+    }
+
+    async function txtKbdDoDelete(txn) {
+      // Capture the row/index before the delete request -- txtKbdHighlightIndex
+      // itself doesn't change while this is in flight (nothing else can move
+      // it), but reading both up front keeps this in the same style as the
+      // row-edit save path above.
       const index = txtKbdHighlightIndex;
       const row = txtRowEls()[index];
       txtKbdDeleting = true;
