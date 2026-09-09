@@ -1,4 +1,4 @@
-const { getWriteSheetsClient, buildTransactionRow, dateToSerial, getHeaderMap, columnLetter } = require('./_lib/sheets');
+const { getWriteSheetsClient, buildTransactionRow, dateToSerial, getHeaderMap, columnLetter, upsertPayee } = require('./_lib/sheets');
 
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
@@ -7,7 +7,7 @@ module.exports = async (req, res) => {
   }
 
   try {
-    const { rowNumber, payee, type, sof, date, month, cleared, amount, notes, action } = req.body || {};
+    const { rowNumber, payee, type, sof, date, month, cleared, amount, notes, action, lat, lon, updatePayeeLocation } = req.body || {};
 
     // Lightweight "confirm pending" action (issue #49) -- flips just the
     // Pending column to FALSE for one row (the "Pending -> Uncleared" step
@@ -100,6 +100,28 @@ module.exports = async (req, res) => {
         valueInputOption: 'RAW',
         requestBody: { values: [row] },
       });
+    }
+
+    // Payee registry upsert (see issue #52, and its edit-mode follow-up):
+    // the transaction form now offers the same location-pin capture/toggle
+    // on an edit as it does on a new transaction, so this endpoint needs
+    // the same best-effort (non-fatal) coordinate write transactions-add.js
+    // already does -- only overwrites the payee's stored Lat/Lon when the
+    // form actually captured a position AND the toggle was left on for
+    // this save; otherwise it's a no-op (existing-payee-row assumed, since
+    // an edit's payee should already exist from whenever the row was
+    // first added).
+    try {
+      const numLat = Number(lat);
+      const numLon = Number(lon);
+      const hasCoords = updatePayeeLocation === true && Number.isFinite(numLat) && Number.isFinite(numLon);
+      await upsertPayee(sheets, {
+        name: payee,
+        lat: hasCoords ? numLat : undefined,
+        lon: hasCoords ? numLon : undefined,
+      });
+    } catch (payeeErr) {
+      console.error('Payee registry upsert failed (non-fatal):', payeeErr);
     }
 
     res.status(200).json({ ok: true, updatedAt: new Date().toISOString() });
