@@ -308,11 +308,17 @@
       : '';
   }
 
-  // Best-effort geolocation capture for a NEW transaction only (see open()) --
-  // never blocks the form, and a denial/timeout/error just leaves the toggle
-  // hidden and the Payee list in its alphabetical fallback order. Guarded by
-  // locRequestToken so a callback that resolves after the sheet has since
-  // been closed/reopened (e.g. for a different transaction) is ignored.
+  // Location capture is offered for edit opens too, not just new
+  // transactions (see issue #52's original, more conservative edit-mode
+  // exclusion -- relaxed per a follow-up request: editing an existing row
+  // doesn't *guarantee* you're at the payee, but you might well still be
+  // -- e.g. fixing a typo/amount moments after logging it -- so the same
+  // best-effort, non-blocking capture + opt-in toggle is offered either
+  // way). Never blocks the form, and a denial/timeout/error just leaves the
+  // toggle hidden and the Payee list in its alphabetical fallback order.
+  // Guarded by locRequestToken so a callback that resolves after the sheet
+  // has since been closed/reopened (e.g. for a different transaction) is
+  // ignored.
   function requestLocation() {
     const token = ++locRequestToken;
     if (!global.navigator || !navigator.geolocation) return;
@@ -344,17 +350,18 @@
     state.monthTouched = false;
     const isEditOpen = !!(txn && state.options.supportEditDelete);
 
-    // Location capture only makes sense for a transaction being logged now --
-    // editing an existing (possibly old) row doesn't imply you're currently
-    // at the payee, so it's skipped entirely in edit mode (see issue #52).
+    // Location capture is offered for edit opens too, not just new
+    // transactions (see issue #52's original, more conservative edit-mode
+    // exclusion -- relaxed per a follow-up request: editing an existing row
+    // doesn't *guarantee* you're at the payee, but you might well still be
+    // -- e.g. fixing a typo/amount moments after logging it -- so the same
+    // best-effort, non-blocking capture + opt-in toggle is offered either
+    // way. requestLocation() itself bumps locRequestToken, which is what
+    // invalidates any still-in-flight request from a previous open.
     state.capturedPosition = null;
     state.locationEnabled = false;
     hideLocToggle();
-    if (!isEditOpen) {
-      requestLocation();
-    } else {
-      locRequestToken++; // invalidate any still-in-flight request from a previous open
-    }
+    requestLocation();
     renderPayeeOptions();
 
     if (isEditOpen) {
@@ -417,9 +424,11 @@
   // overwrite; existing payee + no coords sent -> leave as-is; no matching
   // payee -> add one. Matching is case-insensitive to mirror the server's
   // own normalizePayeeName(), so "alpha cafe" doesn't get spliced in as a
-  // second, distinct-looking entry next to a cached "Alpha Cafe". Only ever
-  // called for a non-edit save -- transactions-update.js doesn't touch the
-  // Payees registry at all, so an edit has nothing to splice.
+  // second, distinct-looking entry next to a cached "Alpha Cafe". Called
+  // after both new-transaction and edit saves -- transactions-update.js
+  // now also upserts the Payees registry (mirroring transactions-add.js),
+  // so an edit that left the location-pin toggle on has a coordinate
+  // update to splice into the cache too, same as a new transaction would.
   function upsertLocalPayeeCache(name, lat, lon) {
     const trimmedName = String(name || '').trim();
     if (!trimmedName) return;
@@ -447,10 +456,12 @@
       notes: state.notesEl.value.trim(),
     };
 
-    // Only a new transaction can carry a captured position, and only when
-    // the location-pin toggle was left on -- see requestLocation()/open()
-    // and the toggle click handler in mount() below.
-    if (!isEdit && state.capturedPosition && state.locationEnabled) {
+    // A captured position can be sent on either a new transaction or an
+    // edit -- see requestLocation()/open(). Whether it actually overwrites
+    // the payee's stored coordinate is entirely up to the location-pin
+    // toggle's on/off state, same as before (see the toggle click handler
+    // in mount() below); this just stops gating the whole thing on isEdit.
+    if (state.capturedPosition && state.locationEnabled) {
       payload.lat = state.capturedPosition.lat;
       payload.lon = state.capturedPosition.lon;
       payload.updatePayeeLocation = true;
@@ -476,10 +487,8 @@
       });
       const data = await res.json();
       if (data.error) throw new Error(data.error);
-      if (!isEdit) {
-        upsertLocalPayeeCache(payload.payee, payload.lat, payload.lon);
-        renderPayeeOptions();
-      }
+      upsertLocalPayeeCache(payload.payee, payload.lat, payload.lon);
+      renderPayeeOptions();
       close();
       showToast('Saved');
       if (typeof state.options.onSaved === 'function') state.options.onSaved(payload, isEdit);
