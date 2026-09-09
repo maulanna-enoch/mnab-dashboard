@@ -23,6 +23,11 @@
  *              delta -- Expense if the statement is higher than logged,
  *              Income if it's lower -- then marks the whole batch,
  *              including the new row, as reconciled.
+ *            "Clear existing transactions" -- checklist of this account's
+ *              uncleared transactions dated on or before the as-of date,
+ *              for something that already cleared on the statement but
+ *              never got flipped to Cleared here. Marks the checked rows
+ *              Cleared, then recalculates and re-compares automatically.
  *            "Add transaction" -- inline form (name/type/date/amount,
  *              always Cleared) for something you forgot to log. Writes a
  *              normal transaction, then recalculates and re-compares
@@ -151,6 +156,12 @@ function buildDialogHtml(accounts) {
   .muted { color: #5f6368; font-size: 12px; }
   .error { color: #b3261e; }
   #actions button { margin-right: 8px; }
+  .clear-item { display: flex; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid #e0e0e0; }
+  .clear-item-main { flex: 1; }
+  .clear-item-payee { font-weight: bold; }
+  .clear-item-meta { color: #5f6368; font-size: 12px; }
+  .clear-item-amount { font-weight: bold; }
+  .clear-empty { color: #5f6368; font-size: 12px; padding: 6px 0; }
 </style>
 </head>
 <body>
@@ -175,6 +186,14 @@ function buildDialogHtml(accounts) {
 
   <div id="compareResult"></div>
   <div id="actions" style="display:none;"></div>
+
+  <div id="clearForm" style="display:none; margin-top:12px; padding:10px; border-radius:6px; background:#f1f3f4;">
+    <p class="muted" style="margin-top:0;">Uncleared transactions on this account dated on or before the as-of date. Check the ones that actually cleared and forgot to be marked -- they'll be marked Cleared, then folded back into the recalculation.</p>
+    <div id="clearList"></div>
+    <div class="row" style="margin-top:8px;"><span>Selected total</span><b id="clearSelectedTotal">0</b></div>
+    <button class="primary" id="clearSaveBtn" onclick="saveClearSelection()" disabled>Clear selected &amp; recalculate</button>
+    <button onclick="hideClearForm()">Cancel</button>
+  </div>
 
   <div id="addForm" style="display:none; margin-top:12px; padding:10px; border-radius:6px; background:#f1f3f4;">
     <label for="addName">Name</label>
@@ -227,6 +246,7 @@ function buildDialogHtml(accounts) {
     document.getElementById('compareResult').style.display = 'none';
     document.getElementById('actions').style.display = 'none';
     document.getElementById('actions').innerHTML = '';
+    hideClearForm();
 
     if (!account) { alert('Pick an account first.'); return; }
     if (!asOfDate) { alert('Pick a date.'); return; }
@@ -315,6 +335,11 @@ function buildDialogHtml(accounts) {
       adjBtn.onclick = function () { confirmInsertAdjustment(statementAmount, variance); };
       actionsEl.appendChild(adjBtn);
 
+      const clearBtn = document.createElement('button');
+      clearBtn.textContent = 'Clear existing transactions';
+      clearBtn.onclick = function () { showClearForm(); };
+      actionsEl.appendChild(clearBtn);
+
       const addBtn = document.createElement('button');
       addBtn.textContent = 'Add transaction';
       addBtn.onclick = function () { showAddForm(); };
@@ -372,6 +397,7 @@ function buildDialogHtml(accounts) {
   let addMonthTouched = false;
 
   function showAddForm() {
+    hideClearForm();
     document.getElementById('addName').value = '';
     document.getElementById('addAmount').value = '';
     document.getElementById('addType').value = 'Expense';
@@ -390,6 +416,81 @@ function buildDialogHtml(accounts) {
 
   function hideAddForm() {
     document.getElementById('addForm').style.display = 'none';
+  }
+
+  let clearSelection = new Set();
+  let clearCandidates = [];
+
+  function showClearForm() {
+    document.getElementById('addForm').style.display = 'none';
+    if (!lastCalc) return;
+
+    const listEl = document.getElementById('clearList');
+    listEl.innerHTML = 'Loading…';
+    document.getElementById('clearForm').style.display = 'block';
+
+    google.script.run
+      .withSuccessHandler(function (r) {
+        if (r.error) { listEl.innerHTML = '<span class="error">' + r.error + '</span>'; return; }
+        clearCandidates = r.transactions;
+        clearSelection = new Set();
+
+        if (!clearCandidates.length) {
+          listEl.innerHTML = '<div class="clear-empty">No uncleared transactions found on this account dated on or before ' + lastCalc.asOfDate + '.</div>';
+        } else {
+          listEl.innerHTML = clearCandidates.map(function (t) {
+            const isIncome = t.type === 'Income';
+            const amountText = (isIncome ? '+' : '') + t.amount.toLocaleString();
+            return '<label class="clear-item">' +
+              '<input type="checkbox" data-row="' + t.rowNumber + '" onchange="onClearItemToggle(' + t.rowNumber + ', this.checked)">' +
+              '<div class="clear-item-main">' +
+              '<div class="clear-item-payee">' + t.payee + '</div>' +
+              '<div class="clear-item-meta">' + t.date + '</div>' +
+              '</div>' +
+              '<div class="clear-item-amount">' + amountText + '</div>' +
+              '</label>';
+          }).join('');
+        }
+        updateClearSelectionUI();
+      })
+      .withFailureHandler(function (err) {
+        listEl.innerHTML = '<span class="error">' + err.message + '</span>';
+      })
+      .rc_getUnclearedTransactions(lastCalc.account, lastCalc.asOfDate);
+  }
+
+  function hideClearForm() {
+    document.getElementById('clearForm').style.display = 'none';
+  }
+
+  function onClearItemToggle(rowNumber, checked) {
+    if (checked) clearSelection.add(rowNumber);
+    else clearSelection.delete(rowNumber);
+    updateClearSelectionUI();
+  }
+
+  function updateClearSelectionUI() {
+    const selected = clearCandidates.filter(function (t) { return clearSelection.has(t.rowNumber); });
+    const total = selected.reduce(function (s, t) { return s + (t.type === 'Income' ? -t.amount : t.amount); }, 0);
+    document.getElementById('clearSelectedTotal').textContent = total.toLocaleString();
+    document.getElementById('clearSaveBtn').disabled = selected.length === 0;
+  }
+
+  function saveClearSelection() {
+    const rowNumbers = Array.from(clearSelection);
+    if (!rowNumbers.length) return;
+
+    setBusy(true);
+    google.script.run
+      .withSuccessHandler(function (r) {
+        setBusy(false);
+        if (r.error) { alert(r.error); return; }
+        hideClearForm();
+        keepStatementAmount = true;
+        calculate();
+      })
+      .withFailureHandler(function (err) { setBusy(false); alert(err.message); })
+      .rc_clearTransactions(lastCalc.account, rowNumbers);
   }
 
   function saveTransaction() {
@@ -677,6 +778,106 @@ function rc_addTransaction(accountName, name, type, dateStr, amount, monthStr) {
     });
 
     return { ok: true };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+/**
+ * Lists uncleared transactions on the account being reconciled, dated on or
+ * before the as-of date -- candidates for the "Clear existing transactions"
+ * option, for something that actually cleared on the statement but never
+ * got flipped to Cleared here (mirrors the mobile app's rcShowClearForm).
+ */
+function rc_getUnclearedTransactions(accountName, asOfDateStr) {
+  try {
+    const asOfDate = parseISODate(asOfDateStr);
+    if (!asOfDate) return { error: 'Invalid date.' };
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const txnSheet = ss.getSheetByName(RECONCILE_CONFIG.transactionsSheet);
+    if (!txnSheet) return { error: `Couldn't find sheet "${RECONCILE_CONFIG.transactionsSheet}"` };
+
+    const colIndex = headerIndexMap(txnSheet);
+    ['SOF', 'Date', 'Cleared'].forEach((h) => {
+      if (!(h in colIndex)) throw new Error(`transactions tab is missing a "${h}" column.`);
+    });
+    const amountHeader = 'Total' in colIndex ? 'Total' : 'Amount';
+    const payeeHeader = payeeHeaderName(colIndex);
+
+    const lastRow = txnSheet.getLastRow();
+    if (lastRow < 2) return { transactions: [] };
+    const values = txnSheet.getRange(2, 1, lastRow - 1, txnSheet.getLastColumn()).getValues();
+
+    const transactions = [];
+    values.forEach((row, i) => {
+      const sof = row[colIndex['SOF']];
+      if (!sof || String(sof).trim().toLowerCase() !== accountName.toLowerCase()) return;
+
+      const cleared = String(row[colIndex['Cleared']] || '').trim().toLowerCase();
+      if (cleared === 'cleared') return; // only uncleared rows are candidates
+
+      const date = row[colIndex['Date']];
+      if (!(date instanceof Date)) return;
+      if (date > asOfDate) return; // belongs to a future cycle
+
+      transactions.push({
+        rowNumber: i + 2, // 1-based sheet row
+        payee: payeeHeader ? String(row[colIndex[payeeHeader]] || '').trim() : '',
+        date: formatDate(date),
+        type: colIndex['Income/Expense'] !== undefined ? row[colIndex['Income/Expense']] : '',
+        amount: amountHeader in colIndex ? Number(row[colIndex[amountHeader]]) || 0 : 0,
+      });
+    });
+
+    return { transactions };
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+/**
+ * Marks the given rows Cleared for the given account -- used when the
+ * statement shows a transaction that was logged here but never flipped to
+ * Cleared. Re-validates against the current sheet state rather than
+ * trusting the client's cached list, same as the mobile app's
+ * actionClearTransactions: guards against a row that was edited, deleted,
+ * or already cleared elsewhere since the dialog's list was fetched, and
+ * against clearing a wrong-account row by mistake.
+ */
+function rc_clearTransactions(accountName, rowNumbers) {
+  try {
+    const cleanRowNumbers = Array.from(
+      new Set((rowNumbers || []).map((n) => Number(n)))
+    ).filter((n) => Number.isInteger(n) && n > 1);
+    if (!cleanRowNumbers.length) return { error: 'Select at least one transaction to clear.' };
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const txnSheet = ss.getSheetByName(RECONCILE_CONFIG.transactionsSheet);
+    if (!txnSheet) return { error: `Couldn't find sheet "${RECONCILE_CONFIG.transactionsSheet}"` };
+
+    const colIndex = headerIndexMap(txnSheet);
+    ['SOF', 'Cleared'].forEach((h) => {
+      if (!(h in colIndex)) throw new Error(`transactions tab is missing a "${h}" column.`);
+    });
+
+    const lastRow = txnSheet.getLastRow();
+    const badRow = cleanRowNumbers.find((r) => {
+      if (r > lastRow) return true;
+      const rowValues = txnSheet.getRange(r, 1, 1, txnSheet.getLastColumn()).getValues()[0];
+      const sof = rowValues[colIndex['SOF']];
+      const cleared = String(rowValues[colIndex['Cleared']] || '').trim().toLowerCase();
+      return !sof || String(sof).trim().toLowerCase() !== accountName.toLowerCase() || cleared === 'cleared';
+    });
+    if (badRow !== undefined) {
+      return { error: 'One or more selected transactions are no longer uncleared on this account -- refresh and try again.' };
+    }
+
+    cleanRowNumbers.forEach((r) => {
+      txnSheet.getRange(r, colIndex['Cleared'] + 1).setValue('Cleared');
+    });
+
+    return { ok: true, clearedCount: cleanRowNumbers.length };
   } catch (err) {
     return { error: err.message };
   }
