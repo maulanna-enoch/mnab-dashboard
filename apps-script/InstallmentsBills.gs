@@ -44,6 +44,12 @@
  *                     else in this sheet (billingMonthForDate in
  *                     Reconcile.gs), applied to the Date computed above.
  *   Cleared        <- "Uncleared"
+ *   Pending        <- TRUE -- same self-provisioned boolean column
+ *                     EmailImport.gs uses (see issue #38); an auto-inserted
+ *                     row hasn't been reviewed by you yet, so it's marked
+ *                     pending the same way an auto-imported bank email is,
+ *                     until you confirm/save it (which clears Pending, see
+ *                     api/transactions-update.js).
  *   Amount/Expense/Income/Total <- installmentsbills Amount, taken as-is
  *                     (Expense = Amount, Income = 0, Total = Amount, since
  *                     every row here is an Expense)
@@ -127,6 +133,7 @@ const INSTALLMENTS_CONFIG = {
   ID_COLUMN_NAME: 'ID',           // self-provisioned on installmentsbills
   ID_PREFIX: 'IB-',
   SOURCE_ID_COLUMN_NAME: 'Source ID', // self-provisioned on transactions
+  PENDING_COLUMN_NAME: 'Pending', // self-provisioned on transactions -- same column EmailImport.gs uses
 
   // installmentsbills column positions (1-indexed) -- unrelated to ID,
   // which is looked up by header name since it's appended dynamically.
@@ -193,8 +200,9 @@ function runInstallmentsBillsCopy_(triggerType) {
   backfillSourceIds_(sourceSheet, idCol, lastRow);
   const idValues = sourceSheet.getRange(2, idCol + 1, lastRow - 1, 1).getValues().map((r) => r[0]);
 
-  // ---- transactions: ensure the Source ID column exists ----
+  // ---- transactions: ensure the Source ID and Pending columns exist ----
   ensureColumn(txnSheet, INSTALLMENTS_CONFIG.SOURCE_ID_COLUMN_NAME); // from Reconcile.gs
+  ensureColumn(txnSheet, INSTALLMENTS_CONFIG.PENDING_COLUMN_NAME); // from Reconcile.gs -- same self-provisioned column EmailImport.gs uses
   const colIndex = headerIndexMap(txnSheet); // from Reconcile.gs, re-read after ensureColumn calls above
   ['SOF', 'Date', 'Cleared'].forEach((h) => {
     if (!(h in colIndex)) throw new Error(`transactions tab is missing a "${h}" column.`);
@@ -285,6 +293,7 @@ function runInstallmentsBillsCopy_(triggerType) {
     txnRow[colIndex['Date']] = date;
     if ('Month' in colIndex) txnRow[colIndex['Month']] = month;
     txnRow[colIndex['Cleared']] = 'Uncleared';
+    txnRow[colIndex[INSTALLMENTS_CONFIG.PENDING_COLUMN_NAME]] = true;
     if ('Amount' in colIndex) txnRow[colIndex['Amount']] = amount;
     if ('Expense' in colIndex) txnRow[colIndex['Expense']] = amount;
     if ('Income' in colIndex) txnRow[colIndex['Income']] = 0;
