@@ -106,17 +106,45 @@
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
   }
 
-  // Billing-month pre-fill: day 1-12 of the month -> that same month, day
-  // 13+ -> the next month. Same heuristic used in Reconcile.gs and the
-  // reconciliation dialog. Still fully editable -- this is a starting
-  // guess -- and a "touched" flag stops it from overwriting a manual edit
-  // once you've changed it yourself.
-  function guessBillingMonth(dateStr) {
+  // Same "is this a credit card?" check used everywhere else in the app
+  // (accounts/index.html's isCredit, getCashAccounts(), etc.) -- centralized
+  // here so guessBillingMonth() and every page that calls it agree on what
+  // counts as a cash account. Blank/unknown type reads as cash, matching
+  // that existing convention.
+  function isCashAccountType(type) {
+    return !(type || '').toLowerCase().includes('credit');
+  }
+
+  // Billing-month pre-fill. Two different heuristics depending on the
+  // account (see issue -- "billing month guess ignores cash-account
+  // statement cycles"):
+  //   - Credit cards (isCash === false): day 1-12 of the month -> that same
+  //     month, day 13+ -> the next month. Same heuristic used in
+  //     Reconcile.gs and the reconciliation dialog.
+  //   - Cash/bank accounts (isCash === true, also the default when the
+  //     account's type can't be determined yet): statement cycle runs the
+  //     25th of a month through the 24th of the next one, and the whole
+  //     cycle is named after the month it *starts* in -- day 1-24 belongs
+  //     to the previous month, day 25+ belongs to this one.
+  // Either way this is only a starting guess, always fully editable -- a
+  // "touched" flag stops it from overwriting a manual edit once you've
+  // changed it yourself.
+  function guessBillingMonth(dateStr, isCash) {
     const d = new Date(dateStr + 'T00:00:00');
-    // Snap to day 1 before incrementing the month -- otherwise a date like
-    // Aug 31 rolls into October (September only has 30 days), overshooting
-    // the guess by an extra month.
-    if (d.getDate() > 12) {
+    if (isCash) {
+      // Snap to day 1 first in both branches -- setMonth() on a date still
+      // holding a late day-of-month can overflow into the wrong month (e.g.
+      // Jan 31 minus one month would land on Jan 3, not Dec 1).
+      if (d.getDate() < 25) {
+        d.setDate(1);
+        d.setMonth(d.getMonth() - 1);
+      } else {
+        d.setDate(1);
+      }
+    } else if (d.getDate() > 12) {
+      // Snap to day 1 before incrementing the month -- otherwise a date like
+      // Aug 31 rolls into October (September only has 30 days), overshooting
+      // the guess by an extra month.
       d.setDate(1);
       d.setMonth(d.getMonth() + 1);
     }
@@ -180,10 +208,21 @@
       const res = await fetch('/api/accounts-list');
       const data = await res.json();
       if (data.error) throw new Error(data.error);
+      state.accountsCache = data.accounts || [];
       sofEl.innerHTML = data.accounts.map((a) => `<option value="${a.name}">${a.name}</option>`).join('');
     } catch (err) {
       sofEl.innerHTML = '<option value="">Error loading accounts</option>';
     }
+  }
+
+  // Whether the currently-selected SOF is a cash/bank account (vs. a credit
+  // card) -- see guessBillingMonth(). Defaults to true (cash) when the
+  // accounts list hasn't loaded yet or the selected name isn't found, same
+  // "unknown reads as cash" convention as isCashAccountType() itself.
+  function currentSofIsCash() {
+    const accounts = state.accountsCache || [];
+    const acct = accounts.find((a) => a.name === state.sofEl.value);
+    return isCashAccountType(acct ? acct.type : undefined);
   }
 
   // Renders the Payee <datalist> from payeeCache, ordered by distance to
@@ -326,7 +365,7 @@
       state.amountInput.value = formatAmountDisplay(digitsOnly(String(Math.round(txn.amount))));
       state.notesEl.value = txn.notes || '';
       state.dateInput.value = txn.date || todayStr;
-      state.monthInput.value = txn.month || guessBillingMonth(state.dateInput.value);
+      state.monthInput.value = txn.month || guessBillingMonth(state.dateInput.value, currentSofIsCash());
       state.monthTouched = true; // editing an existing row -- don't override its saved month on open
       setToggle('txf-type-toggle', 'type', txn.type);
       setToggle('txf-status-toggle', 'status', txn.cleared === 'Cleared' ? 'Cleared' : 'Uncleared');
@@ -340,7 +379,7 @@
         : '';
       state.notesEl.value = '';
       state.dateInput.value = todayStr;
-      state.monthInput.value = guessBillingMonth(todayStr);
+      state.monthInput.value = guessBillingMonth(todayStr, currentSofIsCash());
       setToggle('txf-type-toggle', 'type', 'Expense');
       // Default to Uncleared -- most transactions are logged before they've
       // actually posted/cleared on the account, so Uncleared is the more
@@ -483,6 +522,7 @@
       monthTouched: false,
       capturedPosition: null,
       locationEnabled: false,
+      accountsCache: [],
       overlay: rootEl.querySelector('#txf-overlay'),
       sheetTitle: rootEl.querySelector('#txf-sheet-title'),
       sheetClose: rootEl.querySelector('#txf-sheet-close'),
@@ -532,7 +572,16 @@
 
     state.monthInput.addEventListener('input', () => { state.monthTouched = true; });
     state.dateInput.addEventListener('change', () => {
-      if (!state.monthTouched) state.monthInput.value = guessBillingMonth(state.dateInput.value);
+      if (!state.monthTouched) state.monthInput.value = guessBillingMonth(state.dateInput.value, currentSofIsCash());
+    });
+    // Switching the account can flip which billing-month heuristic applies
+    // (cash's 25th-cycle rule vs. a card's day-13 rule) -- re-guess from the
+    // already-chosen date so the Month field doesn't keep a guess computed
+    // for the previous account's rule.
+    state.sofEl.addEventListener('change', () => {
+      if (!state.monthTouched && state.dateInput.value) {
+        state.monthInput.value = guessBillingMonth(state.dateInput.value, currentSofIsCash());
+      }
     });
 
     state.fab.addEventListener('click', () => open(null));
@@ -566,5 +615,5 @@
     loadPayees();
   }
 
-  global.TransactionForm = { mount, open, close, todayISO, guessBillingMonth };
+  global.TransactionForm = { mount, open, close, todayISO, guessBillingMonth, isCashAccountType };
 })(window);

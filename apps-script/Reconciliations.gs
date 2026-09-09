@@ -337,11 +337,36 @@ function buildDialogHtml(accounts) {
 
   // Rough default only -- statement cycles vary per account and there's no
   // firm cutoff, so this is a starting guess the "Billing month" field lets
-  // you override, not an authoritative rule.
-  function guessBillingMonth(dateStr) {
+  // you override, not an authoritative rule. Two heuristics depending on the
+  // account (mirrors public/shared/transaction-form.js's
+  // guessBillingMonth() in the dashboard repo):
+  //   - Credit cards (isCash falsy): day 1-12 -> that same month, day 13+ ->
+  //     the next month.
+  //   - Cash/bank accounts (isCash truthy): statement cycle runs the 25th of
+  //     a month through the 24th of the next one, named after the month it
+  //     starts in -- day 1-24 belongs to the previous month, day 25+ belongs
+  //     to this one.
+  // Snap to day 1 before adjusting the month in both branches -- otherwise a
+  // late day-of-month can overflow (e.g. Aug 31 + 1 month lands in October,
+  // not September; Jan 31 - 1 month lands on Jan 3, not December).
+  function guessBillingMonth(dateStr, isCash) {
     const d = new Date(dateStr + 'T00:00:00');
-    if (d.getDate() > 12) d.setMonth(d.getMonth() + 1);
+    if (isCash) {
+      if (d.getDate() < 25) {
+        d.setDate(1);
+        d.setMonth(d.getMonth() - 1);
+      } else {
+        d.setDate(1);
+      }
+    } else if (d.getDate() > 12) {
+      d.setDate(1);
+      d.setMonth(d.getMonth() + 1);
+    }
     return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+  }
+
+  function currentAccountIsCash() {
+    return !currentAccountType().toLowerCase().includes('credit');
   }
 
   let addMonthTouched = false;
@@ -351,7 +376,7 @@ function buildDialogHtml(accounts) {
     document.getElementById('addAmount').value = '';
     document.getElementById('addType').value = 'Expense';
     document.getElementById('addDate').value = lastCalc.asOfDate;
-    document.getElementById('addMonth').value = guessBillingMonth(lastCalc.asOfDate);
+    document.getElementById('addMonth').value = guessBillingMonth(lastCalc.asOfDate, currentAccountIsCash());
     addMonthTouched = false;
     document.getElementById('addForm').style.display = 'block';
   }
@@ -359,7 +384,7 @@ function buildDialogHtml(accounts) {
   document.getElementById('addMonth').addEventListener('input', () => { addMonthTouched = true; });
   document.getElementById('addDate').addEventListener('change', () => {
     if (!addMonthTouched) {
-      document.getElementById('addMonth').value = guessBillingMonth(document.getElementById('addDate').value);
+      document.getElementById('addMonth').value = guessBillingMonth(document.getElementById('addDate').value, currentAccountIsCash());
     }
   });
 
@@ -617,13 +642,25 @@ function rc_addTransaction(accountName, name, type, dateStr, amount, monthStr) {
     if (type !== 'Expense' && type !== 'Income') return { error: 'Type must be Expense or Income.' };
     const date = parseISODate(dateStr);
     if (!date) return { error: 'Invalid date.' };
-    // monthStr ("YYYY-MM") comes from the dialog's editable "Billing month"
-    // field -- falls back to the day-of-month guess if it's missing for any
-    // reason, but the field should always be filled in by the client.
-    const month = monthStr ? parseISOMonth(monthStr) : billingMonthForDate(date);
-    if (!month) return { error: 'Invalid billing month.' };
 
     const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+    // monthStr ("YYYY-MM") comes from the dialog's editable "Billing month"
+    // field -- falls back to the day-of-month guess if it's missing for any
+    // reason, but the field should always be filled in by the client. Which
+    // guess heuristic applies depends on whether accountName is a cash
+    // account or a credit card.
+    let month = monthStr ? parseISOMonth(monthStr) : null;
+    if (!month) {
+      const accountsSheet = ss.getSheetByName(RECONCILE_CONFIG.accountsSheet);
+      const account = getAccountRows(accountsSheet).find(
+        (a) => a.name.toLowerCase() === String(accountName).toLowerCase()
+      );
+      const isCash = !((account && account.type) || '').toLowerCase().includes('credit');
+      month = billingMonthForDate(date, isCash);
+    }
+    if (!month) return { error: 'Invalid billing month.' };
+
     const txnSheet = ss.getSheetByName(RECONCILE_CONFIG.transactionsSheet);
     if (!txnSheet) return { error: `Couldn't find sheet "${RECONCILE_CONFIG.transactionsSheet}"` };
     ensureColumn(txnSheet, 'Reconciled');
@@ -734,6 +771,7 @@ function rc_insertAdjustmentAndReconcile(accountName, asOfDateStr, statementAmou
       type,
       amount,
       date: asOfDate,
+      isCash: !(account.type || '').toLowerCase().includes('credit'),
     });
 
     const allRows = matchedRows.concat([newRowNumber]);
@@ -1038,7 +1076,7 @@ function markRowsReconciled(txnSheet, colIndex, rowNumbers, asOfDate) {
   });
 }
 
-function appendAdjustmentRow(txnSheet, colIndex, { account, type, amount, date }) {
+function appendAdjustmentRow(txnSheet, colIndex, { account, type, amount, date, isCash }) {
   const rowNumber = txnSheet.getLastRow() + 1;
   const width = txnSheet.getLastColumn();
   const row = new Array(width).fill('');
@@ -1051,7 +1089,7 @@ function appendAdjustmentRow(txnSheet, colIndex, { account, type, amount, date }
   // No dedicated field for this on the auto-inserted adjustment row (it's
   // not driven by the "Add transaction" form), so fall back to the same
   // day-of-month guess used there.
-  if ('Month' in colIndex) row[colIndex['Month']] = billingMonthForDate(date);
+  if ('Month' in colIndex) row[colIndex['Month']] = billingMonthForDate(date, isCash);
   if ('Cleared' in colIndex) row[colIndex['Cleared']] = 'Cleared';
   if ('Amount' in colIndex) row[colIndex['Amount']] = amount;
   const expense = type === 'Expense' ? amount : 0;
@@ -1071,7 +1109,7 @@ function appendAdjustmentRow(txnSheet, colIndex, { account, type, amount, date }
  * Unlike appendAdjustmentRow, this is a real transaction with a real name,
  * not a synthetic "Reconciliation" plug row.
  */
-function appendPlainTransactionRow(txnSheet, colIndex, { name, sof, type, amount, date, month }) {
+function appendPlainTransactionRow(txnSheet, colIndex, { name, sof, type, amount, date, month, isCash }) {
   const rowNumber = txnSheet.getLastRow() + 1;
   const width = txnSheet.getLastColumn();
   const row = new Array(width).fill('');
@@ -1085,7 +1123,7 @@ function appendPlainTransactionRow(txnSheet, colIndex, { name, sof, type, amount
   // (falls back to the day-of-month guess server-side if it's ever missing)
   // -- statement cycles don't line up with calendar months, so this should
   // not just be derived from Date.
-  if ('Month' in colIndex) row[colIndex['Month']] = month || billingMonthForDate(date);
+  if ('Month' in colIndex) row[colIndex['Month']] = month || billingMonthForDate(date, isCash);
   if ('Cleared' in colIndex) row[colIndex['Cleared']] = 'Cleared';
   if ('Amount' in colIndex) row[colIndex['Amount']] = amount;
   const expense = type === 'Expense' ? amount : 0;
@@ -1208,16 +1246,41 @@ function firstOfMonth(date) {
 }
 
 /**
- * Rough default for which billing month a transaction belongs to: dates
- * early in the month (day <= 12) stay in that calendar month; later dates
- * roll into the next one. This is a starting guess, not a firm rule --
- * statement cycles vary per account/card and don't line up with calendar
- * months. Used only as a fallback / seed value; the "Add transaction" form
- * exposes an editable field so it can be corrected per row.
+ * Rough default for which billing month a transaction belongs to. This is a
+ * starting guess, not a firm rule -- statement cycles vary per account/card
+ * and don't line up with calendar months. Used only as a fallback / seed
+ * value; the "Add transaction" form exposes an editable field so it can be
+ * corrected per row.
+ *
+ * Two heuristics depending on the account (mirrors the dashboard repo's
+ * public/shared/transaction-form.js guessBillingMonth() and
+ * api/_lib/reconcile.js's billingMonthForDate()):
+ *   - Credit cards (isCash falsy): dates early in the month (day <= 12) stay
+ *     in that calendar month; later dates roll into the next one.
+ *   - Cash/bank accounts (isCash truthy): statement cycle runs the 25th of
+ *     a month through the 24th of the next one, named after the month it
+ *     starts in -- day 1-24 belongs to the previous month, day 25+ belongs
+ *     to this one.
+ * Snapping to day 1 before adjusting the month (via firstOfMonth, or before
+ * setMonth in the cash branch) avoids the overflow bug this function used to
+ * have: setMonth() on a date still holding a late day-of-month can overflow
+ * into the wrong month (e.g. Aug 31 + 1 month lands in October, not
+ * September; Jan 31 - 1 month lands on Jan 3, not December).
  */
-function billingMonthForDate(date) {
+function billingMonthForDate(date, isCash) {
   const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  if (d.getDate() > 12) d.setMonth(d.getMonth() + 1);
+  if (isCash) {
+    if (d.getDate() < 25) {
+      const prev = firstOfMonth(d);
+      prev.setMonth(prev.getMonth() - 1);
+      return prev;
+    }
+    return firstOfMonth(d);
+  }
+  if (d.getDate() > 12) {
+    d.setDate(1);
+    d.setMonth(d.getMonth() + 1);
+  }
   return firstOfMonth(d);
 }
 
