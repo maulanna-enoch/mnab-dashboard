@@ -69,29 +69,51 @@
  *                     columns. Only auto-inserted rows get one -- it's
  *                     blank on anything you enter by hand.
  *
- * DUPLICATE PROTECTION: keyed on (Source ID, Date) -- NOT Payee, SOF, or
- * Amount, on purpose, since those are exactly the fields you edit for
- * readability after the fact (renaming payees, re-tagging SOF, etc.).
- * Source ID is stable and never displayed as something you'd casually
- * touch, so editing the transaction's other fields can never cause a
- * re-insert.
+ * DUPLICATE PROTECTION: keyed on (Source ID, cycle window) -- not the exact
+ * Date, on purpose. Each row's "cycle window" is (previous month's
+ * occurrence of this same due day, this occurrence] -- e.g. due day 14:
+ * the window for the Oct 14 occurrence is everything after Sep 14 up to
+ * and including Oct 14. A transaction dated anywhere in that window --
+ * paid right on the computed due date, or a few days/weeks early -- is
+ * recognized as "this cycle's occurrence" and blocks a second insert.
+ * (Before this, an early manual payment landed on a different exact Date
+ * than the computed due date, matched nothing, and got a duplicate
+ * auto-inserted on top of it -- see the "early payment" fix below. A plain
+ * calendar-month or billingMonthForDate() bucket doesn't work for this: a
+ * late-month due date like the 14th falls in a different
+ * billingMonthForDate() "billing month" than an early payment made earlier
+ * in that same actual month, e.g. the 7th -- back to the same bug, just
+ * shifted. The cycle window is anchored to each row's own due day instead,
+ * so it doesn't depend on that statement-cycle heuristic.) NOT keyed on
+ * Payee, SOF, or Amount, on purpose, since those are exactly the fields
+ * you edit for readability after the fact (renaming payees, re-tagging
+ * SOF, etc.). Source ID is stable and never displayed as something you'd
+ * casually touch, so editing the transaction's other fields can never
+ * cause a re-insert.
  *
- * MIGRATION (one-time, automatic, no manual backfill needed): rows this
- * script inserted before Source ID existed obviously don't have one yet.
- * Before creating anything, each active installmentsbills row is checked
- * against untagged transactions using the OLD signature (Payee + SOF +
- * Date, case-insensitive) -- a match found this way is ADOPTED: its
- * Source ID is backfilled in place rather than inserting a duplicate.
- * This only works for rows whose Payee hasn't been renamed since it was
- * inserted -- exactly the set this migration needs to cover, since
- * anything renamed before today was, by definition, renamed under the OLD
- * (now-removed) Payee-based protection and was already safe under it.
- * Adoptions are reported in the run summary/log distinctly from ordinary
- * copies and skips so you can see it happen once and then never again.
+ * ADOPT-INSTEAD-OF-DUPLICATE: covers two cases with one mechanism --
+ * historical rows this script inserted before Source ID existed, AND (as
+ * of the early-payment fix) any transaction you enter by hand yourself for
+ * a bill/installment before this script gets to it, e.g. paying a card
+ * statement a few days before its due date. Before creating anything, each
+ * active installmentsbills row is checked against untagged transactions
+ * matching on Payee + SOF (case-insensitive) with a Date inside that row's
+ * cycle window (see above) -- a match found this way is ADOPTED: its
+ * Source ID is backfilled in place rather than inserting a duplicate. Only
+ * the Source ID cell is touched -- whatever Date, Amount, Cleared, etc.
+ * you actually entered is left exactly as you entered it. This only works
+ * for rows whose Payee and SOF match the installmentsbills row
+ * (case-insensitive) and whose Date falls inside the cycle window -- if
+ * you paid through a different SOF than configured, the payee text
+ * doesn't match, or you paid more than about a month ahead of the due
+ * date, it won't be found this way; you can always paste the Source ID
+ * (e.g. "IB-3") into that transaction's Source ID column yourself as a
+ * guaranteed alternative. Adoptions are reported in the run summary/log
+ * distinctly from ordinary copies and skips.
  *
  * A row is SKIPPED (logged, nothing written for it) if:
- *   - a transaction with this Source ID for this Date already exists
- *     (ordinary duplicate protection, see above), or
+ *   - a transaction with this Source ID already exists in this cycle
+ *     window (ordinary duplicate protection, see above), or
  *   - it's an installment (not a bill) and Starts or Ends is missing/not a
  *     real date, so the installment number can't be computed, or
  *   - it's an installment and the computed Date's month falls outside
@@ -209,7 +231,7 @@ function runInstallmentsBillsCopy_(triggerType) {
   });
   const payeeHeader = payeeHeaderName(colIndex); // from Reconcile.gs
 
-  const { bySourceId, legacyByPayeeSofDate } = indexExistingTransactions_(txnSheet, colIndex, payeeHeader);
+  const { bySourceId, legacyByPayeeSof } = indexExistingTransactions_(txnSheet, colIndex, payeeHeader);
 
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -248,20 +270,35 @@ function runInstallmentsBillsCopy_(triggerType) {
       date = clampedDate(today.getFullYear(), targetMonth + 1, day);
     }
 
-    // ---- duplicate protection: has this exact due date already been copied? ----
-    const newSignature = sourceId + '|' + formatDate(date);
-    if (bySourceId.has(newSignature)) {
-      skipped.push(name + ' -- already exists for ' + formatDate(date) + ' (Source ID ' + sourceId + '), skipped (duplicate protection).');
+    // This cycle's window: anything dated after the *previous* month's
+    // occurrence of this same due day, up to and including this occurrence,
+    // counts as the same cycle -- so a manual payment entered a few days
+    // (or weeks) before the computed due date is still recognized as
+    // covering it, not just an exact date match. Anchored to this row's own
+    // due day rather than the shared billingMonthForDate() statement-cycle
+    // heuristic on purpose: that heuristic's day-12/13 split can land a
+    // late-month due date (e.g. the 14th) in a different "billing month"
+    // than an early payment made earlier in that same actual month -- see
+    // file header.
+    const cycleStart = clampedDate(date.getFullYear(), date.getMonth() - 1, day);
+    const inThisCycle = (d) => d > cycleStart && d <= date;
+
+    // ---- duplicate protection: has this cycle already been copied? ----
+    const existingDates = bySourceId.get(sourceId) || [];
+    if (existingDates.some(inThisCycle)) {
+      skipped.push(name + ' -- already exists for this cycle (due ' + formatDate(date) + ', Source ID ' + sourceId + '), skipped (duplicate protection).');
       return;
     }
 
-    // ---- one-time migration: adopt a pre-Source-ID row instead of inserting a duplicate ----
-    const legacySignature = String(name).trim().toLowerCase() + '|' + String(sof).trim().toLowerCase() + '|' + formatDate(date);
-    const legacyRowNumber = legacyByPayeeSofDate.get(legacySignature);
-    if (legacyRowNumber) {
-      txnSheet.getRange(legacyRowNumber, colIndex[INSTALLMENTS_CONFIG.SOURCE_ID_COLUMN_NAME] + 1).setValue(sourceId);
-      bySourceId.add(newSignature); // now covered, don't adopt or insert again this run
-      adopted.push(name + ' -- tagged existing ' + formatDate(date) + ' row with Source ID ' + sourceId + '.');
+    // ---- adopt an existing untagged transaction from this cycle (historical pre-Source-ID row, or a manual early payment) instead of inserting a duplicate ----
+    const legacyKey = String(name).trim().toLowerCase() + '|' + String(sof).trim().toLowerCase();
+    const legacyCandidates = legacyByPayeeSof.get(legacyKey) || [];
+    const legacyMatch = legacyCandidates.find((c) => inThisCycle(c.date));
+    if (legacyMatch) {
+      txnSheet.getRange(legacyMatch.rowNumber, colIndex[INSTALLMENTS_CONFIG.SOURCE_ID_COLUMN_NAME] + 1).setValue(sourceId);
+      existingDates.push(legacyMatch.date); // now covered, don't adopt or insert again this run
+      bySourceId.set(sourceId, existingDates);
+      adopted.push(name + ' -- tagged existing ' + formatDate(legacyMatch.date) + ' row with Source ID ' + sourceId + ' (due ' + formatDate(date) + ').');
       return;
     }
 
@@ -284,7 +321,7 @@ function runInstallmentsBillsCopy_(triggerType) {
       notes = 'Auto-insert ' + pad2(current) + '/' + pad2(total);
     }
 
-    const month = billingMonthForDate(date); // from Reconcile.gs
+    const month = billingMonthForDate(date); // from Reconcile.gs -- Month column only, unrelated to the cycle-window dedup above
 
     const txnRow = new Array(txnSheet.getLastColumn()).fill('');
     if (payeeHeader) txnRow[colIndex[payeeHeader]] = name;
@@ -302,7 +339,9 @@ function runInstallmentsBillsCopy_(triggerType) {
     txnRow[colIndex[INSTALLMENTS_CONFIG.SOURCE_ID_COLUMN_NAME]] = sourceId;
 
     newRows.push(txnRow);
-    bySourceId.add(newSignature); // guards against duplicate active rows within the same run
+    // guard against duplicate active rows within the same run
+    existingDates.push(date);
+    bySourceId.set(sourceId, existingDates);
   });
 
   if (newRows.length) {
@@ -344,28 +383,37 @@ function backfillSourceIds_(sheet, idCol, lastRow) {
 
 /**
  * One pass over `transactions`, building:
- *   bySourceId          -- Set of "sourceId|date" for rows that already
- *                           carry a Source ID (the current, stable scheme)
- *   legacyByPayeeSofDate -- Map of "payee|sof|date" (lowercased) -> row
- *                           number, but ONLY for rows with a BLANK Source
- *                           ID -- these are candidates for one-time
- *                           migration adoption.
+ *   bySourceId     -- Map of sourceId (trimmed string) -> array of Date,
+ *                      for rows that already carry a Source ID (the
+ *                      current, stable scheme). One sourceId can map to
+ *                      several dates (one per past cycle).
+ *   legacyByPayeeSof -- Map of "payee|sof" (lowercased) -> array of
+ *                      { rowNumber, date }, but ONLY for rows with a BLANK
+ *                      Source ID -- these are candidates for adoption
+ *                      (historical pre-Source-ID rows, or a manual early
+ *                      payment entered before this script got to it).
+ *
+ * Callers match against these by testing each candidate Date against a
+ * per-row cycle window (see runInstallmentsBillsCopy_'s `inThisCycle`),
+ * not an exact date or a shared billing-month bucket -- see the file
+ * header's DUPLICATE PROTECTION / ADOPT-INSTEAD-OF-DUPLICATE notes for why.
  */
 function indexExistingTransactions_(txnSheet, colIndex, payeeHeader) {
-  const bySourceId = new Set();
-  const legacyByPayeeSofDate = new Map();
+  const bySourceId = new Map();
+  const legacyByPayeeSof = new Map();
   const lastRow = txnSheet.getLastRow();
-  if (lastRow < 2) return { bySourceId, legacyByPayeeSofDate };
+  if (lastRow < 2) return { bySourceId, legacyByPayeeSof };
 
   const values = txnSheet.getRange(2, 1, lastRow - 1, txnSheet.getLastColumn()).getValues();
   values.forEach((row, i) => {
     const date = row[colIndex['Date']];
     if (!(date instanceof Date)) return;
-    const dateLabel = formatDate(date);
 
     const sourceId = row[colIndex[INSTALLMENTS_CONFIG.SOURCE_ID_COLUMN_NAME]];
     if (sourceId) {
-      bySourceId.add(String(sourceId).trim() + '|' + dateLabel);
+      const key = String(sourceId).trim();
+      if (!bySourceId.has(key)) bySourceId.set(key, []);
+      bySourceId.get(key).push(date);
       return;
     }
 
@@ -373,13 +421,12 @@ function indexExistingTransactions_(txnSheet, colIndex, payeeHeader) {
     const payee = row[colIndex[payeeHeader]];
     const sof = row[colIndex['SOF']];
     if (!payee || !sof) return;
-    const key = String(payee).trim().toLowerCase() + '|' + String(sof).trim().toLowerCase() + '|' + dateLabel;
-    // First match wins -- fine in practice, since a given payee/SOF/date
-    // combination copied by this script only ever exists once.
-    if (!legacyByPayeeSofDate.has(key)) legacyByPayeeSofDate.set(key, i + 2);
+    const key = String(payee).trim().toLowerCase() + '|' + String(sof).trim().toLowerCase();
+    if (!legacyByPayeeSof.has(key)) legacyByPayeeSof.set(key, []);
+    legacyByPayeeSof.get(key).push({ rowNumber: i + 2, date });
   });
 
-  return { bySourceId, legacyByPayeeSofDate };
+  return { bySourceId, legacyByPayeeSof };
 }
 
 function logAutoCopyRun_(ss, triggerType, copiedCount, adoptedCount, skipped) {
