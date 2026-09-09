@@ -876,6 +876,7 @@ function rc_clearTransactions(accountName, rowNumbers) {
     cleanRowNumbers.forEach((r) => {
       txnSheet.getRange(r, colIndex['Cleared'] + 1).setValue('Cleared');
     });
+    clearPendingFlag(txnSheet, colIndex, cleanRowNumbers);
 
     return { ok: true, clearedCount: cleanRowNumbers.length };
   } catch (err) {
@@ -1274,6 +1275,23 @@ function markRowsReconciled(txnSheet, colIndex, rowNumbers, asOfDate) {
   rowNumbers.forEach((r) => {
     txnSheet.getRange(r, colIndex['Reconciled'] + 1).setValue(true);
     txnSheet.getRange(r, colIndex['Reconciled Date'] + 1).setValue(asOfDate);
+  });
+  clearPendingFlag(txnSheet, colIndex, rowNumbers);
+}
+
+/**
+ * Flips a self-provisioned "Pending" flag to FALSE for the given rows, if
+ * that column exists on this sheet -- it's self-provisioned by
+ * EmailImport.gs for auto-imported rows (see #38), so treat it
+ * defensively; it may not exist on every copy of this sheet. Clearing or
+ * reconciling a transaction implies it's been reviewed/confirmed, so it
+ * should stop showing up in the mobile app's "Review Pending" list
+ * (mirrors api/_lib/reconcile.js's markRowsCleared, see #89/#97).
+ */
+function clearPendingFlag(txnSheet, colIndex, rowNumbers) {
+  if (colIndex['Pending'] === undefined) return;
+  rowNumbers.forEach((r) => {
+    txnSheet.getRange(r, colIndex['Pending'] + 1).setValue(false);
   });
 }
 
