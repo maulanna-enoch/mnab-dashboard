@@ -446,7 +446,11 @@ function handleMessage_(message, labelKey, headerMap, dryRun) {
   var messageId = message.getId();
 
   var failure = classifyFailure_(subject, body);
-  var parsed = LABEL_PARSERS[labelKey](subject, body);
+  // messageDate is a fallback for templates with no explicit transaction
+  // date in the body at all (e.g. parseJagoPocketReceived_ below) — every
+  // existing parser ignores this extra third argument, so this is a
+  // backward-compatible addition, not a signature change for them.
+  var parsed = LABEL_PARSERS[labelKey](subject, body, message.getDate());
 
   if (!parsed) {
     parsed = tryAiFallback_(labelKey, subject, body);
@@ -976,7 +980,7 @@ function parseOcbcBillPayment_(bodyHtml) {
 }
 
 // ── mnab/jago PARSER ─────────────────────────────────────────────────────
-// Bank Jago's notification emails all share one structurally regular
+// Bank Jago's notification emails mostly share one structurally regular
 // table format ("transfer-table-title" / "transfer-table-content" cells,
 // one label per row, occasionally more than one content line per label)
 // across otherwise different transaction types, so — unlike Mandiri/OCBC
@@ -984,14 +988,27 @@ function parseOcbcBillPayment_(bodyHtml) {
 // table directly out of the HTML into a {label: [values]} map once, then
 // each per-template function below just picks the fields it needs out of
 // that map. Dispatched on subject line, validated against five real
-// samples: money received, e-Wallet top up, a QRIS/merchant payment, a
-// Jago Partner autodebit (Bibit), and a transfer to another bank account.
+// samples of that table-shaped kind: money received, e-Wallet top up, a
+// QRIS/merchant payment, a Jago Partner autodebit (Bibit), and a transfer
+// to another bank account.
 //
-// All five samples resolve to the single JAGO_SOF account (see CONFIG up
+// A sixth template — "You've received money in your <Pocket> Pocket" (see
+// parseJagoPocketReceived_ below) — is structurally different (plain
+// paragraphs, no transfer-table markup at all, e.g. dividends/proceeds
+// landing in the RDN Pocket from a securities company), so it's checked
+// first and short-circuits before the table-based dispatch, which would
+// otherwise bail out on it for lacking 'Amount'/'Transaction Date' table
+// rows.
+//
+// All six samples resolve to the single JAGO_SOF account (see CONFIG up
 // top) — Jago's own multiple underlying Pocket/account numbers aren't
 // otherwise distinguished here.
 
-function parseJagoEmail_(subject, bodyHtml) {
+function parseJagoEmail_(subject, bodyHtml, messageDate) {
+  if (/received money in your .+ pocket/i.test(subject)) {
+    return parseJagoPocketReceived_(bodyHtml, messageDate);
+  }
+
   var table = parseJagoTable_(bodyHtml);
   if (!table['Amount'] || !table['Transaction Date']) return null; // not a shape we recognize → AI fallback
 
@@ -1109,6 +1126,42 @@ function parseJagoPartnerTransaction_(table, amount, date) {
     date: date,
     sof: JAGO_SOF,
     notes: 'Jago partner autodebit'
+  };
+}
+
+// "You've received money in your <Pocket> Pocket" — a plain-paragraph
+// notification (no transfer-table markup at all, unlike the five templates
+// above) for money landing in a Jago Pocket, e.g. dividends/sale proceeds
+// arriving in the RDN Pocket from a securities company. Real sample body:
+// "You've received Rp4.650 from PT. Stockbit Sekuritas Digital in your RDN
+// Pocket." Matched loosely (no leading "You've received" / apostrophe
+// requirement) since Jago's apostrophe rendering isn't guaranteed to be a
+// plain ASCII "'" in every email.
+//
+// This template has no explicit transaction date anywhere in the body —
+// unlike every other Jago template, which has a "Transaction Date" table
+// row — so it falls back to the email's own received timestamp
+// (messageDate, threaded in from handleMessage_ via message.getDate()) as
+// the best available approximation; edit the Date cell by hand afterward
+// if a more precise date is ever needed.
+function parseJagoPocketReceived_(bodyHtml, messageDate) {
+  var text = htmlToText_(bodyHtml);
+  var m = text.match(/received\s+Rp\s*([\d.,]+)\s+from\s+(.+?)\s+in your\s+(.+?)\s+Pocket\b/i);
+  if (!m) return null; // unrecognized shape → AI fallback
+
+  var amount = parseIndonesianAmount_(m[1]); // "Rp4.650" — dot-thousands, no decimal shown, same convention as the tabular templates' Amount field
+  var payee = m[2].trim();
+  var pocketName = m[3].trim(); // e.g. "RDN"
+
+  if (!(messageDate instanceof Date) || isNaN(messageDate.getTime())) return null; // no date anywhere → AI fallback
+
+  return {
+    payee: payee,
+    type: 'Income',
+    amount: amount,
+    date: messageDate,
+    sof: JAGO_SOF,
+    notes: pocketName + ' Pocket'
   };
 }
 
