@@ -197,6 +197,54 @@
  * suspect old duplicate rows are already sitting in `transactions`,
  * they'll need a manual look (or ask for a one-off script to help find
  * likely candidates by matching Payee/Amount/Date).
+ *
+ * ── THIRD KIND OF DUPLICATE: IMPORTED vs. MANUALLY-ENTERED (Issue #51) ──
+ * The two layers above stop the SAME email from producing two rows. They
+ * don't help with a different overlap: the user logs a transaction by hand
+ * (e.g. a QRIS payment) and the bank's own notification email for that
+ * same real-world payment shows up too, separately, as a new Pending row.
+ * Without help, that's two rows in `transactions` for one real transaction
+ * — double-counting in both balance concepts (see MNAB-project-state.md).
+ *
+ * Unlike the two layers above, this one does NOT change what gets written:
+ * the imported row is always written normally, exactly as before. Instead,
+ * `findManualMatch_()` (below, called from `writeRow_()`) checks every new
+ * import against the sheet's existing MANUAL rows (Pending not TRUE, and
+ * not already carrying a Match ID of its own) for: same `SOF`, same
+ * `Amount`, same `Income/Expense` type, and a `Date` within
+ * `MATCH_WINDOW_DAYS` days. On exactly one match, BOTH rows — the
+ * brand-new imported one and the existing manual one — get stamped with
+ * the same freshly-generated `Match ID` and `Match Status` = "Proposed"
+ * (two more self-provisioned columns, same pattern as `Pending`/`Email
+ * Message ID`). Nothing is deleted or excluded from balances at this
+ * point; it's purely a flag for the dashboard to surface.
+ *
+ * The dashboard (not this file) is where the user actually resolves a
+ * proposed match, via `api/transactions-update.js`'s `confirmMatch` /
+ * `unmatchMatch` actions:
+ *   - Confirm: the two rows really are the same real-world transaction.
+ *     In this MVP, the app deletes the auto-imported leg outright and
+ *     clears the Match ID/Status off the surviving manual row — the
+ *     manual entry the user already made is treated as the record of
+ *     that transaction. (A future iteration could do this more like the
+ *     Transfer-flag exclusion issue #51 originally sketched, keeping both
+ *     rows for an audit trail; deleting is simpler and is what got asked
+ *     for here.)
+ *   - Unmatch/decline: the two rows are coincidentally similar but not
+ *     actually the same transaction. The Match ID/Status is cleared off
+ *     BOTH rows and each goes back to being treated entirely
+ *     independently — the imported row's own Pending flag is untouched,
+ *     so it still goes through the normal Pending review flow on its own.
+ *
+ * Ambiguous cases (more than one manual row fits, or the only fitting
+ * manual row is already tied up in another proposed/matched pair) are
+ * left alone on purpose — no proposal is made, and the import just lands
+ * as a normal Pending row, rather than risk flagging the wrong pairing.
+ *
+ * Only proposes a match at import time, against manual rows that already
+ * exist when the email is processed. It does NOT re-sweep already-
+ * imported Pending rows if a matching manual entry gets added afterward
+ * — that gap is a known, accepted limitation, not an oversight.
  */
 
 // ── CONFIG ──────────────────────────────────────────────────────────────
@@ -496,6 +544,77 @@ function manualReviewRow_(message, labelKey, reasonNote) {
   };
 }
 
+// ── MATCHING AGAINST MANUAL ENTRIES (Issue #51) ────────────────────────────
+// See "THIRD KIND OF DUPLICATE" up top for the full rationale. Two days
+// either side of the imported transaction's own date — matches the range
+// the issue itself specified.
+var MATCH_WINDOW_DAYS = 2;
+
+function generateMatchId_() {
+  return 'm_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+}
+
+// Looks for exactly one existing MANUAL row (Pending not TRUE, and not
+// already carrying a Match ID of its own — see below) in `transactions`
+// with the same SOF, the same Amount, the same Income/Expense type, and a
+// Date within MATCH_WINDOW_DAYS days of `date`. Returns that row's 1-based
+// sheet row number, or null if there's no match or more than one candidate
+// (ambiguous matches are deliberately left alone — see the file-header
+// note). `type` is optional for callers that don't have it handy; when the
+// 'Income/Expense' column can't be found, matching just skips the type
+// check rather than refusing to match at all.
+//
+// A manual row that already has a Match ID (Proposed or otherwise) is
+// excluded from candidacy — it's already tied up in a pairing from an
+// earlier import, and linking a THIRD row to it would make "the other
+// side of this match" ambiguous for the dashboard's confirm/unmatch
+// actions, which assume exactly two rows share a Match ID.
+function findManualMatch_(sheet, headerMap, sof, amount, date, type) {
+  if (!sof || !amount || !(date instanceof Date) || isNaN(date.getTime())) return null;
+
+  var sofCol = headerMap['SOF'];
+  var amountCol = headerMap['Amount'];
+  var dateCol = headerMap['Date'];
+  var pendingCol = headerMap['Pending'];
+  if (!sofCol || !amountCol || !dateCol || !pendingCol) return null; // schema surprise — don't guess, skip matching
+
+  var typeCol = headerMap['Income/Expense']; // optional — matching still works without it, just less precise
+  var matchIdCol = headerMap['Match ID']; // optional — see the exclusion note above
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null; // no data rows yet
+  var numRows = lastRow - 1;
+
+  var sofValues = sheet.getRange(2, sofCol, numRows, 1).getValues();
+  var amountValues = sheet.getRange(2, amountCol, numRows, 1).getValues();
+  var dateValues = sheet.getRange(2, dateCol, numRows, 1).getValues();
+  var pendingValues = sheet.getRange(2, pendingCol, numRows, 1).getValues();
+  var typeValues = typeCol ? sheet.getRange(2, typeCol, numRows, 1).getValues() : null;
+  var matchIdValues = matchIdCol ? sheet.getRange(2, matchIdCol, numRows, 1).getValues() : null;
+
+  var targetTime = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  var dayMs = 24 * 60 * 60 * 1000;
+  var matches = [];
+
+  for (var i = 0; i < numRows; i++) {
+    if (pendingValues[i][0] === true) continue; // itself an unreviewed import, not a manual entry
+    if (matchIdValues && matchIdValues[i][0]) continue; // already tied up in another pairing
+    if (sofValues[i][0] !== sof) continue;
+    if (Number(amountValues[i][0]) !== Number(amount)) continue;
+    if (typeValues && (typeValues[i][0] || 'Expense') !== (type || 'Expense')) continue;
+
+    var rDate = dateValues[i][0];
+    if (!(rDate instanceof Date) || isNaN(rDate.getTime())) continue;
+    var rTime = new Date(rDate.getFullYear(), rDate.getMonth(), rDate.getDate()).getTime();
+    if (Math.abs(rTime - targetTime) > MATCH_WINDOW_DAYS * dayMs) continue;
+
+    matches.push(2 + i); // 1-based sheet row number
+  }
+
+  if (matches.length === 1) return matches[0];
+  return null; // zero or ambiguous (more than one candidate) — leave alone either way
+}
+
 // ── SHEET WRITE ─────────────────────────────────────────────────────────
 
 // headerMap and dryRun are both required now (runImportPass_() resolves
@@ -509,6 +628,24 @@ function writeRow_(row, headerMap, dryRun) {
   var amount = Number(row.amount) || 0;
   var isExpense = (row.type || 'Expense') === 'Expense';
   var monthGuess = billingMonthGuess_(row.date);
+
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TRANSACTIONS_SHEET_NAME);
+  if (!sheet) throw new Error('Could not find a sheet tab named "' + TRANSACTIONS_SHEET_NAME + '".');
+
+  // Issue #51: this transaction is still always written normally, exactly
+  // like every other import — see "THIRD KIND OF DUPLICATE" up top. If it
+  // looks like the same real-world transaction as one the user already
+  // entered by hand, both rows just get flagged with a shared Match ID for
+  // the dashboard to show and let the user confirm or decline.
+  var matchedRow = findManualMatch_(sheet, headerMap, row.sof, amount, row.date, row.type);
+  var matchId = matchedRow ? generateMatchId_() : '';
+  if (matchedRow) {
+    Logger.log((dryRun ? '[DRY RUN] ' : '') + 'Proposing a match for "' + row.payee + '" (' +
+        formatIdr_(amount) + ' ' + (row.type || 'Expense') + ', ' + row.sof +
+        ') against the existing manual entry at transactions row ' + matchedRow +
+        ' within ' + MATCH_WINDOW_DAYS + ' day(s) — both rows will be flagged Match ID ' + matchId +
+        ' / Match Status "Proposed" for review in the dashboard; neither is written/deleted automatically.');
+  }
 
   var values = {
     'Payee': row.payee,
@@ -524,16 +661,15 @@ function writeRow_(row, headerMap, dryRun) {
     'Notes': row.notes || '',
     'Pending': true,
     'Reconciled': false,
-    'Email Message ID': row.messageId || ''
+    'Email Message ID': row.messageId || '',
+    'Match ID': matchId,
+    'Match Status': matchedRow ? 'Proposed' : ''
   };
 
   if (dryRun) {
     Logger.log('[DRY RUN] Would append row: ' + JSON.stringify(values));
     return true;
   }
-
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TRANSACTIONS_SHEET_NAME);
-  if (!sheet) throw new Error('Could not find a sheet tab named "' + TRANSACTIONS_SHEET_NAME + '".');
 
   var newRowIndex = sheet.getLastRow() + 1;
   Object.keys(values).forEach(function (header) {
@@ -544,6 +680,15 @@ function writeRow_(row, headerMap, dryRun) {
     // empty that shouldn't be.
     if (col) sheet.getRange(newRowIndex, col).setValue(values[header]);
   });
+
+  // Stamp the same Match ID/Status onto the existing manual row so the two
+  // rows are linked from both directions — the dashboard's confirm/unmatch
+  // actions look this up by Match ID, not by row position.
+  if (matchedRow) {
+    if (headerMap['Match ID']) sheet.getRange(matchedRow, headerMap['Match ID']).setValue(matchId);
+    if (headerMap['Match Status']) sheet.getRange(matchedRow, headerMap['Match Status']).setValue('Proposed');
+  }
+
   return true;
 }
 
@@ -552,8 +697,10 @@ function writeRow_(row, headerMap, dryRun) {
 // after the last existing column) — mirrors how Reconcile.gs originally
 // added 'Reconciled'/'Reconciled Date' the same way. 'Pending' was the
 // original one; 'Email Message ID' was added later for the message-level
-// duplicate guard — see "TWO LAYERS OF DUPLICATE PROTECTION" up top.
-var IMPORT_COLUMNS = ['Pending', 'Email Message ID'];
+// duplicate guard (see "TWO LAYERS OF DUPLICATE PROTECTION" up top);
+// 'Match ID'/'Match Status' were added for the imported-vs-manual matching
+// feature (see "THIRD KIND OF DUPLICATE" up top).
+var IMPORT_COLUMNS = ['Pending', 'Email Message ID', 'Match ID', 'Match Status'];
 
 function ensureImportColumns_(sheet) {
   var lastCol = sheet.getLastColumn();

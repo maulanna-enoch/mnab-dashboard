@@ -3390,6 +3390,7 @@
     supportEditDelete: true,
     onSaved: () => { if (currentAccount) fetchAndRenderAccountDetail(currentAccount); },
     onDeleted: () => { if (currentAccount) fetchAndRenderAccountDetail(currentAccount); },
+    onMatchResolved: () => { if (currentAccount) fetchAndRenderAccountDetail(currentAccount); },
   });
 
   document.getElementById('txf-fab').addEventListener('click', () => {

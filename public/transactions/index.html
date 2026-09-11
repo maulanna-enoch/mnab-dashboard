@@ -122,6 +122,9 @@
      toggles share one visual language. */
   .txn-row.pending { border: 1px dashed rgba(167,139,250,0.45); background: linear-gradient(rgba(167,139,250,0.08), rgba(167,139,250,0.08)), var(--card); }
   .txn-meta .pending-tag { color: var(--pending, #a78bfa); }
+  /* Issue #51: proposed import<->manual match badge -- amber, matching the
+     txf-match-banner's color language in shared/transaction-form.css. */
+  .txn-meta .matched-tag { color: #eab308; }
 
   /* -- "Review Pending" mode button (issue #49 feedback follow-up) --
      Deliberately NOT the on/off .switch control used for Upcoming: this
@@ -1851,6 +1854,7 @@
       supportEditDelete: true,
       onSaved: () => loadTransactions(),
       onDeleted: () => loadTransactions(),
+      onMatchResolved: () => loadTransactions(),
     });
 
     BottomNav.mount(document.getElementById('bnv-root'), { active: 'transactions' });
@@ -2104,6 +2108,9 @@
         if (t.cleared !== 'Cleared') metaBits.push('<span class="uncleared">uncleared</span>');
         if (isUpcoming) metaBits.push('<span class="upcoming-tag">upcoming</span>');
         if (t.pending) metaBits.push('<span class="pending-tag">pending</span>');
+        // Issue #51: surfaces a proposed import<->manual match right on the
+        // card so it isn't only discoverable by opening the edit sheet.
+        if (t.matchStatus === 'Proposed') metaBits.push('<span class="matched-tag">match?</span>');
         // Issue #49: Confirm button sits under the amount for a pending row
         // -- see confirmPendingTransaction() and its click listener below.
         const confirmHtml = t.pending
