@@ -37,6 +37,14 @@
           <div class="txf-sheet-close" id="txf-sheet-close">&times;</div>
         </div>
 
+        <div class="txf-match-banner" id="txf-match-banner" style="display:none;">
+          <div class="txf-match-banner-text">This imported transaction looks like it matches one you entered manually.</div>
+          <div class="txf-match-banner-actions">
+            <button type="button" class="txf-match-decline-btn" id="txf-match-decline-btn">Not a match</button>
+            <button type="button" class="txf-match-confirm-btn" id="txf-match-confirm-btn">Confirm match</button>
+          </div>
+        </div>
+
         <div class="txf-toggle-row" id="txf-type-toggle">
           <button class="txf-toggle-btn" data-type="Expense">Expense</button>
           <button class="txf-toggle-btn" data-type="Income">Income</button>
@@ -364,6 +372,18 @@
     requestLocation();
     renderPayeeOptions();
 
+    // Issue #51: a proposed match (self-provisioned Match ID/Match Status
+    // columns, stamped by EmailImport.gs at import time) surfaces here as a
+    // banner with Confirm/Decline actions -- only ever shown on an edit open
+    // of a row that actually carries one, never on Add.
+    if (isEditOpen && txn.matchStatus === 'Proposed' && txn.matchId) {
+      state.currentMatchId = txn.matchId;
+      state.matchBanner.style.display = 'block';
+    } else {
+      state.currentMatchId = null;
+      state.matchBanner.style.display = 'none';
+    }
+
     if (isEditOpen) {
       state.editingRow = txn.rowNumber;
       state.sheetTitle.textContent = 'Edit transaction';
@@ -500,6 +520,54 @@
     }
   }
 
+  // Issue #51: user confirms the flagged pair really is the same
+  // transaction. In this MVP phase the server deletes the auto-imported
+  // leg outright and clears the flag off the surviving manual row -- so the
+  // row currently open in this form (which may itself be either leg) is
+  // simply closed afterward rather than re-rendered in place.
+  async function handleConfirmMatch() {
+    if (!state.currentMatchId) return;
+    const matchId = state.currentMatchId;
+    try {
+      const res = await fetch('/api/transactions-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Mnab-Token': WRITE_TOKEN },
+        body: JSON.stringify({ action: 'confirmMatch', matchId }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      close();
+      showToast('Match confirmed');
+      if (typeof state.options.onMatchResolved === 'function') state.options.onMatchResolved();
+    } catch (err) {
+      state.formError.textContent = err.message;
+      state.formError.style.display = 'block';
+    }
+  }
+
+  // Issue #51: user declines the proposed match -- clears the flag off both
+  // rows (via their shared Match ID) and leaves each one otherwise
+  // untouched, going back to being treated as fully independent.
+  async function handleDeclineMatch() {
+    if (!state.currentMatchId) return;
+    const matchId = state.currentMatchId;
+    try {
+      const res = await fetch('/api/transactions-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Mnab-Token': WRITE_TOKEN },
+        body: JSON.stringify({ action: 'unmatchMatch', matchId }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      close();
+      showToast('Unmatched');
+      if (typeof state.options.onMatchResolved === 'function') state.options.onMatchResolved();
+    } catch (err) {
+      state.formError.textContent = err.message;
+      state.formError.style.display = 'block';
+    }
+  }
+
   async function handleDelete() {
     if (state.editingRow === null) return;
     if (!confirm('Delete this transaction?')) return;
@@ -528,6 +596,7 @@
     state = {
       options,
       editingRow: null,
+      currentMatchId: null,
       monthTouched: false,
       capturedPosition: null,
       locationEnabled: false,
@@ -551,6 +620,9 @@
       notesEl: rootEl.querySelector('#txf-f-notes'),
       saveBtn: rootEl.querySelector('#txf-save-btn'),
       deleteLink: rootEl.querySelector('#txf-delete-link'),
+      matchBanner: rootEl.querySelector('#txf-match-banner'),
+      matchConfirmBtn: rootEl.querySelector('#txf-match-confirm-btn'),
+      matchDeclineBtn: rootEl.querySelector('#txf-match-decline-btn'),
     };
 
     if (options.showFab === false) {
@@ -598,6 +670,8 @@
     state.overlay.addEventListener('click', (e) => { if (e.target === state.overlay) close(); });
     state.saveBtn.addEventListener('click', handleSave);
     state.deleteLink.addEventListener('click', handleDelete);
+    state.matchConfirmBtn.addEventListener('click', handleConfirmMatch);
+    state.matchDeclineBtn.addEventListener('click', handleDeclineMatch);
 
     // "N" hardware-keyboard shortcut (issue #60): pressing N opens Add
     // transaction, but only while focus isn't in a text field -- an on-screen
