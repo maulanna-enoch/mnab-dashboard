@@ -714,15 +714,45 @@ async function deletePaymentRows(sheets, paymentId) {
 
 async function updateAccountLastReconciled(sheets, accountsMap, rowNumber, asOfDate, statementAmount) {
   requireColumns(accountsMap, 'Accounts', ['Last Reconciled Through', 'Last Reconciled Statement']);
-  const throughCol = columnLetter(accountsMap['Last Reconciled Through']);
+  const throughColIndex = accountsMap['Last Reconciled Through'];
+  const throughCol = columnLetter(throughColIndex);
   const stmtCol = columnLetter(accountsMap['Last Reconciled Statement']);
+  const spreadsheetId = process.env.SHEET_ID;
   await sheets.spreadsheets.values.batchUpdate({
-    spreadsheetId: process.env.SHEET_ID,
+    spreadsheetId,
     requestBody: {
       valueInputOption: 'RAW',
       data: [
         { range: `${RECONCILE_SHEETS.accounts}!${throughCol}${rowNumber}`, values: [[dateToSerial(asOfDate)]] },
         { range: `${RECONCILE_SHEETS.accounts}!${stmtCol}${rowNumber}`, values: [[statementAmount]] },
+      ],
+    },
+  });
+  // "Last Reconciled Through" is a self-provisioned column (Reconcile.gs
+  // created it on first run, in whatever order it landed -- see this file's
+  // header comment) and may never have had Date number-formatting applied.
+  // A RAW numeric write only sets the value, not the display format, so an
+  // unformatted cell shows the bare serial number (e.g. "46270") instead of
+  // a date. Stamp the format on every write so it always renders as a date
+  // regardless of the column's prior formatting state.
+  const sheetId = await getSheetGridId(sheets, spreadsheetId, RECONCILE_SHEETS.accounts);
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [
+        {
+          repeatCell: {
+            range: {
+              sheetId,
+              startRowIndex: rowNumber - 1,
+              endRowIndex: rowNumber,
+              startColumnIndex: throughColIndex,
+              endColumnIndex: throughColIndex + 1,
+            },
+            cell: { userEnteredFormat: { numberFormat: { type: 'DATE', pattern: 'dd/mm/yyyy' } } },
+            fields: 'userEnteredFormat.numberFormat',
+          },
+        },
       ],
     },
   });

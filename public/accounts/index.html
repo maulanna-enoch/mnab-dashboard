@@ -2614,7 +2614,15 @@
   }
 
   function rcConfirmInsertAdjustment() {
-    const projType = rcState.variance > 0 ? 'Expense' : 'Income';
+    // Mirror api/reconcile.js's actionAddAdjustment type mapping exactly --
+    // cash/bank accounts compare against an asset-facing (positive = have
+    // money) book balance, so a positive variance there means missing
+    // Income rather than missing Expense; credit cards keep the original
+    // "amount owed" mapping. See that file's comment for the full reasoning.
+    const isCashAcct = !((currentAccountMeta && currentAccountMeta.type) || '').toLowerCase().includes('credit');
+    const projType = isCashAcct
+      ? (rcState.variance > 0 ? 'Income' : 'Expense')
+      : (rcState.variance > 0 ? 'Expense' : 'Income');
     const projAmount = Math.abs(rcState.variance);
     showConfirm(
       `This will insert one new "Reconciliation" ${projType} transaction for ${projAmount.toLocaleString()} dated ${rcState.asOfDate}, and mark ${rcState.matchedCount + 1} transaction(s) as reconciled.\n\nYou can undo this afterward via "View / undo last reconciliation", but only until this account is reconciled again. Continue?`,
