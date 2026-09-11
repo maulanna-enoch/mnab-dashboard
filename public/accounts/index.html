@@ -2197,7 +2197,11 @@
     // full rationale). Stays visible while actively reviewing even if the
     // last pending row gets confirmed mid-session, so there's still a way
     // back to the full list.
-    const pendingCount = rows.filter((t) => t.pending).length;
+    // A pending transaction dated in the future isn't due for review yet, so
+    // it doesn't count toward pendingCount -- a future-only pending set
+    // doesn't pop the banner (see the Transactions page's own comment for
+    // the full rationale, which applies identically here).
+    const pendingCount = rows.filter((t) => t.pending && (!t.date || t.date <= todayStr)).length;
     if (pendingCount || showPendingOnlyDetail) {
       detailPendingToggleEl.style.display = '';
       detailPendingToggleEl.classList.toggle('active', showPendingOnlyDetail);

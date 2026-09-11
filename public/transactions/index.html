@@ -2083,7 +2083,13 @@
       // gets confirmed mid-session. The filter itself is still shared by
       // both the mobile card list and the wide-viewport table -- both are
       // handed the same `visible` array.
-      const pendingCount = sorted.filter((t) => t.pending).length;
+      // A pending transaction dated in the future isn't due for review yet
+      // (e.g. a scheduled/imported item for a date that hasn't happened) --
+      // it doesn't count toward pendingCount, so a future-only pending set
+      // doesn't pop the banner. It's still excluded from `visible` by the
+      // Upcoming filter below unless the user has explicitly toggled
+      // Upcoming on, at which point it's their call whether to see it.
+      const pendingCount = sorted.filter((t) => t.pending && t.date <= todayStr).length;
       if (pendingCount || showPendingOnly) {
         pendingToggleEl.style.display = '';
         pendingToggleEl.classList.toggle('active', showPendingOnly);
