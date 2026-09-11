@@ -13,13 +13,13 @@
  *     entityLabel: 'transaction',       // singular, used to build "1 transaction selected"
  *     entityLabelPlural: 'transactions',
  *     actions: [
- *       { key: 'delete', label: 'Delete', danger: true },
- *       { key: 'clear', label: 'Clear' },
- *       { key: 'unclear', label: 'Unclear' },
- *       { key: 'duplicate', label: 'Duplicate' },
- *       { key: 'confirm', label: 'Confirm' },
- *       { key: 'changeDate', label: 'Change date', input: 'date' },
- *       { key: 'changeBillingMonth', label: 'Change month', input: 'month' },
+ *       { key: 'delete', label: 'Delete', danger: true, hotkey: 'Backspace', hotkeySymbol: '⌫' },
+ *       { key: 'clear', label: 'Clear', hotkey: 'c' },
+ *       { key: 'unclear', label: 'Unclear', hotkey: 'u' },
+ *       { key: 'duplicate', label: 'Duplicate', hotkey: 'd' },
+ *       { key: 'confirm', label: 'Confirm', hotkey: 'Enter', hotkeySymbol: '✓' },
+ *       { key: 'changeDate', label: 'Change date', input: 'date', hotkey: 'h' },
+ *       { key: 'changeBillingMonth', label: 'Change month', input: 'month', hotkey: 'm' },
  *     ],
  *     onAction: async (key, rowNumbers, inputValue) => { ...call the
  *       existing single-row endpoints in a loop, then refetch + re-render... },
@@ -62,6 +62,36 @@
  * call), which shifts every row below it up by one -- deleting in ascending
  * order (or in parallel) would silently delete the WRONG row for every
  * rowNumber captured before the loop started except the first.
+ *
+ * -- Keyboard bindings --
+ * Each action above may carry a `hotkey` (a single letter, or the literal
+ * string 'Backspace'/'Enter') and, for those two non-letter keys only, a
+ * `hotkeySymbol` glyph -- renderActions() below underlines the hotkey
+ * letter in the button's own label (e.g. Clear -> "<u>C</u>lear"), or for
+ * Backspace/Enter appends the symbol instead, since there's no letter to
+ * underline. The keydown listener registered near the bottom of this file
+ * dispatches these ONLY once count() > 0 (i.e. once the bar is actually
+ * showing) -- until then, every one of these keys still means whatever
+ * each host page's OWN single-row keyboard shortcuts already say it means
+ * (C toggles Cleared on the highlighted row, Backspace deletes it, Enter
+ * opens it for edit). This module has no way to make that switch happen by
+ * itself, though -- it doesn't know what a "highlighted row" even is, that
+ * concept lives entirely in each host page's own keyboard-nav code. So
+ * EVERY host page's document keydown handler must itself check
+ * `BulkSelect.count() > 0` and back off (return, after still calling
+ * e.preventDefault() so the key's browser default -- e.g. Backspace
+ * navigating back -- doesn't fire either) for the handful of keys this
+ * module reuses, before falling through to its own single-row behavior.
+ * Row selection itself (toggling one row in or out of the selection while
+ * cycling with Up/Down) is a per-host-page S-key binding for the same
+ * reason -- this module only ever sees rowNumbers the host already handed
+ * it via toggle()/selectAllVisible(), never a "currently highlighted" row.
+ *
+ * Bulk delete's own confirmation (see confirmDanger() below) replaces a
+ * plain browser confirm() with a custom dialog matching the D-confirms/
+ * C-cancels mnemonic convention the Transactions page's single-row delete
+ * confirmation already established (issue #101), so the whole delete flow
+ * stays keyboard-operable end to end, not just up to the confirmation step.
  */
 (function (global) {
   const selected = new Set();
@@ -127,13 +157,70 @@
     state.inputCancel.disabled = busy;
   }
 
+  // Underlines `letter`'s first case-insensitive occurrence in `label`
+  // (e.g. underlineLetter('Clear', 'c') -> "<u>C</u>lear") -- shared by
+  // both the action buttons (renderActions below) and the delete
+  // confirmation dialog's own Yes button. Falls back to a plain label when
+  // there's no letter, or it isn't actually present in the label.
+  function underlineLetter(label, letter) {
+    const idx = letter ? label.toLowerCase().indexOf(letter.toLowerCase()) : -1;
+    if (idx === -1) return label;
+    return label.slice(0, idx) + '<u>' + label[idx] + '</u>' + label.slice(idx + 1);
+  }
+
+  // Replaces the plain browser confirm() this used to call directly for a
+  // "danger" action with a custom dialog that keeps the D-confirms/
+  // C-cancels mnemonic convention working (see the file-level comment on
+  // keyboard bindings above) -- Enter/Escape work too as the usual dialog
+  // fallbacks. Returns a Promise<boolean>.
+  function confirmDanger(message, verb) {
+    return new Promise((resolve) => {
+      state.confirmMessage.textContent = message;
+      state.confirmYesBtn.innerHTML = underlineLetter(verb || 'Delete', 'd');
+      state.confirmOverlay.classList.add('open');
+
+      const close = (result) => {
+        state.confirmOverlay.classList.remove('open');
+        state.confirmYesBtn.removeEventListener('click', onYes);
+        state.confirmCancelBtn.removeEventListener('click', onCancel);
+        document.removeEventListener('keydown', onKeydown);
+        resolve(result);
+      };
+      const onYes = () => close(true);
+      const onCancel = () => close(false);
+      state.confirmYesBtn.addEventListener('click', onYes);
+      state.confirmCancelBtn.addEventListener('click', onCancel);
+
+      // D confirms, C cancels -- matches the underlined letters on the two
+      // buttons and the Transactions page's own single-row delete dialog
+      // (issue #101). stopImmediatePropagation for the same reason that
+      // dialog needs it: closing this (removing "open") happens
+      // synchronously in this same dispatch, so without it the bulk-action
+      // hotkey listener further down this file (registered on the same
+      // document, and blind to an overlay that's already closed by the
+      // time it runs) would go on to act on this *same* keypress too --
+      // e.g. "D" would also fire bulk Duplicate immediately after
+      // confirming the delete.
+      const onKeydown = (e) => {
+        if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+        const k = e.key.toLowerCase();
+        if (k !== 'd' && k !== 'c' && e.key !== 'Enter' && e.key !== 'Escape') return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        close(k === 'd' || e.key === 'Enter');
+      };
+      document.addEventListener('keydown', onKeydown);
+    });
+  }
+
   async function runAction(key, inputValue) {
     const rowNumbers = selectedRowNumbers();
     if (!rowNumbers.length) return;
     const action = state.options.actions.find((a) => a.key === key);
     if (action && action.danger) {
       const label = rowNumbers.length === 1 ? state.options.entityLabel : state.options.entityLabelPlural;
-      if (!confirm(`${action.confirmVerb || 'Delete'} ${rowNumbers.length} ${label}? This can't be undone.`)) return;
+      const confirmed = await confirmDanger(`${action.confirmVerb || 'Delete'} ${rowNumbers.length} ${label}? This can't be undone.`, action.confirmVerb);
+      if (!confirmed) return;
     }
     setBusy(true);
     try {
@@ -176,13 +263,24 @@
     state.input.focus();
   }
 
+  // A button's hotkey is shown as an underlined letter within its own
+  // label (e.g. "<u>C</u>lear") -- except Backspace/Enter, which aren't
+  // letters in the word at all, so those get `hotkeySymbol` appended
+  // instead (e.g. "Delete ⌫"). See this file's header comment.
+  function actionButtonLabel(action) {
+    if (action.hotkeySymbol) {
+      return `${action.label} <span class="blk-hotkey-symbol">${action.hotkeySymbol}</span>`;
+    }
+    return underlineLetter(action.label, action.hotkey);
+  }
+
   function renderActions() {
     state.actionsRow.innerHTML = '';
     state.options.actions.forEach((action) => {
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'blk-action-btn' + (action.danger ? ' danger' : '');
-      btn.textContent = action.label;
+      btn.innerHTML = actionButtonLabel(action);
       btn.addEventListener('click', () => {
         if (action.input) openInputRow(action);
         else runAction(action.key, null);
@@ -195,7 +293,7 @@
     if (!state) return;
     const n = count();
     const active = n > 0;
-    state.bar.classList.toggle('open', active);
+    state.bar.classList.toggle('blk-active', active);
     if (typeof state.options.onSelectionChange === 'function' && state.lastActive !== active) {
       state.lastActive = active;
       state.options.onSelectionChange(active);
@@ -243,6 +341,15 @@
           </div>
         </div>
       </div>
+      <div class="blk-confirm-overlay" id="blk-confirm-overlay">
+        <div class="blk-confirm-sheet">
+          <p class="blk-confirm-message" id="blk-confirm-message"></p>
+          <div class="blk-confirm-actions">
+            <button type="button" class="blk-confirm-btn blk-confirm-cancel" id="blk-confirm-cancel-btn"><u>C</u>ancel</button>
+            <button type="button" class="blk-confirm-btn blk-confirm-yes" id="blk-confirm-yes-btn">Delete</button>
+          </div>
+        </div>
+      </div>
     `;
 
     state = {
@@ -260,6 +367,10 @@
       input: rootEl.querySelector('#blk-input'),
       inputApply: rootEl.querySelector('#blk-input-apply'),
       inputCancel: rootEl.querySelector('#blk-input-cancel'),
+      confirmOverlay: rootEl.querySelector('#blk-confirm-overlay'),
+      confirmMessage: rootEl.querySelector('#blk-confirm-message'),
+      confirmYesBtn: rootEl.querySelector('#blk-confirm-yes-btn'),
+      confirmCancelBtn: rootEl.querySelector('#blk-confirm-cancel-btn'),
     };
 
     renderActions();
@@ -271,6 +382,40 @@
       runAction(state.pendingAction, state.input.value);
     });
   }
+
+  function isRealTextField(t) {
+    const tag = t && t.tagName;
+    return (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable)) && t.offsetParent !== null;
+  }
+
+  function hotkeyMatches(hotkey, e) {
+    if (!hotkey) return false;
+    if (hotkey === 'Backspace' || hotkey === 'Enter') return e.key === hotkey;
+    return e.key.length === 1 && e.key.toLowerCase() === hotkey.toLowerCase();
+  }
+
+  // Registered once, at module load -- mount() only ever runs once per
+  // page, so there's no risk of this piling up duplicate listeners. Only
+  // acts once count() > 0 (see the file-level "Keyboard bindings" comment
+  // above for why every host page's own keydown handler has to cooperate
+  // with that same condition for C/Backspace/Enter). Arrow Up/Down and the
+  // row-select key (S) are each host page's own responsibility, not this
+  // module's -- they're independent of selection count and this module has
+  // no notion of "the currently highlighted row" to toggle in the first
+  // place.
+  document.addEventListener('keydown', (e) => {
+    if (!state || count() === 0) return;
+    if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (isRealTextField(e.target)) return; // the bar's own date/month input, a filter box, etc.
+    if (document.querySelector('.open')) return; // a real modal -- including our own confirm dialog above -- owns the keyboard
+    if (state.busy) return;
+
+    const action = state.options.actions.find((a) => hotkeyMatches(a.hotkey, e));
+    if (!action) return;
+    e.preventDefault();
+    if (action.input) openInputRow(action);
+    else runAction(action.key, null);
+  });
 
   global.BulkSelect = {
     mount,

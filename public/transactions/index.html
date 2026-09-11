@@ -293,13 +293,24 @@
     }
 
     /* -- keyboard-driven row editing --
-       Down/Up arrow highlights a whole row and cycles through rows; Enter
-       opens every editable cell in that row at once (Tab/Shift-Tab moves
-       between them, wrapping around); Enter again saves the whole row in
-       one request, Escape discards. See the "keyboard row editing" comment
+       Down/Up arrow highlights a whole row and cycles through rows (this
+       keeps working identically once rows are multi-selected -- see below);
+       Space (always) or Enter (only when nothing is multi-selected) opens
+       every editable cell in that row at once (Tab/Shift-Tab moves between
+       them, wrapping around); Enter again saves the whole row in one
+       request, Escape discards. See the "keyboard row editing" comment
        block above the script's document keydown listener for the full flow
        -- same outline-highlight convention as the accounts page's
-       Up/Down row nav (issue #63, .kbd-focus there). */
+       Up/Down row nav (issue #63, .kbd-focus there).
+
+       -- multi-select keyboard bindings (issue #78 follow-up) --
+       S toggles the highlighted row's checkbox on/off without leaving
+       highlight-nav mode (so Up/Down + S can select a run of rows quickly).
+       Once 1+ rows are selected, C/Backspace/Enter are reinterpreted as the
+       bulk Clear/Delete/Confirm actions instead of their single-row
+       meaning -- see shared/bulk-actions.js's own keydown listener, which
+       also drives the rest of the bulk action hotkeys (U, D, H, M) and the
+       underlined-letter/glyph button affordances. */
     .txt-table tbody tr.txt-kbd-highlight { outline: 2px solid var(--accent); outline-offset: -2px; }
     .txt-table tbody tr.txt-kbd-row-saving { opacity: 0.6; }
     .txt-cell-checkbox { width: 16px; height: 16px; cursor: pointer; }
@@ -1650,23 +1661,50 @@
       if (isTextField) return; // typing in a filter box, a focused button, etc. -- don't hijack arrows/Enter/Space there
       if (document.querySelector('.open')) return; // the full Add/Edit sheet owns the keyboard
 
+      // Once 1+ rows are selected, several keys are reinterpreted as bulk
+      // actions instead -- see shared/bulk-actions.js's own keydown listener,
+      // which is what actually handles them. This handler just needs to back
+      // off (still calling preventDefault so e.g. Backspace doesn't navigate
+      // the browser back) rather than run its single-row behavior. Up/Down/S
+      // are unaffected: cycling and the new select-toggle both keep working
+      // identically whether or not rows are selected.
+      const bulkActive = BulkSelect.count() > 0;
+
       if (e.key === 'ArrowDown') {
         e.preventDefault();
         setTxtHighlight(txtKbdHighlightIndex + 1);
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
         setTxtHighlight(txtKbdHighlightIndex - 1);
-      } else if (e.key === 'Enter' || e.key === ' ') {
+      } else if (e.key.toLowerCase() === 's') {
+        const txn = txtCurrentHighlightedTxn();
+        if (!txn) return;
+        e.preventDefault();
+        const rowNumber = txn.rowNumber;
+        BulkSelect.toggle(rowNumber);
+        renderList();
+        txtRestoreHighlightByRowNumber(rowNumber);
+      } else if (e.key === 'Enter') {
+        if (bulkActive) { e.preventDefault(); return; } // handled by bulk-actions.js (Confirm)
+        const txn = txtCurrentHighlightedTxn();
+        if (!txn) return;
+        e.preventDefault();
+        startTxtKbdEdit(txn);
+      } else if (e.key === ' ') {
+        // Spacebar always edits in-line, selected or not -- only Enter is
+        // reclaimed for bulk Confirm.
         const txn = txtCurrentHighlightedTxn();
         if (!txn) return;
         e.preventDefault();
         startTxtKbdEdit(txn);
       } else if (e.key.toLowerCase() === 'c') {
+        if (bulkActive) { e.preventDefault(); return; } // handled by bulk-actions.js (Clear)
         const txn = txtCurrentHighlightedTxn();
         if (!txn || txtKbdClearing) return;
         e.preventDefault();
         txtKbdHandleClear(txn);
       } else if (e.key === 'Backspace') {
+        if (bulkActive) { e.preventDefault(); return; } // handled by bulk-actions.js (Delete)
         const txn = txtCurrentHighlightedTxn();
         if (!txn || txtKbdDeleting) return;
         e.preventDefault();
@@ -1970,13 +2008,13 @@
       entityLabel: 'transaction',
       entityLabelPlural: 'transactions',
       actions: [
-        { key: 'delete', label: 'Delete', danger: true },
-        { key: 'clear', label: 'Clear' },
-        { key: 'unclear', label: 'Unclear' },
-        { key: 'duplicate', label: 'Duplicate' },
-        { key: 'confirm', label: 'Confirm' },
-        { key: 'changeDate', label: 'Change date', input: 'date' },
-        { key: 'changeBillingMonth', label: 'Change month', input: 'month' },
+        { key: 'delete', label: 'Delete', danger: true, hotkey: 'Backspace', hotkeySymbol: '⌫' },
+        { key: 'clear', label: 'Clear', hotkey: 'c' },
+        { key: 'unclear', label: 'Unclear', hotkey: 'u' },
+        { key: 'duplicate', label: 'Duplicate', hotkey: 'd' },
+        { key: 'confirm', label: 'Confirm', hotkey: 'Enter', hotkeySymbol: '✓' },
+        { key: 'changeDate', label: 'Change date', input: 'date', hotkey: 'h' },
+        { key: 'changeBillingMonth', label: 'Change month', input: 'month', hotkey: 'm' },
       ],
       onAction: bulkOnAction,
       // Cheap post-clear redraw (see shared/bulk-actions.js's comment on
