@@ -213,3 +213,35 @@
   padding: 4px;
 }
 .txf-error { color: #f87171; font-size: 0.9rem; }
+
+/* Proposed-match banner (issue #51) -- shown only when editing a row that
+   EmailImport.gs stamped with a shared Match ID against a manually-entered
+   transaction. Amber, since this is a "please review" prompt rather than an
+   error (.txf-error) or a routine field. */
+.txf-match-banner {
+  background: rgba(234,179,8,0.12);
+  border: 1px solid rgba(234,179,8,0.4);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+.txf-match-banner-text { font-size: 12px; color: var(--text); margin-bottom: 8px; }
+.txf-match-banner-actions { display: flex; gap: 8px; }
+.txf-match-banner-actions button {
+  flex: 1;
+  padding: 7px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.txf-match-decline-btn {
+  border: 1px solid #374151;
+  background: var(--bg);
+  color: var(--muted);
+}
+.txf-match-confirm-btn {
+  border: 1px solid transparent;
+  background: #eab308;
+  color: #0f1115;
+}
