@@ -197,6 +197,37 @@
  * suspect old duplicate rows are already sitting in `transactions`,
  * they'll need a manual look (or ask for a one-off script to help find
  * likely candidates by matching Payee/Amount/Date).
+ *
+ * ── THIRD KIND OF DUPLICATE: IMPORTED vs. MANUALLY-ENTERED (Issue #51) ──
+ * The two layers above stop the SAME email from producing two rows. They
+ * don't help with a different overlap: the user logs a transaction by hand
+ * (e.g. a QRIS payment) and the bank's own notification email for that
+ * same real-world payment shows up too, separately, as a new Pending row.
+ * Without help, that's two rows in `transactions` for one real transaction
+ * — double-counting in both balance concepts (see MNAB-project-state.md).
+ *
+ * `findManualMatch_()` (below, called from `writeRow_()`) checks every new
+ * import against the sheet's existing MANUAL rows (Pending not TRUE)
+ * before writing anything: same `SOF`, same `Amount`, same `Income/Expense`
+ * type, and a `Date` within `MATCH_WINDOW_DAYS` days. On exactly one match,
+ * the imported row is simply never written — the manual entry the user
+ * already made is treated as the record of that transaction, and the
+ * import is silently dropped (still counted as "handled" for the message-
+ * ID/thread-labeling guards above, so it's never retried).
+ *
+ * This is a deliberately simpler resolution than Issue #51's original
+ * design (propose/confirm/unmatch UI, a Transfer-style exclusion flag, new
+ * tracking columns) — there is nothing to review, confirm, or undo. The
+ * tradeoff: no audit trail of the dropped email, and if the match is ever
+ * wrong there's no "unmatch" to reverse it, just re-adding the transaction
+ * by hand. Ambiguous cases (more than one manual row fits) are left alone
+ * on purpose — the import still lands as a normal Pending row rather than
+ * risk silently deleting evidence of the wrong transaction.
+ *
+ * Only runs at import time, against manual rows that already exist when
+ * the email is processed. It does NOT re-sweep already-imported Pending
+ * rows if a matching manual entry gets added afterward — that gap is a
+ * known, accepted limitation of this simpler approach, not an oversight.
  */
 
 // ── CONFIG ──────────────────────────────────────────────────────────────
@@ -496,6 +527,63 @@ function manualReviewRow_(message, labelKey, reasonNote) {
   };
 }
 
+// ── MATCHING AGAINST MANUAL ENTRIES (Issue #51, simplified) ────────────
+// See "THIRD KIND OF DUPLICATE" up top for the full rationale. Two days
+// either side of the imported transaction's own date — matches the range
+// the issue itself specified.
+var MATCH_WINDOW_DAYS = 2;
+
+// Looks for exactly one existing MANUAL row (Pending not TRUE) in
+// `transactions` with the same SOF, the same Amount, the same
+// Income/Expense type, and a Date within MATCH_WINDOW_DAYS days of `date`.
+// Returns that row's 1-based sheet row number, or null if there's no match
+// or more than one candidate (ambiguous matches are deliberately left
+// alone — see the file-header note). `type` is optional for callers that
+// don't have it handy; when the 'Income/Expense' column can't be found,
+// matching just skips the type check rather than refusing to match at all.
+function findManualMatch_(sheet, headerMap, sof, amount, date, type) {
+  if (!sof || !amount || !(date instanceof Date) || isNaN(date.getTime())) return null;
+
+  var sofCol = headerMap['SOF'];
+  var amountCol = headerMap['Amount'];
+  var dateCol = headerMap['Date'];
+  var pendingCol = headerMap['Pending'];
+  if (!sofCol || !amountCol || !dateCol || !pendingCol) return null; // schema surprise — don't guess, skip matching
+
+  var typeCol = headerMap['Income/Expense']; // optional — matching still works without it, just less precise
+
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null; // no data rows yet
+  var numRows = lastRow - 1;
+
+  var sofValues = sheet.getRange(2, sofCol, numRows, 1).getValues();
+  var amountValues = sheet.getRange(2, amountCol, numRows, 1).getValues();
+  var dateValues = sheet.getRange(2, dateCol, numRows, 1).getValues();
+  var pendingValues = sheet.getRange(2, pendingCol, numRows, 1).getValues();
+  var typeValues = typeCol ? sheet.getRange(2, typeCol, numRows, 1).getValues() : null;
+
+  var targetTime = new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  var dayMs = 24 * 60 * 60 * 1000;
+  var matches = [];
+
+  for (var i = 0; i < numRows; i++) {
+    if (pendingValues[i][0] === true) continue; // itself an unreviewed import, not a manual entry
+    if (sofValues[i][0] !== sof) continue;
+    if (Number(amountValues[i][0]) !== Number(amount)) continue;
+    if (typeValues && (typeValues[i][0] || 'Expense') !== (type || 'Expense')) continue;
+
+    var rDate = dateValues[i][0];
+    if (!(rDate instanceof Date) || isNaN(rDate.getTime())) continue;
+    var rTime = new Date(rDate.getFullYear(), rDate.getMonth(), rDate.getDate()).getTime();
+    if (Math.abs(rTime - targetTime) > MATCH_WINDOW_DAYS * dayMs) continue;
+
+    matches.push(2 + i); // 1-based sheet row number
+  }
+
+  if (matches.length === 1) return matches[0];
+  return null; // zero or ambiguous (more than one candidate) — leave alone either way
+}
+
 // ── SHEET WRITE ─────────────────────────────────────────────────────────
 
 // headerMap and dryRun are both required now (runImportPass_() resolves
@@ -509,6 +597,22 @@ function writeRow_(row, headerMap, dryRun) {
   var amount = Number(row.amount) || 0;
   var isExpense = (row.type || 'Expense') === 'Expense';
   var monthGuess = billingMonthGuess_(row.date);
+
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TRANSACTIONS_SHEET_NAME);
+  if (!sheet) throw new Error('Could not find a sheet tab named "' + TRANSACTIONS_SHEET_NAME + '".');
+
+  // Issue #51 (simplified): if this looks like the same real-world
+  // transaction as one the user already entered by hand, don't write a
+  // second row for it at all — see "THIRD KIND OF DUPLICATE" up top.
+  var matchedRow = findManualMatch_(sheet, headerMap, row.sof, amount, row.date, row.type);
+  if (matchedRow) {
+    Logger.log((dryRun ? '[DRY RUN] ' : '') + 'Skipping import for "' + row.payee + '" (' +
+        formatIdr_(amount) + ' ' + (row.type || 'Expense') + ', ' + row.sof +
+        ') — matches an existing manual entry at transactions row ' + matchedRow +
+        ' within ' + MATCH_WINDOW_DAYS + ' day(s); treating that manual row as the record of this ' +
+        'transaction and not importing a duplicate.');
+    return true; // handled: deliberately not written, not a failure
+  }
 
   var values = {
     'Payee': row.payee,
@@ -531,9 +635,6 @@ function writeRow_(row, headerMap, dryRun) {
     Logger.log('[DRY RUN] Would append row: ' + JSON.stringify(values));
     return true;
   }
-
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TRANSACTIONS_SHEET_NAME);
-  if (!sheet) throw new Error('Could not find a sheet tab named "' + TRANSACTIONS_SHEET_NAME + '".');
 
   var newRowIndex = sheet.getLastRow() + 1;
   Object.keys(values).forEach(function (header) {
