@@ -514,6 +514,8 @@ async function actionDetail(query, res) {
       transfer: r.isTransfer,
       paymentId: r.paymentId,
       pending: r.isPending,
+      matchId: r.matchId,
+      matchStatus: r.matchStatus,
     })),
     stats: {
       clearedTotal: Math.round(clearedTotal * 100) / 100,
