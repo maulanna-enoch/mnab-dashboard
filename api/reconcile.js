@@ -64,7 +64,18 @@ async function actionCalculate(body, res) {
   const sinceDate = account.lastReconciledThrough || new Date(0);
 
   const { matchedRows } = sumClearedTransactions(txnRows, account.name, sinceDate, asOfDate);
-  const { sum: cumulativeSum, count: cumulativeCount } = sumCumulativeClearedTransactions(txnRows, account.name, asOfDate);
+  const { sum: rawCumulativeSum, count: cumulativeCount } = sumCumulativeClearedTransactions(txnRows, account.name, asOfDate);
+  // The "Total" column (and therefore this cumulative sum) follows the same
+  // ledger convention for every account: Expense adds, Income subtracts --
+  // i.e. positive = "amount owed". That reads naturally for a credit card
+  // statement, but for a cash/bank account it means a healthy balance (more
+  // income than expense) comes out negative even though the user has money.
+  // Flip it to the asset-facing sign (positive = you have money) for cash
+  // accounts only, so the statement amount the user types in -- their real,
+  // positive bank balance -- compares correctly. Credit cards are left on
+  // the original "amount owed" convention.
+  const isCash = isCashAccountType(account.type);
+  const cumulativeSum = isCash ? round2(-rawCumulativeSum) : rawCumulativeSum;
 
   res.status(200).json({
     matchedCount: matchedRows.length,
@@ -105,7 +116,11 @@ async function actionConfirm(body, res) {
   const { map: txnMap, rows: txnRows } = await fetchTransactionsForReconcile(sheets);
   const sinceDate = account.lastReconciledThrough || new Date(0);
   const { matchedRows } = sumClearedTransactions(txnRows, account.name, sinceDate, asOfDate);
-  const { sum: cumulativeSum } = sumCumulativeClearedTransactions(txnRows, account.name, asOfDate);
+  const { sum: rawCumulativeSum } = sumCumulativeClearedTransactions(txnRows, account.name, asOfDate);
+  // Same asset-facing sign flip as actionCalculate (see its comment) --
+  // keep this in sync with what the client already showed/matched against.
+  const isCash = isCashAccountType(account.type);
+  const cumulativeSum = isCash ? round2(-rawCumulativeSum) : rawCumulativeSum;
 
   await markRowsReconciled(sheets, txnMap, matchedRows, asOfDate);
   await updateAccountLastReconciled(sheets, accountsColMap, account.rowNumber, asOfDate, numStatementAmount);
@@ -154,7 +169,10 @@ async function actionAddAdjustment(body, res) {
   const { map: txnMap, amountHeader, payeeHeader, rows: txnRows } = await fetchTransactionsForReconcile(sheets);
   const sinceDate = account.lastReconciledThrough || new Date(0);
   const { matchedRows } = sumClearedTransactions(txnRows, account.name, sinceDate, asOfDate);
-  const { sum: cumulativeSum } = sumCumulativeClearedTransactions(txnRows, account.name, asOfDate);
+  const { sum: rawCumulativeSum } = sumCumulativeClearedTransactions(txnRows, account.name, asOfDate);
+  // Same asset-facing sign flip as actionCalculate (see its comment).
+  const isCash = isCashAccountType(account.type);
+  const cumulativeSum = isCash ? round2(-rawCumulativeSum) : rawCumulativeSum;
 
   const delta = round2(numStatementAmount - cumulativeSum);
 
@@ -177,14 +195,19 @@ async function actionAddAdjustment(body, res) {
     return;
   }
 
-  const type = delta > 0 ? 'Expense' : 'Income';
+  // On the "amount owed" ledger convention (credit cards, unflipped), a
+  // positive delta means the statement is higher than what's logged -- an
+  // Expense is missing. On the flipped asset convention (cash accounts),
+  // a positive delta means the user has more money than what's logged --
+  // an Income is missing instead, so the mapping is swapped.
+  const type = isCash ? (delta > 0 ? 'Income' : 'Expense') : (delta > 0 ? 'Expense' : 'Income');
   const amount = Math.abs(delta);
   const newRowNumber = await appendAdjustmentRow(sheets, txnMap, amountHeader, payeeHeader, {
     account: account.name,
     type,
     amount,
     date: asOfDate,
-    isCash: isCashAccountType(account.type),
+    isCash,
   });
 
   const allRows = matchedRows.concat([newRowNumber]);
