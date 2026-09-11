@@ -26,6 +26,8 @@ module.exports = async (req, res) => {
         amount: r.amount,
         notes: r.notes,
         pending: r.isPending,
+        matchId: r.matchId,
+        matchStatus: r.matchStatus,
       })),
       updatedAt: new Date().toISOString(),
     });
