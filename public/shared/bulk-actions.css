@@ -1,0 +1,198 @@
+/* Shared multi-select + bulk-action bar (issue #78), used by both the
+ * Transactions page (mobile card list AND the wide-viewport table) and the
+ * Account detail page's transaction list (same two views). Pairs with
+ * shared/bulk-actions.js -- see that file's header comment for the JS-side
+ * API and the selection-persistence decision. Every class here is prefixed
+ * blk- so it can't collide with a host page's own styles.
+ *
+ * The checkbox itself (`.blk-check`) and the small row-restructuring classes
+ * (`.blk-row-check-wrap`, `.txn-row-main`) are also used directly in each
+ * page's own card-list markup, not just inside this file's own bar --
+ * that's why they're centralized here rather than duplicated per page.
+ */
+
+.blk-check {
+  width: 17px;
+  height: 17px;
+  cursor: pointer;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+.blk-check:disabled { cursor: default; opacity: 0.35; }
+
+/* Restructures a mobile `.txn-row` (display:flex; justify-content:space-between)
+ * to make room for a leading checkbox without disturbing the existing
+ * space-between layout of its two original children -- those get wrapped in
+ * `.txn-row-main` (flex:1, same space-between/align-items the row used to
+ * apply to itself directly) and the checkbox sits to its left. Both pages'
+ * `.txn-row.reconciled > div { opacity: 0.55 }` rule still matches
+ * `.txn-row-main` (still a direct `div` child), so reconciled dimming is
+ * unaffected; the checkbox itself (a `<label>`, not a `div`) stays fully
+ * opaque and tappable either way.
+ */
+.blk-row-check-wrap {
+  display: flex;
+  align-items: center;
+  padding-right: 12px;
+  flex-shrink: 0;
+}
+.txn-row-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
+/* -- "Select all" link row, mobile card list only -- the wide-viewport
+ * table gets a real header checkbox instead (built directly into each
+ * page's own <thead>); the card list has no header row to put one in, so
+ * this slim link-row stands in for it, same tri-state
+ * (none/some/all-selected) semantics. Hidden entirely when the list is
+ * empty -- each page's render function controls that. */
+.blk-select-all-row {
+  display: flex;
+  justify-content: flex-end;
+  margin: -6px 0 10px;
+}
+.blk-select-all-link {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-family: inherit;
+  cursor: pointer;
+  padding: 4px 2px;
+}
+.blk-select-all-link:hover { color: var(--text); }
+
+/* -- floating bulk-action bar -- fixed above shared/bottom-nav.js's bar,
+ * same "72px + safe-area-inset" clearance shared/transaction-form.css's FAB
+ * uses (see its own comment) so the two never overlap -- and in fact never
+ * both show at once, since each host page hides its FAB while any row is
+ * selected (see bulk-actions.js's onSelectionChange option). Same z-index
+ * as the FAB (11): above the nav bar (10), below the full Add/Edit sheet
+ * (12) so opening that still covers this.
+ */
+.blk-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(72px + env(safe-area-inset-bottom));
+  z-index: 11;
+  display: none;
+  /* Side gutter lives here as padding on the flex container, not as a
+     margin on `.blk-bar-inner` -- combining that child's own `width: 100%`
+     with a horizontal margin would add the two together and overflow the
+     container by 2x the margin instead of leaving a gutter (margins add on
+     top of a flex item's resolved width; they don't get subtracted from it
+     the way they would for a plain block element sized by `width: auto`). */
+  padding: 0 16px;
+  box-sizing: border-box;
+}
+.blk-bar.open { display: flex; justify-content: center; }
+.blk-bar-inner {
+  width: 100%;
+  max-width: var(--page-max-width, 420px);
+  background: var(--card);
+  border: 1px solid #2a2e37;
+  border-radius: 14px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  padding: 10px 12px;
+  box-sizing: border-box;
+}
+.blk-top-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.blk-close {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+  flex-shrink: 0;
+}
+.blk-close:hover { color: var(--text); }
+.blk-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  font-size: 0.85rem;
+}
+.blk-count { color: var(--text); font-weight: 600; white-space: nowrap; }
+.blk-net { white-space: nowrap; }
+.blk-net.positive { color: var(--accent); }
+.blk-net.negative { color: var(--negative); }
+
+.blk-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.blk-action-btn {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text);
+  border: 1px solid #2a2e37;
+  border-radius: 8px;
+  padding: 7px 11px;
+  font-size: 0.78rem;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.blk-action-btn:hover { background: rgba(255, 255, 255, 0.1); }
+.blk-action-btn:disabled { opacity: 0.5; cursor: default; }
+.blk-action-btn.danger { color: #f5a3a2; border-color: rgba(226, 75, 74, 0.5); }
+.blk-action-btn.danger:hover { background: rgba(226, 75, 74, 0.12); }
+
+.blk-input-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.blk-input-label { font-size: 0.78rem; color: var(--muted); white-space: nowrap; }
+.blk-input {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid #2a2e37;
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 0.85rem;
+  font-family: inherit;
+  color-scheme: dark;
+  flex: 1;
+  min-width: 0;
+}
+.blk-input-apply {
+  background: var(--accent);
+  color: #0f1115;
+  border: none;
+  border-radius: 8px;
+  padding: 7px 12px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.blk-input-apply:disabled { opacity: 0.6; cursor: default; }
+.blk-input-cancel {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid #2a2e37;
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 0.78rem;
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.blk-input-cancel:hover { color: var(--text); }

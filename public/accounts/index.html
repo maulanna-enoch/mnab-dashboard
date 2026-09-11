@@ -7,6 +7,7 @@
 <link rel="icon" type="image/png" href="/favicon.png" />
 <link rel="stylesheet" href="/shared/transaction-form.css" />
 <link rel="stylesheet" href="/shared/swipe-actions.css" />
+<link rel="stylesheet" href="/shared/bulk-actions.css" />
 <link rel="stylesheet" href="/shared/responsive.css" />
 <link rel="stylesheet" href="/shared/bottom-nav.css" />
 <style>
@@ -453,7 +454,9 @@
     .dtx-table td.dtx-truncate,
     .dtx-table th.dtx-truncate { overflow: hidden; text-overflow: ellipsis; }
     .dtx-table td.dtx-status-col,
-    .dtx-table th.dtx-status-col { text-align: center; padding-left: 4px; padding-right: 4px; }
+    .dtx-table th.dtx-status-col,
+    .dtx-table td.dtx-select-col,
+    .dtx-table th.dtx-select-col { text-align: center; padding-left: 4px; padding-right: 4px; }
     .dtx-table tbody tr { cursor: default; }
     .dtx-table tbody tr:hover { background: var(--card); }
     .dtx-table .dtx-amount.income { color: var(--accent); }
@@ -707,9 +710,18 @@
     </div>
   </div>
 
+  <!-- Multi-row select + bulk actions (issue #78) -- mirrors the
+       Transactions page's own "Select all" link/header-checkbox split; see
+       shared/bulk-actions.js's file-level comment for the persistence
+       decision and shared/bulk-actions.css for the styling. -->
+  <div class="blk-select-all-row" id="detail-select-all-row" style="display:none;">
+    <button type="button" class="blk-select-all-link" id="detail-select-all-link"></button>
+  </div>
+
   <div class="dtx-table-wrap">
     <table class="dtx-table" id="dtx-table">
       <colgroup id="dtx-colgroup">
+        <col data-col="select" style="width: 30px" /> <!-- Row select (issue #78) -->
         <col data-col="date" style="width: 90px" />    <!-- Date -->
         <col data-col="payee" style="width: 300px" />  <!-- Payee -->
         <col data-col="amount" style="width: 110px" /> <!-- Amount -->
@@ -720,6 +732,7 @@
       </colgroup>
       <thead>
         <tr>
+          <th data-col="select" class="dtx-select-col"><input type="checkbox" class="blk-check" id="dtx-select-all" title="Select all shown" /></th>
           <th data-sort="date" data-col="date">Date <span class="dtx-sort-arrow"></span></th>
           <th data-sort="payee" data-col="payee" class="dtx-truncate">Payee <span class="dtx-sort-arrow"></span></th>
           <th data-sort="amount" data-col="amount">Amount <span class="dtx-sort-arrow"></span></th>
@@ -736,6 +749,7 @@
 
 <div id="txf-root"></div>
 <div id="bnv-root"></div>
+<div id="blk-root"></div>
 
 <div class="rc-overlay" id="rc-overlay">
   <div class="rc-sheet">
@@ -858,6 +872,7 @@
 
 <script src="/shared/transaction-form.js"></script>
 <script src="/shared/swipe-actions.js"></script>
+<script src="/shared/bulk-actions.js"></script>
 <script src="/shared/bottom-nav.js"></script>
 <script src="/shared/keyboard-nav.js"></script>
 <script>
@@ -1087,6 +1102,11 @@
   const dtxTableBodyEl = document.getElementById('dtx-table-body');
   let dtxSort = { key: 'date', dir: 'desc' };
   let dtxLastVisible = [];
+  // Row numbers currently shown in the table AFTER its own filters (issue
+  // #78) -- the scope for its "select all" header checkbox. Excludes
+  // transfer-leg rows (see BulkSelect wiring in renderDetailTable) even
+  // when they'd otherwise match the filter -- those aren't bulk-selectable.
+  let dtxVisibleRowNumbers = [];
 
   // Column show/hide + draggable widths (issue #79-style), same rationale
   // as the Transactions page's own COLUMNS: Cleared stays fixed-width
@@ -1155,9 +1175,21 @@
   }
 
   function dtxVisibleColumnCount() {
-    // +2 for the always-visible Pending and trailing "open" columns, same
-    // convention as the Transactions page.
-    return DTX_COLUMNS.filter((c) => dtxColumnLayout.visible[c.key]).length + 2;
+    // +3 for the always-visible row-select (issue #78), Pending, and
+    // trailing "open" columns, same convention as the Transactions page.
+    return DTX_COLUMNS.filter((c) => dtxColumnLayout.visible[c.key]).length + 3;
+  }
+
+  // Row select (issue #78) -- reflects the header checkbox as
+  // checked/indeterminate/unchecked against dtxVisibleRowNumbers (this
+  // table's own filtered, non-transfer set).
+  function dtxUpdateSelectAllCheckbox() {
+    const cb = document.getElementById('dtx-select-all');
+    if (!cb) return;
+    const allSelected = BulkSelect.isAllVisibleSelected(dtxVisibleRowNumbers);
+    const someSelected = dtxVisibleRowNumbers.some((n) => BulkSelect.isSelected(n));
+    cb.checked = allSelected;
+    cb.indeterminate = someSelected && !allSelected;
   }
 
   const DTX_SORT_COLUMNS = [
@@ -1910,6 +1942,12 @@
     const todayStr = TransactionForm.todayISO();
     const rows = dtxSortRows(sourceList.filter(dtxMatchesFilters));
     dtxUpdateSortIndicators();
+    // Transfer legs (credit card payments) are excluded from bulk select
+    // entirely -- see the file-level note on renderDetailTxnList's checkbox
+    // wiring below for why (double-entry pairing an ordinary bulk
+    // delete/duplicate/date-change would silently break).
+    dtxVisibleRowNumbers = rows.filter((t) => !t.transfer).map((t) => t.rowNumber);
+    dtxUpdateSelectAllCheckbox();
 
     if (!rows.length) {
       dtxTableBodyEl.innerHTML = `<tr class="dtx-empty-row"><td colspan="${dtxVisibleColumnCount()}">No transactions match.</td></tr>`;
@@ -1935,8 +1973,19 @@
         t.reconciled ? 'dtx-reconciled-row' : '',
         isTransfer ? 'dtx-transfer-row' : '',
       ].filter(Boolean).join(' ');
+      // Transfer legs (issue #78) can't be bulk-selected -- see the
+      // dtxVisibleRowNumbers comment above renderDetailTable for why -- so
+      // their checkbox renders disabled rather than just omitted, matching
+      // the visual "this row works differently" language .dtx-transfer-row
+      // already uses elsewhere (the pencil button opens an undo-payment
+      // menu instead of the editor, no .dtx-editable cells, etc.).
+      const checkedAttr = BulkSelect.isSelected(t.rowNumber) ? 'checked' : '';
+      const selectCellHtml = isTransfer
+        ? `<input type="checkbox" class="blk-check" disabled title="Card payment legs can't be bulk-edited -- use this row's own undo option" />`
+        : `<input type="checkbox" class="blk-check dtx-row-check" data-row="${t.rowNumber}" ${checkedAttr} />`;
       return `
         <tr data-row="${t.rowNumber}" class="${rowClasses}">
+          <td class="dtx-select-col">${selectCellHtml}</td>
           <td class="${editableCls.trim()}" data-field="date">${t.date || ''}</td>
           <td class="dtx-truncate${editableCls}" data-field="payee" title="${payee.replace(/"/g, '&quot;')}">${payee}</td>
           <td class="dtx-amount${editableCls} ${isIncome ? 'income' : ''}" data-field="amount">${amountText}</td>
@@ -1956,6 +2005,15 @@
       row.querySelectorAll('td.dtx-editable').forEach((td) => {
         td.addEventListener('click', () => startDtxCellEdit(td, txn, td.dataset.field));
       });
+
+      const checkboxEl = row.querySelector('.dtx-row-check');
+      if (checkboxEl) {
+        checkboxEl.addEventListener('click', (e) => e.stopPropagation());
+        checkboxEl.addEventListener('change', () => {
+          BulkSelect.toggle(rowNumber);
+          renderDetailTxnList(currentAccountTxns); // keeps the mobile card list in sync too
+        });
+      }
 
       const statusTd = row.querySelector('td.dtx-status-col');
       statusTd.addEventListener('click', async (e) => {
@@ -2060,6 +2118,13 @@
     metaEl.innerHTML = `<div>${clearedLine}</div><div>${reconLine}</div>`;
 
     currentAccountTxns = data.transactions;
+    // Drops any selected rowNumber that isn't one of THIS account's rows --
+    // covers both "deleted elsewhere" and "switched to a different account"
+    // (rowNumber is a raw transactions-tab row index shared across every
+    // account, so a stale selection from another account's detail view
+    // naturally won't match here). See shared/bulk-actions.js's
+    // persistence-decision comment.
+    BulkSelect.pruneToExisting(currentAccountTxns.map((t) => t.rowNumber));
     renderDetailTxnList(currentAccountTxns);
     return data;
   }
@@ -2131,6 +2196,26 @@
     // own column filters/sort on top -- see renderDetailTable().
     renderDetailTable(visible);
 
+    // Multi-row select + bulk actions (issue #78) -- this view's own
+    // "select all" scope is `visible` (Upcoming/Pending-filtered), same
+    // convention as the Transactions page, and -- like the table -- never
+    // includes transfer legs (see renderDetailTable's comment on why).
+    const selectAllRow = document.getElementById('detail-select-all-row');
+    const selectAllLink = document.getElementById('detail-select-all-link');
+    const visibleRowNumbers = visible.filter((t) => !t.transfer).map((t) => t.rowNumber);
+    if (visibleRowNumbers.length) {
+      selectAllRow.style.display = 'flex';
+      const allSelected = BulkSelect.isAllVisibleSelected(visibleRowNumbers);
+      selectAllLink.textContent = allSelected ? 'Deselect all' : `Select all (${visibleRowNumbers.length})`;
+      selectAllLink.onclick = () => {
+        if (allSelected) BulkSelect.deselectAllVisible(visibleRowNumbers);
+        else BulkSelect.selectAllVisible(visibleRowNumbers);
+        renderDetailTxnList(currentAccountTxns);
+      };
+    } else {
+      selectAllRow.style.display = 'none';
+    }
+
     if (!visible.length) {
       listEl.innerHTML = '<div class="sub">No transactions for this account yet.</div>';
       return;
@@ -2156,14 +2241,23 @@
       const confirmHtml = t.pending
         ? `<button type="button" class="txn-confirm-btn" data-row="${t.rowNumber}">Confirm</button>`
         : '';
+      // Row select (issue #78) -- disabled (not omitted) for a transfer leg,
+      // same reasoning as the wide-viewport table's own selectCellHtml.
+      const checkedAttr = BulkSelect.isSelected(t.rowNumber) ? 'checked' : '';
+      const checkHtml = t.transfer
+        ? `<input type="checkbox" class="blk-check" disabled title="Card payment legs can't be bulk-edited -- use this row's own undo option" />`
+        : `<input type="checkbox" class="blk-check txn-row-check" data-row="${t.rowNumber}" ${checkedAttr} />`;
       const rowInner = `
-          <div>
-            <div class="txn-name">${t.payee}</div>
-            <div class="txn-meta">${metaBits.join(' &middot; ') || '&nbsp;'}</div>
-          </div>
-          <div class="txn-amount-block">
-            <div class="txn-amount ${isIncome ? 'income' : ''}">${amountText}</div>
-            ${confirmHtml}
+          <label class="blk-row-check-wrap">${checkHtml}</label>
+          <div class="txn-row-main">
+            <div>
+              <div class="txn-name">${t.payee}</div>
+              <div class="txn-meta">${metaBits.join(' &middot; ') || '&nbsp;'}</div>
+            </div>
+            <div class="txn-amount-block">
+              <div class="txn-amount ${isIncome ? 'income' : ''}">${amountText}</div>
+              ${confirmHtml}
+            </div>
           </div>
       `;
       html += SwipeActions.rowHTML(t.rowNumber, `txn-row ${t.reconciled ? 'reconciled' : ''} ${isUpcoming ? 'upcoming' : ''} ${t.pending ? 'pending' : ''}`, rowInner, t.isCleared, t.transfer);
@@ -2180,6 +2274,20 @@
         } else {
           TransactionForm.open(txn);
         }
+      });
+    });
+
+    // Row select (issue #78) -- stopPropagation keeps a checkbox tap from
+    // also bubbling to the row's own click listener above (which would open
+    // the edit sheet or the undo-payment menu), same convention as
+    // .txn-confirm-btn below. Only non-transfer rows get the live
+    // `.txn-row-check` class (a transfer row's checkbox above is rendered
+    // disabled with no data-row), so this only ever binds real ones.
+    listEl.querySelectorAll('.txn-row-check').forEach((cb) => {
+      cb.addEventListener('click', (e) => e.stopPropagation());
+      cb.addEventListener('change', () => {
+        BulkSelect.toggle(parseInt(cb.dataset.row, 10));
+        renderDetailTxnList(currentAccountTxns);
       });
     });
 
@@ -3167,6 +3275,116 @@
     renderDetailTable(dtxLastVisible);
   });
   dtxInitColumnControls();
+
+  // Multi-row select + bulk actions (issue #78), account-detail transaction
+  // list. Mirrors the Transactions page's own bulkUpdateRow/bulkOnAction
+  // (public/transactions/index.html) with two differences: rows come from
+  // `currentAccountTxns` instead of a flat `transactions` array, and the
+  // 'cleared' field is derived from `isCleared` (boolean here vs. this
+  // page's own string convention on the flat page). Transfer legs are
+  // never part of `rows` here -- their checkbox is rendered disabled (see
+  // renderDetailTable), so they can never end up selected in the first
+  // place -- meaning bulk delete on this page never needs the
+  // reconcile.js undo-payment path deleteDetailTxnViaSwipe uses for a
+  // single transfer leg.
+  async function bulkUpdateDetailRow(txn, overrides) {
+    const payload = {
+      rowNumber: txn.rowNumber,
+      payee: txn.payee,
+      type: txn.type,
+      sof: txn.sof,
+      amount: txn.amount,
+      date: txn.date,
+      month: txn.month,
+      notes: txn.notes,
+      cleared: txn.isCleared ? 'Cleared' : 'Uncleared',
+      ...overrides,
+    };
+    await apiPost('/api/transactions-update', payload);
+  }
+
+  async function bulkOnDetailAction(key, rowNumbers, inputValue) {
+    const rows = rowNumbers.map((n) => currentAccountTxns.find((t) => t.rowNumber === n)).filter(Boolean);
+    if (!rows.length) return;
+
+    if (key === 'delete') {
+      // Descending rowNumber order, one request at a time -- see
+      // shared/bulk-actions.js's file-level comment: deleting a sheet row
+      // shifts every row below it up by one, so ascending order (or
+      // parallel calls) would delete the wrong row for every rowNumber
+      // after the first.
+      const sorted = [...rows].sort((a, b) => b.rowNumber - a.rowNumber);
+      for (const txn of sorted) {
+        await apiPost('/api/transactions-delete', { rowNumber: txn.rowNumber });
+      }
+    } else if (key === 'duplicate') {
+      for (const txn of rows) {
+        await apiPost('/api/transactions-add', {
+          payee: txn.payee,
+          type: txn.type,
+          sof: txn.sof,
+          amount: txn.amount,
+          date: txn.date,
+          month: txn.month,
+          notes: txn.notes,
+          cleared: txn.isCleared ? 'Cleared' : 'Uncleared',
+          updatePayeeLocation: false,
+        });
+      }
+    } else if (key === 'confirm') {
+      for (const txn of rows) {
+        await apiPost('/api/transactions-update', { rowNumber: txn.rowNumber, action: 'confirmPending' });
+      }
+    } else if (key === 'clear' || key === 'unclear') {
+      const clearedValue = key === 'clear' ? 'Cleared' : 'Uncleared';
+      for (const txn of rows) {
+        await bulkUpdateDetailRow(txn, { cleared: clearedValue });
+      }
+    } else if (key === 'changeDate') {
+      for (const txn of rows) {
+        const month = TransactionForm.guessBillingMonth(inputValue, await dtxAccountIsCash(txn.sof));
+        await bulkUpdateDetailRow(txn, { date: inputValue, month });
+      }
+    } else if (key === 'changeBillingMonth') {
+      for (const txn of rows) {
+        await bulkUpdateDetailRow(txn, { month: inputValue });
+      }
+    }
+
+    await fetchAndRenderAccountDetail(currentAccount);
+  }
+
+  BulkSelect.mount(document.getElementById('blk-root'), {
+    getTxn: (rowNumber) => currentAccountTxns.find((t) => t.rowNumber === rowNumber),
+    formatAmount: formatIDR,
+    entityLabel: 'transaction',
+    entityLabelPlural: 'transactions',
+    actions: [
+      { key: 'delete', label: 'Delete', danger: true },
+      { key: 'clear', label: 'Clear' },
+      { key: 'unclear', label: 'Unclear' },
+      { key: 'duplicate', label: 'Duplicate' },
+      { key: 'confirm', label: 'Confirm' },
+      { key: 'changeDate', label: 'Change date', input: 'date' },
+      { key: 'changeBillingMonth', label: 'Change month', input: 'month' },
+    ],
+    onAction: bulkOnDetailAction,
+    // Cheap post-clear redraw (see shared/bulk-actions.js's comment on
+    // `refresh`) -- no refetch, just re-renders from `currentAccountTxns`,
+    // which fetchAndRenderAccountDetail() already refreshed a moment earlier.
+    refresh: () => renderDetailTxnList(currentAccountTxns),
+    // Hides the Add-transaction FAB while any row is selected -- same
+    // reasoning as the Transactions page (same bottom-corner clearance).
+    onSelectionChange: (active) => {
+      document.getElementById('txf-fab').style.display = active ? 'none' : '';
+    },
+  });
+
+  document.getElementById('dtx-select-all').addEventListener('change', (e) => {
+    if (e.target.checked) BulkSelect.selectAllVisible(dtxVisibleRowNumbers);
+    else BulkSelect.deselectAllVisible(dtxVisibleRowNumbers);
+    renderDetailTxnList(currentAccountTxns);
+  });
 
   TransactionForm.mount(document.getElementById('txf-root'), {
     supportEditDelete: true,

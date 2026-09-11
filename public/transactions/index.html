@@ -7,6 +7,7 @@
 <link rel="icon" type="image/png" href="/favicon.png" />
 <link rel="stylesheet" href="/shared/transaction-form.css" />
 <link rel="stylesheet" href="/shared/swipe-actions.css" />
+<link rel="stylesheet" href="/shared/bulk-actions.css" />
 <link rel="stylesheet" href="/shared/responsive.css" />
 <link rel="stylesheet" href="/shared/bottom-nav.css" />
 <style>
@@ -242,7 +243,9 @@
     .txt-table td.txt-truncate,
     .txt-table th.txt-truncate { overflow: hidden; text-overflow: ellipsis; }
     .txt-table td.txt-status-col,
-    .txt-table th.txt-status-col { text-align: center; padding-left: 4px; padding-right: 4px; }
+    .txt-table th.txt-status-col,
+    .txt-table td.txt-select-col,
+    .txt-table th.txt-select-col { text-align: center; padding-left: 4px; padding-right: 4px; }
     .txt-table tbody tr { cursor: default; }
     .txt-table tbody tr:hover { background: var(--card); }
     .txt-table .txt-amount.income { color: var(--accent); }
@@ -516,11 +519,21 @@
       </div>
     </div>
 
+    <!-- Multi-row select + bulk actions (issue #78) -- "Select all" link for
+         the mobile card list below; the wide-viewport table gets a real
+         header checkbox instead (in its own <thead>, see txt-select-col).
+         Both scope "select all" to whatever's currently visible in THEIR
+         OWN view -- see shared/bulk-actions.js's file-level comment. -->
+    <div class="blk-select-all-row" id="list-select-all-row" style="display:none;">
+      <button type="button" class="blk-select-all-link" id="list-select-all-link"></button>
+    </div>
+
     <div id="list"><div class="sub">Loading…</div></div>
 
     <div class="txt-table-wrap">
       <table class="txt-table" id="txt-table">
         <colgroup id="txt-colgroup">
+          <col data-col="select" style="width: 30px" /> <!-- Row select (issue #78) -->
           <col data-col="date" style="width: 90px" />   <!-- Date -->
           <col data-col="payee" style="width: 300px" />  <!-- Payee -->
           <col data-col="sof" style="width: 140px" />  <!-- Account -->
@@ -532,6 +545,7 @@
         </colgroup>
         <thead>
           <tr>
+            <th data-col="select" class="txt-select-col"><input type="checkbox" class="blk-check" id="txt-select-all" title="Select all shown" /></th>
             <th data-sort="date" data-col="date">Date <span class="txt-sort-arrow"></span></th>
             <th data-sort="payee" data-col="payee" class="txt-truncate">Payee <span class="txt-sort-arrow"></span></th>
             <th data-sort="sof" data-col="sof">Account <span class="txt-sort-arrow"></span></th>
@@ -546,6 +560,8 @@
       </table>
     </div>
   </div>
+
+  <div id="blk-root"></div>
 
   <div id="txf-root"></div>
   <div id="bnv-root"></div>
@@ -563,6 +579,7 @@
 
   <script src="/shared/transaction-form.js"></script>
   <script src="/shared/swipe-actions.js"></script>
+  <script src="/shared/bulk-actions.js"></script>
   <script src="/shared/bottom-nav.js"></script>
   <script src="/shared/keyboard-nav.js"></script>
   <script>
@@ -613,6 +630,13 @@
     const txtTableBodyEl = document.getElementById('txt-table-body');
     let txtSort = { key: 'date', dir: 'desc' };
     let txtLastVisible = [];
+    // Row numbers currently shown in the table AFTER its own filters (issue
+    // #78) -- the scope for the table's own "select all" header checkbox,
+    // which is deliberately narrower than txtLastVisible (that's only the
+    // Upcoming/Pending-filtered set the mobile list and table both start
+    // from; the table then applies its own search/account/type/date filters
+    // on top -- see txtMatchesFilters()).
+    let txtVisibleRowNumbers = [];
 
     // -- column show/hide + draggable column widths (issue #79) --
     // COLUMNS is the single source of truth for every data column the
@@ -705,11 +729,12 @@
     }
 
     function txtVisibleColumnCount() {
-      // +2 for the always-visible Pending (issue #49) and trailing "open
-      // full sheet" columns -- neither is part of COLUMNS/the issue #79
-      // show/hide picker (see the <colgroup> comment above), so they're
-      // never counted in the filter() below but always render.
-      return COLUMNS.filter((c) => txtColumnLayout.visible[c.key]).length + 2;
+      // +3 for the always-visible row-select (issue #78), Pending (issue
+      // #49), and trailing "open full sheet" columns -- none of these are
+      // part of COLUMNS/the issue #79 show/hide picker (see the <colgroup>
+      // comment above), so they're never counted in the filter() below but
+      // always render.
+      return COLUMNS.filter((c) => txtColumnLayout.visible[c.key]).length + 3;
     }
 
     // Sort-by dropdown mirrors exactly the columns whose header already
@@ -964,6 +989,8 @@
       const todayStr = TransactionForm.todayISO();
       const rows = txtSortRows(sourceList.filter(txtMatchesFilters));
       txtUpdateSortIndicators();
+      txtVisibleRowNumbers = rows.map((t) => t.rowNumber);
+      txtUpdateSelectAllCheckbox();
 
       if (!rows.length) {
         txtTableBodyEl.innerHTML = `<tr class="txt-empty-row"><td colspan="${txtVisibleColumnCount()}">No transactions match.</td></tr>`;
@@ -986,8 +1013,10 @@
         // with { action: 'confirmPending' } instead of resending the row.
         const pendingHtml = t.pending ? '<button type="button" class="txt-confirm-btn" title="Confirm this pending transaction">Confirm</button>' : '';
         const rowClasses = [isUpcoming ? 'txt-upcoming-row' : '', t.pending ? 'txt-pending-row' : ''].filter(Boolean).join(' ');
+        const checkedAttr = BulkSelect.isSelected(t.rowNumber) ? 'checked' : '';
         return `
           <tr data-row="${t.rowNumber}" class="${rowClasses}">
+            <td class="txt-select-col"><input type="checkbox" class="blk-check txt-row-check" data-row="${t.rowNumber}" ${checkedAttr} /></td>
             <td class="txt-editable" data-field="date">${t.date || ''}</td>
             <td class="txt-truncate txt-editable" data-field="payee" title="${payee.replace(/"/g, '&quot;')}">${payee}</td>
             <td class="txt-editable" data-field="sof">${t.sof || ''}</td>
@@ -1016,6 +1045,17 @@
 
         row.querySelectorAll('td.txt-editable').forEach((td) => {
           td.addEventListener('click', () => startCellEdit(td, txn, td.dataset.field));
+        });
+
+        // Row select (issue #78) -- stopPropagation isn't needed here (this
+        // table's rows have no click-to-edit handler of their own, unlike
+        // the mobile card list's .txn-row), but the checkbox click shouldn't
+        // fall through to anything else on the row either way.
+        const checkboxEl = row.querySelector('.txt-row-check');
+        checkboxEl.addEventListener('click', (e) => e.stopPropagation());
+        checkboxEl.addEventListener('change', () => {
+          BulkSelect.toggle(rowNumber);
+          renderList(); // keeps the mobile card list's checkboxes in sync too
         });
 
         const statusTd = row.querySelector('td.txt-status-col');
@@ -1078,6 +1118,20 @@
           });
         }
       });
+    }
+
+    // Row select (issue #78) -- reflects the table's own header checkbox as
+    // checked (every currently-filtered row selected), indeterminate (some
+    // but not all), or plain unchecked, scoped to txtVisibleRowNumbers (this
+    // table's OWN filtered set, not the mobile list's -- see that variable's
+    // comment above).
+    function txtUpdateSelectAllCheckbox() {
+      const cb = document.getElementById('txt-select-all');
+      if (!cb) return;
+      const allSelected = BulkSelect.isAllVisibleSelected(txtVisibleRowNumbers);
+      const someSelected = txtVisibleRowNumbers.some((n) => BulkSelect.isSelected(n));
+      cb.checked = allSelected;
+      cb.indeterminate = someSelected && !allSelected;
     }
 
     // Issue #49: sets Pending=FALSE for one row via the lightweight
@@ -1802,6 +1856,148 @@
     BottomNav.mount(document.getElementById('bnv-root'), { active: 'transactions' });
     KeyboardNav.mount();
 
+    // Multi-row select + bulk actions (issue #78). Sends the whole row back
+    // for every write except 'delete' and 'confirm', same
+    // resend-the-full-row convention every other write in this file already
+    // follows (transactions-update rewrites the whole row) -- `overrides`
+    // is spread over a snapshot of the row's own current fields.
+    async function bulkUpdateRow(txn, overrides) {
+      const payload = {
+        rowNumber: txn.rowNumber,
+        payee: txn.payee,
+        type: txn.type,
+        sof: txn.sof,
+        amount: txn.amount,
+        date: txn.date,
+        month: txn.month,
+        notes: txn.notes,
+        cleared: txn.cleared,
+        ...overrides,
+      };
+      const res = await fetch('/api/transactions-update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+    }
+
+    async function bulkOnAction(key, rowNumbers, inputValue) {
+      const rows = rowNumbers.map((n) => transactions.find((t) => t.rowNumber === n)).filter(Boolean);
+      if (!rows.length) return;
+
+      if (key === 'delete') {
+        // Descending rowNumber order, one request at a time -- see
+        // shared/bulk-actions.js's file-level comment on why: deleting a
+        // sheet row shifts every row below it up by one, so ascending order
+        // (or parallel calls) would delete the wrong row for every
+        // rowNumber after the first.
+        const sorted = [...rows].sort((a, b) => b.rowNumber - a.rowNumber);
+        for (const txn of sorted) {
+          const res = await fetch('/api/transactions-delete', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rowNumber: txn.rowNumber }),
+          });
+          const data = await res.json();
+          if (data.error) throw new Error(data.error);
+        }
+      } else if (key === 'duplicate') {
+        // Literal copy -- every field (including Cleared) carries over
+        // unchanged. Sequential, not parallel, so one failure partway
+        // through leaves a clean, easy-to-explain boundary ("first N
+        // succeeded") rather than a pile of in-flight requests racing the
+        // Sheets API.
+        for (const txn of rows) {
+          const res = await fetch('/api/transactions-add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              payee: txn.payee,
+              type: txn.type,
+              sof: txn.sof,
+              amount: txn.amount,
+              date: txn.date,
+              month: txn.month,
+              notes: txn.notes,
+              cleared: txn.cleared,
+              updatePayeeLocation: false,
+            }),
+          });
+          const data = await res.json();
+          if (data.error) throw new Error(data.error);
+        }
+      } else if (key === 'confirm') {
+        // Lightweight action (issue #49) -- a no-op for a row that's
+        // already not pending, so it's safe to run over the whole selection
+        // regardless of which selected rows actually have something to confirm.
+        for (const txn of rows) {
+          const res = await fetch('/api/transactions-update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ rowNumber: txn.rowNumber, action: 'confirmPending' }),
+          });
+          const data = await res.json();
+          if (data.error) throw new Error(data.error);
+        }
+      } else if (key === 'clear' || key === 'unclear') {
+        const clearedValue = key === 'clear' ? 'Cleared' : 'Uncleared';
+        for (const txn of rows) {
+          await bulkUpdateRow(txn, { cleared: clearedValue });
+        }
+      } else if (key === 'changeDate') {
+        // Re-guesses the billing month from the new date, same heuristic
+        // (and same per-row cash-vs-credit-card branch) the Add/Edit sheet
+        // and the inline cell editor both use -- see
+        // TransactionForm.guessBillingMonth() and txtAccountIsCash().
+        for (const txn of rows) {
+          const month = TransactionForm.guessBillingMonth(inputValue, txtAccountIsCash(txn.sof));
+          await bulkUpdateRow(txn, { date: inputValue, month });
+        }
+      } else if (key === 'changeBillingMonth') {
+        for (const txn of rows) {
+          await bulkUpdateRow(txn, { month: inputValue });
+        }
+      }
+
+      await loadTransactions();
+    }
+
+    BulkSelect.mount(document.getElementById('blk-root'), {
+      getTxn: (rowNumber) => transactions.find((t) => t.rowNumber === rowNumber),
+      formatAmount: formatIDR,
+      entityLabel: 'transaction',
+      entityLabelPlural: 'transactions',
+      actions: [
+        { key: 'delete', label: 'Delete', danger: true },
+        { key: 'clear', label: 'Clear' },
+        { key: 'unclear', label: 'Unclear' },
+        { key: 'duplicate', label: 'Duplicate' },
+        { key: 'confirm', label: 'Confirm' },
+        { key: 'changeDate', label: 'Change date', input: 'date' },
+        { key: 'changeBillingMonth', label: 'Change month', input: 'month' },
+      ],
+      onAction: bulkOnAction,
+      // Cheap post-clear redraw (see shared/bulk-actions.js's comment on
+      // `refresh`) -- no refetch, just re-renders from the `transactions`
+      // array loadTransactions() already refreshed a moment earlier.
+      refresh: () => renderList(),
+      // Hides the Add-transaction FAB while any row is selected -- it sits
+      // in the same bottom-right corner the bulk bar's own bottom edge
+      // occupies (see bulk-actions.css's clearance comment), so the two
+      // must never show at once.
+      onSelectionChange: (active) => {
+        document.getElementById('txf-fab').style.display = active ? 'none' : '';
+      },
+    });
+
+    document.getElementById('txt-select-all').addEventListener('change', (e) => {
+      if (e.target.checked) BulkSelect.selectAllVisible(txtVisibleRowNumbers);
+      else BulkSelect.deselectAllVisible(txtVisibleRowNumbers);
+      renderList();
+    });
+
     async function loadTransactions() {
       const listEl = document.getElementById('list');
       listEl.innerHTML = '<div class="sub">Loading…</div>';
@@ -1810,6 +2006,11 @@
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         transactions = data.transactions;
+        // Drops any selected rowNumber no longer present in the fresh data
+        // (e.g. deleted by the bulk action that just triggered this reload,
+        // or by something else entirely) -- see shared/bulk-actions.js's
+        // persistence-decision comment.
+        BulkSelect.pruneToExisting(transactions.map((t) => t.rowNumber));
         renderList();
       } catch (err) {
         listEl.innerHTML = `<span class="error">${err.message}</span>`;
@@ -1863,6 +2064,26 @@
       // column filters/sort on top -- see renderTable().
       renderTable(visible);
 
+      // Multi-row select + bulk actions (issue #78) -- the mobile list's own
+      // "select all" scope, deliberately the Upcoming/Pending-filtered
+      // `visible` list (this view's own idea of "currently shown"), not the
+      // table's further-filtered txtVisibleRowNumbers.
+      const listSelectAllRow = document.getElementById('list-select-all-row');
+      const listSelectAllLink = document.getElementById('list-select-all-link');
+      const visibleRowNumbers = visible.map((t) => t.rowNumber);
+      if (visibleRowNumbers.length) {
+        listSelectAllRow.style.display = 'flex';
+        const allSelected = BulkSelect.isAllVisibleSelected(visibleRowNumbers);
+        listSelectAllLink.textContent = allSelected ? 'Deselect all' : `Select all (${visibleRowNumbers.length})`;
+        listSelectAllLink.onclick = () => {
+          if (allSelected) BulkSelect.deselectAllVisible(visibleRowNumbers);
+          else BulkSelect.selectAllVisible(visibleRowNumbers);
+          renderList();
+        };
+      } else {
+        listSelectAllRow.style.display = 'none';
+      }
+
       if (!visible.length) {
         listEl.innerHTML = '<div class="sub">No transactions yet. Tap + to add one.</div>';
         return;
@@ -1888,14 +2109,18 @@
         const confirmHtml = t.pending
           ? `<button type="button" class="txn-confirm-btn" data-row="${t.rowNumber}">Confirm</button>`
           : '';
+        const checkedAttr = BulkSelect.isSelected(t.rowNumber) ? 'checked' : '';
         const rowInner = `
-            <div>
-              <div class="txn-name">${t.payee}</div>
-              <div class="txn-meta">${metaBits.join(' &middot; ')}</div>
-            </div>
-            <div class="txn-amount-block">
-              <div class="txn-amount ${isIncome ? 'income' : ''}">${amountText}</div>
-              ${confirmHtml}
+            <label class="blk-row-check-wrap"><input type="checkbox" class="blk-check txn-row-check" data-row="${t.rowNumber}" ${checkedAttr} /></label>
+            <div class="txn-row-main">
+              <div>
+                <div class="txn-name">${t.payee}</div>
+                <div class="txn-meta">${metaBits.join(' &middot; ')}</div>
+              </div>
+              <div class="txn-amount-block">
+                <div class="txn-amount ${isIncome ? 'income' : ''}">${amountText}</div>
+                ${confirmHtml}
+              </div>
             </div>
         `;
         html += SwipeActions.rowHTML(t.rowNumber, `txn-row ${isUpcoming ? 'upcoming' : ''} ${t.pending ? 'pending' : ''}`, rowInner, t.cleared === 'Cleared');
@@ -1907,6 +2132,17 @@
           const rowNumber = parseInt(row.closest('.swx-wrap').dataset.row, 10);
           const txn = transactions.find((t) => t.rowNumber === rowNumber);
           if (txn) TransactionForm.open(txn);
+        });
+      });
+
+      // Row select (issue #78) -- stopPropagation keeps a checkbox tap from
+      // also bubbling to the row's own click listener above (which would
+      // open the full edit sheet), same convention as .txn-confirm-btn below.
+      document.querySelectorAll('.txn-row-check').forEach((cb) => {
+        cb.addEventListener('click', (e) => e.stopPropagation());
+        cb.addEventListener('change', () => {
+          BulkSelect.toggle(parseInt(cb.dataset.row, 10));
+          renderList();
         });
       });
 
