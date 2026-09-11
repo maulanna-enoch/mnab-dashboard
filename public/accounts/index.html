@@ -484,9 +484,17 @@
        undo-payment menu for a transfer row.
        -- keyboard whole-row editing (issue #86 keyboard follow-up, mirrors
        the Transactions page's own txtKbd* system) -- Down/Up highlights a
-       row, Enter opens every editable field at once, Tab/Shift-Tab cycles
-       between them, Enter saves the whole row and Escape discards it. See
-       the dtxKbd* functions in the script section below. */
+       row, Space (always) or Enter (only with nothing multi-selected) opens
+       every editable field at once, Tab/Shift-Tab cycles between them,
+       Enter saves the whole row and Escape discards it. See the dtxKbd*
+       functions in the script section below.
+       -- multi-select keyboard bindings (issue #78 follow-up) -- S toggles
+       the highlighted row's checkbox without leaving highlight-nav mode
+       (transfer legs excluded, same as the checkbox itself). Once 1+ rows
+       are selected, C/Backspace/Enter are reinterpreted as the bulk Clear/
+       Delete/Confirm actions instead -- see shared/bulk-actions.js's own
+       keydown listener, which also drives U/D/H/M and the button
+       affordances. */
     .dtx-table td.dtx-editable { cursor: text; }
     .dtx-table td.dtx-editable:hover { background: rgba(255, 255, 255, 0.06); }
     .dtx-table td.dtx-status-col { cursor: pointer; }
@@ -1384,6 +1392,18 @@
   // (the same showConfirm-sheet-then-delete path the mobile card list's
   // Backspace shortcut already uses), just pointed at this table's own
   // highlight state instead of the card list's.
+  //
+  // -- multi-select keyboard bindings (issue #78 follow-up) --
+  // S toggles the highlighted row into/out of the shared BulkSelect set
+  // without leaving highlight-nav mode (transfer legs excluded -- same rows
+  // the checkbox itself already disables). Once 1+ rows are selected,
+  // C/Backspace/Enter stop meaning clear/delete/edit-row and instead back
+  // off (see the bulkActive checks in the document keydown listener below)
+  // so shared/bulk-actions.js's own keydown listener can run the bulk
+  // Clear/Delete/Confirm actions instead; that module also owns the rest of
+  // the bulk hotkeys (U, D, H, M) and the underlined-letter/glyph button
+  // affordances. Space is unaffected either way -- it always opens the row
+  // for inline editing, selected or not.
   const DTX_KBD_FIELDS = ['date', 'payee', 'amount', 'cleared', 'notes'];
   let dtxKbdHighlightIndex = -1;
   let dtxKbdEditRowNumber = null; // rowNumber currently open for row-edit, or null
@@ -3077,6 +3097,19 @@
     return currentAccountTxns.find((t) => t.rowNumber === rowNumber) || null;
   }
 
+  // Mobile-list counterpart to dtxRestoreHighlightByRowNumber above -- no
+  // equivalent existed before the multi-select keyboard bindings (issue #78
+  // follow-up) because nothing previously needed to survive a
+  // renderDetailTxnList() rebuild by rowNumber; the S select-toggle does.
+  function restoreTxnHighlightByRowNumber(rowNumber) {
+    if (rowNumber == null) return;
+    const idx = txnRowEls().findIndex((r) => {
+      const wrap = r.closest('.swx-wrap');
+      return wrap && parseInt(wrap.dataset.row, 10) === rowNumber;
+    });
+    if (idx !== -1) setTxnHighlight(idx);
+  }
+
   // Marks the highlighted row as busy (or reverts it) while a keyboard-
   // triggered C/Backspace action is in flight, so a slow clear/delete
   // doesn't look like the keypress was dropped. Swaps the row's meta line
@@ -3176,6 +3209,12 @@
     if (!onDetail) return;
 
     const key = e.key.toLowerCase();
+    // Once 1+ rows are selected, several keys are reinterpreted as bulk
+    // actions instead -- see shared/bulk-actions.js's own keydown listener,
+    // which actually handles them. The row-nav branches below just need to
+    // back off (still calling preventDefault) rather than run their
+    // single-row behavior. Up/Down/S keep working identically either way.
+    const bulkActive = BulkSelect.count() > 0;
     if (key === 'r') {
       e.preventDefault();
       openReconcile();
@@ -3199,7 +3238,16 @@
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
         setDtxHighlight(dtxKbdHighlightIndex - 1);
-      } else if (e.key === 'Enter' || e.key === ' ') {
+      } else if (key === 's') {
+        const txn = dtxCurrentHighlightedTxn();
+        if (!txn || txn.transfer) return; // transfer legs are excluded from bulk-select entirely (disabled checkbox)
+        e.preventDefault();
+        const rowNumber = txn.rowNumber;
+        BulkSelect.toggle(rowNumber);
+        renderDetailTable(dtxLastVisible);
+        dtxRestoreHighlightByRowNumber(rowNumber);
+      } else if (e.key === 'Enter') {
+        if (bulkActive) { e.preventDefault(); return; } // handled by bulk-actions.js (Confirm)
         const txn = dtxCurrentHighlightedTxn();
         if (!txn) return;
         e.preventDefault();
@@ -3208,7 +3256,16 @@
         // button and the mobile card list's own Enter behavior.
         if (txn.transfer) openUndoPaymentMenu(txn);
         else startDtxKbdEdit(txn);
+      } else if (e.key === ' ') {
+        // Spacebar always edits in-line, selected or not -- only Enter is
+        // reclaimed for bulk Confirm.
+        const txn = dtxCurrentHighlightedTxn();
+        if (!txn) return;
+        e.preventDefault();
+        if (txn.transfer) openUndoPaymentMenu(txn);
+        else startDtxKbdEdit(txn);
       } else if (key === 'c') {
+        if (bulkActive) { e.preventDefault(); return; } // handled by bulk-actions.js (Clear)
         const txn = dtxCurrentHighlightedTxn();
         if (!txn || dtxKbdClearing) return;
         e.preventDefault();
@@ -3217,6 +3274,7 @@
         if (txn.transfer) return;
         dtxKbdHandleClear(txn);
       } else if (e.key === 'Backspace') {
+        if (bulkActive) { e.preventDefault(); return; } // handled by bulk-actions.js (Delete)
         const txn = dtxCurrentHighlightedTxn();
         if (!txn || dtxKbdDeleting) return;
         e.preventDefault();
@@ -3228,13 +3286,31 @@
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
       setTxnHighlight(txnHighlightIndex - 1);
-    } else if (e.key === 'Enter' || e.key === ' ') {
+    } else if (key === 's') {
+      const txn = currentHighlightedTxn();
+      if (!txn || txn.transfer) return; // transfer legs are excluded from bulk-select entirely (disabled checkbox)
+      e.preventDefault();
+      const rowNumber = txn.rowNumber;
+      BulkSelect.toggle(rowNumber);
+      renderDetailTxnList(currentAccountTxns);
+      restoreTxnHighlightByRowNumber(rowNumber);
+    } else if (e.key === 'Enter') {
+      if (bulkActive) { e.preventDefault(); return; } // handled by bulk-actions.js (Confirm)
+      const txn = currentHighlightedTxn();
+      if (!txn) return;
+      e.preventDefault();
+      if (txn.transfer) openUndoPaymentMenu(txn);
+      else TransactionForm.open(txn);
+    } else if (e.key === ' ') {
+      // Spacebar always edits in-line, selected or not -- only Enter is
+      // reclaimed for bulk Confirm.
       const txn = currentHighlightedTxn();
       if (!txn) return;
       e.preventDefault();
       if (txn.transfer) openUndoPaymentMenu(txn);
       else TransactionForm.open(txn);
     } else if (key === 'c') {
+      if (bulkActive) { e.preventDefault(); return; } // handled by bulk-actions.js (Clear)
       const txn = currentHighlightedTxn();
       if (!txn || kbdActionBusy) return;
       e.preventDefault();
@@ -3248,6 +3324,7 @@
         })
         .finally(() => { kbdActionBusy = false; });
     } else if (e.key === 'Backspace') {
+      if (bulkActive) { e.preventDefault(); return; } // handled by bulk-actions.js (Delete)
       const txn = currentHighlightedTxn();
       if (!txn || kbdActionBusy) return;
       e.preventDefault();
@@ -3360,13 +3437,13 @@
     entityLabel: 'transaction',
     entityLabelPlural: 'transactions',
     actions: [
-      { key: 'delete', label: 'Delete', danger: true },
-      { key: 'clear', label: 'Clear' },
-      { key: 'unclear', label: 'Unclear' },
-      { key: 'duplicate', label: 'Duplicate' },
-      { key: 'confirm', label: 'Confirm' },
-      { key: 'changeDate', label: 'Change date', input: 'date' },
-      { key: 'changeBillingMonth', label: 'Change month', input: 'month' },
+      { key: 'delete', label: 'Delete', danger: true, hotkey: 'Backspace', hotkeySymbol: '⌫' },
+      { key: 'clear', label: 'Clear', hotkey: 'c' },
+      { key: 'unclear', label: 'Unclear', hotkey: 'u' },
+      { key: 'duplicate', label: 'Duplicate', hotkey: 'd' },
+      { key: 'confirm', label: 'Confirm', hotkey: 'Enter', hotkeySymbol: '✓' },
+      { key: 'changeDate', label: 'Change date', input: 'date', hotkey: 'h' },
+      { key: 'changeBillingMonth', label: 'Change month', input: 'month', hotkey: 'm' },
     ],
     onAction: bulkOnDetailAction,
     // Cheap post-clear redraw (see shared/bulk-actions.js's comment on

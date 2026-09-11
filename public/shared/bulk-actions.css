@@ -73,6 +73,16 @@
  * selected (see bulk-actions.js's onSelectionChange option). Same z-index
  * as the FAB (11): above the nav bar (10), below the full Add/Edit sheet
  * (12) so opening that still covers this.
+ *
+ * Uses its own `.blk-active` class for "visible", NOT the app-wide `.open`
+ * convention every real modal/sheet uses (Add/Edit transaction, reconcile,
+ * the confirm dialogs, etc.) -- every page's document keydown handler
+ * treats `document.querySelector('.open')` as "something owns the
+ * keyboard, back off", which is correct for an actual modal but wrong
+ * here: this bar is a persistent, non-blocking part of the page, and the
+ * whole point of the keyboard bindings below is that Up/Down/S/etc. keep
+ * working while it's showing. `.blk-confirm-overlay` further down IS a
+ * real modal and deliberately keeps `.open`.
  */
 .blk-bar {
   position: fixed;
@@ -90,7 +100,7 @@
   padding: 0 16px;
   box-sizing: border-box;
 }
-.blk-bar.open { display: flex; justify-content: center; }
+.blk-bar.blk-active { display: flex; justify-content: center; }
 .blk-bar-inner {
   width: 100%;
   max-width: var(--page-max-width, 420px);
@@ -196,3 +206,80 @@
   white-space: nowrap;
 }
 .blk-input-cancel:hover { color: var(--text); }
+
+/* A bulk-action button's keyboard shortcut is shown as an underlined
+ * letter in its own label (see bulk-actions.js's underlineLetter()) --
+ * except Delete (Backspace) and Confirm (Enter), where the shortcut isn't
+ * a letter in the word at all, so underlining one would be misleading.
+ * Those get this small glyph appended instead. */
+.blk-hotkey-symbol {
+  margin-left: 4px;
+  opacity: 0.7;
+  font-size: 0.95em;
+}
+
+/* -- bulk-delete confirmation --
+ * Mirrors the Transactions page's own single-row `.txt-kbd-confirm-overlay`
+ * (issue #101) look-for-look -- same backdrop, sheet, and D-confirms/
+ * C-cancels mnemonic convention -- so a keyboard-driven bulk delete reads
+ * identically to a keyboard-driven single-row delete. Built once here,
+ * shared by both host pages, since bulk-actions.js is already the single
+ * place that owns the "danger" confirmation for every bulk action.
+ * Genuinely modal, so unlike `.blk-bar` above this DOES use the app-wide
+ * `.open` convention -- every page's "a sheet owns the keyboard" guard
+ * needs to see it and back off.
+ */
+.blk-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  z-index: 40;
+  /* Gutter as padding on the overlay, not a margin on `.blk-confirm-sheet`
+     -- same flex-width-plus-margin overflow reasoning as `.blk-bar` above
+     (the source dialog this mirrors has that exact margin-based bug on its
+     own sheet; not repeating it here). */
+  padding: 0 16px;
+  box-sizing: border-box;
+}
+.blk-confirm-overlay.open { display: flex; }
+.blk-confirm-sheet {
+  width: 100%;
+  max-width: 360px;
+  background: var(--card);
+  border-radius: 14px;
+  padding: 20px 18px;
+  box-sizing: border-box;
+}
+.blk-confirm-message {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin: 0 0 18px;
+}
+.blk-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+.blk-confirm-btn {
+  border: none;
+  border-radius: 8px;
+  padding: 8px 16px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.blk-confirm-btn u { text-underline-offset: 2px; }
+.blk-confirm-cancel {
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid #2a2e37;
+}
+.blk-confirm-cancel:hover { color: var(--text); }
+.blk-confirm-yes {
+  background: #e24b4a;
+  color: #fff;
+}
