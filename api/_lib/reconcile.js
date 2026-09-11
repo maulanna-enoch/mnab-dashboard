@@ -712,19 +712,29 @@ async function deletePaymentRows(sheets, paymentId) {
   return { deletedCount: rowNumbers.length, cardAccount, month };
 }
 
-async function updateAccountLastReconciled(sheets, accountsMap, rowNumber, asOfDate, statementAmount) {
+async function updateAccountLastReconciled(sheets, accountsMap, rowNumber, asOfDate, statementAmount, isCash) {
   requireColumns(accountsMap, 'Accounts', ['Last Reconciled Through', 'Last Reconciled Statement']);
   const throughColIndex = accountsMap['Last Reconciled Through'];
   const throughCol = columnLetter(throughColIndex);
   const stmtCol = columnLetter(accountsMap['Last Reconciled Statement']);
   const spreadsheetId = process.env.SHEET_ID;
+  // `statementAmount` is the raw value the user typed / that's logged in the
+  // Reconciliations tab: positive = "have money" for cash accounts (see
+  // actionCalculate's comment), positive = "amount owed" for credit cards.
+  // The Accounts tab's "Last Reconciled Statement" cell, though, is meant to
+  // read as a plain balance regardless of account type -- positive = you
+  // have that much, negative = you owe it. Cash accounts already match that
+  // convention as typed; credit cards don't, so flip the sign for this cell
+  // only. Nothing else (the Reconciliations log, the API response, the
+  // reconcile-screen math) is affected -- only what lands in this one cell.
+  const accountsTabAmount = isCash ? statementAmount : -statementAmount;
   await sheets.spreadsheets.values.batchUpdate({
     spreadsheetId,
     requestBody: {
       valueInputOption: 'RAW',
       data: [
         { range: `${RECONCILE_SHEETS.accounts}!${throughCol}${rowNumber}`, values: [[dateToSerial(asOfDate)]] },
-        { range: `${RECONCILE_SHEETS.accounts}!${stmtCol}${rowNumber}`, values: [[statementAmount]] },
+        { range: `${RECONCILE_SHEETS.accounts}!${stmtCol}${rowNumber}`, values: [[accountsTabAmount]] },
       ],
     },
   });

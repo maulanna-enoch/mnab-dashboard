@@ -123,7 +123,7 @@ async function actionConfirm(body, res) {
   const cumulativeSum = isCash ? round2(-rawCumulativeSum) : rawCumulativeSum;
 
   await markRowsReconciled(sheets, txnMap, matchedRows, asOfDate);
-  await updateAccountLastReconciled(sheets, accountsColMap, account.rowNumber, asOfDate, numStatementAmount);
+  await updateAccountLastReconciled(sheets, accountsColMap, account.rowNumber, asOfDate, numStatementAmount, isCash);
   await logReconciliation(sheets, {
     account: account.name,
     periodStart: sinceDate,
@@ -178,7 +178,7 @@ async function actionAddAdjustment(body, res) {
 
   if (delta === 0) {
     await markRowsReconciled(sheets, txnMap, matchedRows, asOfDate);
-    await updateAccountLastReconciled(sheets, accountsColMap, account.rowNumber, asOfDate, numStatementAmount);
+    await updateAccountLastReconciled(sheets, accountsColMap, account.rowNumber, asOfDate, numStatementAmount, isCash);
     await logReconciliation(sheets, {
       account: account.name,
       periodStart: sinceDate,
@@ -212,7 +212,7 @@ async function actionAddAdjustment(body, res) {
 
   const allRows = matchedRows.concat([newRowNumber]);
   await markRowsReconciled(sheets, txnMap, allRows, asOfDate);
-  await updateAccountLastReconciled(sheets, accountsColMap, account.rowNumber, asOfDate, numStatementAmount);
+  await updateAccountLastReconciled(sheets, accountsColMap, account.rowNumber, asOfDate, numStatementAmount, isCash);
   await logReconciliation(sheets, {
     account: account.name,
     periodStart: sinceDate,
@@ -663,7 +663,7 @@ async function actionUndo(body, res) {
   }
 
   if (previousEntry) {
-    await updateAccountLastReconciled(sheets, accountsColMap, account.rowNumber, previousEntry.periodEnd, previousEntry.statementAmount);
+    await updateAccountLastReconciled(sheets, accountsColMap, account.rowNumber, previousEntry.periodEnd, previousEntry.statementAmount, isCashAccountType(account.type));
   } else {
     await clearAccountLastReconciled(sheets, accountsColMap, account.rowNumber);
   }
