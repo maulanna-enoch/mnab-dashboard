@@ -3465,13 +3465,14 @@
 
   TransactionForm.mount(document.getElementById('txf-root'), {
     supportEditDelete: true,
+    // Default new transactions' SOF to the account currently being viewed
+    // (issue: was only wired to the FAB's click listener, so it missed the
+    // "N" hardware-keyboard shortcut on wider/desktop viewports -- reading
+    // currentAccount here means TransactionForm.open() applies it uniformly
+    // regardless of how the Add sheet was opened).
+    getDefaultSof: () => currentAccount || null,
     onSaved: () => { if (currentAccount) fetchAndRenderAccountDetail(currentAccount); },
     onDeleted: () => { if (currentAccount) fetchAndRenderAccountDetail(currentAccount); },
-  });
-
-  document.getElementById('txf-fab').addEventListener('click', () => {
-    const sofEl = document.getElementById('txf-f-sof');
-    if (sofEl && currentAccount) sofEl.value = currentAccount;
   });
 
   BottomNav.mount(document.getElementById('bnv-root'), { active: 'accounts' });

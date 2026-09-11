@@ -381,6 +381,18 @@
       state.editingRow = null;
       state.sheetTitle.textContent = 'Add transaction';
       state.payeeEl.value = '';
+      // Default the Source of Funds to whatever the host page says is
+      // currently being viewed (e.g. the account detail screen on the
+      // Accounts page), via the getDefaultSof() option -- applied here in
+      // open() itself, not by a page-level click listener on the FAB, so it
+      // covers every way an add-transaction sheet can be opened (FAB tap,
+      // the "N" hardware-keyboard shortcut below, or any future trigger)
+      // and every viewport uniformly. Falls back to leaving the field as-is
+      // when the page doesn't supply one or has nothing to default to yet.
+      const defaultSof = typeof state.options.getDefaultSof === 'function'
+        ? state.options.getDefaultSof()
+        : null;
+      if (defaultSof) state.sofEl.value = defaultSof;
       state.amountInput.value = opts.prefillAmount != null
         ? formatAmountDisplay(digitsOnly(String(opts.prefillAmount)))
         : '';
