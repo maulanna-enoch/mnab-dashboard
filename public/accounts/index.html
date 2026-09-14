@@ -3485,6 +3485,7 @@
     getDefaultSof: () => currentAccount || null,
     onSaved: () => { if (currentAccount) fetchAndRenderAccountDetail(currentAccount); },
     onDeleted: () => { if (currentAccount) fetchAndRenderAccountDetail(currentAccount); },
+    onMatchResolved: () => { if (currentAccount) fetchAndRenderAccountDetail(currentAccount); },
   });
 
   BottomNav.mount(document.getElementById('bnv-root'), { active: 'accounts' });
