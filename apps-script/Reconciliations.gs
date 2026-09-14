@@ -273,7 +273,8 @@ function buildDialogHtml(accounts) {
         resultEl.innerHTML =
           '<div class="row"><b>Book balance (through ' + asOfDate + ')</b><b>' + r.cumulativeSum.toLocaleString() + '</b></div>' +
           '<p class="muted" style="margin:2px 0 8px;">Every Cleared transaction on this account through this date, reconciled or not &mdash; compare this against what your bank/card statement shows.</p>' +
-          '<div class="row"><span>New since ' + r.sinceDateLabel + '</span><span>' + r.matchedCount + ' txn(s)</span></div>';
+          '<div class="row"><span>Last reconciled through</span><span>' + r.sinceDateLabel + '</span></div>' +
+          '<div class="row"><span>Will be marked reconciled</span><span>' + r.matchedCount + ' txn(s)</span></div>';
 
         const amountBlock = document.getElementById('amountBlock');
         amountBlock.style.display = 'block';
@@ -507,12 +508,17 @@ function buildDialogHtml(accounts) {
     if (!monthStr) { alert('Pick a billing month.'); return; }
     if (isNaN(amount) || amount <= 0) { alert('Enter a positive amount.'); return; }
 
-    const tooOld = lastCalc.sinceDateIso && dateStr <= lastCalc.sinceDateIso;
-    const tooNew = dateStr > lastCalc.asOfDate;
-    if (tooOld || tooNew) {
-      const windowLabel = (lastCalc.sinceDateIso || '(beginning)') + ' \\u2192 ' + lastCalc.asOfDate;
+    // Only a FUTURE date is a problem now. There used to be a tooOld check
+    // here too (date <= the last-reconciled-through date), back when the
+    // confirm step refused to mark anything below that bound -- adding such a
+    // row would have moved the book balance without ever being markable. The
+    // bound is gone (see sumClearedTransactions below), so a back-dated row
+    // now reconciles like any other and needs no warning. A date after the
+    // as-of date still counts toward neither figure.
+    if (dateStr > lastCalc.asOfDate) {
       const proceed = confirm(
-        'This date is outside the current reconciliation window (' + windowLabel + ').\\n\\n' +
+        "This date is after the as-of date you're reconciling to (" + lastCalc.asOfDate + "), " +
+        "so it won't count toward this reconciliation.\\n\\n" +
         'Add it anyway?'
       );
       if (!proceed) return;
@@ -708,7 +714,7 @@ function rc_getSystemTotal(accountName, asOfDateStr) {
     if (!asOfDate) return { error: 'Invalid date.' };
 
     const sinceDate = account.lastReconciledThrough || new Date(0);
-    const { matchedRows, sum } = sumClearedTransactions(ss, account.name, sinceDate, asOfDate);
+    const { matchedRows, sum } = sumClearedTransactions(ss, account.name, asOfDate);
     const { sum: cumulativeSum, count: cumulativeCount } = sumCumulativeClearedTransactions(
       ss,
       account.name,
@@ -898,7 +904,6 @@ function rc_confirmReconcile(accountName, asOfDateStr, statementAmount) {
     const { matchedRows, txnSheet, colIndex } = sumClearedTransactions(
       ss,
       account.name,
-      sinceDate,
       asOfDate
     );
     const { sum: cumulativeSum } = sumCumulativeClearedTransactions(ss, account.name, asOfDate);
@@ -938,7 +943,6 @@ function rc_insertAdjustmentAndReconcile(accountName, asOfDateStr, statementAmou
     const { matchedRows, txnSheet, colIndex } = sumClearedTransactions(
       ss,
       account.name,
-      sinceDate,
       asOfDate
     );
     const { sum: cumulativeSum } = sumCumulativeClearedTransactions(ss, account.name, asOfDate);
@@ -1176,7 +1180,26 @@ function payeeHeaderName(colIndex) {
   return null;
 }
 
-function sumClearedTransactions(ss, accountName, sinceDate, asOfDate) {
+/**
+ * Every Cleared, not-yet-reconciled transaction on this account through
+ * asOfDate -- the set that actually gets marked Reconciled=true on confirm.
+ *
+ * Deliberately has NO lower date bound. It used to skip anything dated on or
+ * before the account's "Last Reconciled Through" date, on the assumption that
+ * such a row must already have been covered by the previous reconciliation.
+ * That assumption is wrong in a very ordinary case: a transaction that was
+ * still *uncleared* when the account was last reconciled (so it was never
+ * matched then) and only cleared afterwards -- including every row
+ * rc_getUnclearedTransactions offers the "clear existing transactions"
+ * option, which has no lower bound either. sumCumulativeClearedTransactions
+ * below (the book balance the user compares against their statement) counts
+ * those rows in full, so the totals match, the user confirms, and the row
+ * silently never gets Reconciled=true -- and never could, since the bound
+ * only moves forward. The marked set must be the same set the compared
+ * balance was built from; the only difference between the two is that this
+ * one skips rows already flagged Reconciled.
+ */
+function sumClearedTransactions(ss, accountName, asOfDate) {
   const txnSheet = ss.getSheetByName(RECONCILE_CONFIG.transactionsSheet);
   if (!txnSheet) throw new Error(`Couldn't find sheet "${RECONCILE_CONFIG.transactionsSheet}"`);
 
@@ -1212,7 +1235,6 @@ function sumClearedTransactions(ss, accountName, sinceDate, asOfDate) {
 
     const date = row[colIndex['Date']];
     if (!(date instanceof Date)) return;
-    if (date <= sinceDate) return; // already covered by a previous reconciliation
     if (date > asOfDate) return; // belongs to a future cycle
 
     const amount = Number(row[colIndex[amountHeader]]) || 0;
@@ -1230,8 +1252,8 @@ function sumClearedTransactions(ss, accountName, sinceDate, asOfDate) {
  * a bank/card statement actually shows -- statements don't know or care
  * about this sheet's internal "Reconciled" bookkeeping flag, they just show
  * the running balance of everything that's cleared. Used as the primary
- * comparison figure; sumClearedTransactions()'s incremental, unreconciled-
- * only figure remains what actually drives which rows get marked
+ * comparison figure; sumClearedTransactions()'s unreconciled-only subset of
+ * this same set is what actually drives which rows get marked
  * Reconciled=true.
  */
 function sumCumulativeClearedTransactions(ss, accountName, asOfDate) {

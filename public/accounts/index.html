@@ -777,7 +777,8 @@
     <div id="rc-result-box" class="rc-result-box" style="display:none;">
       <div class="rc-row"><b>Book balance (through <span id="rc-result-date"></span>)</b><b id="rc-result-sum"></b></div>
       <p class="rc-hint">Every Cleared transaction on this account through this date, reconciled or not — compare this against what your bank/card statement shows.</p>
-      <div class="rc-row"><span>New since <span id="rc-since-label"></span></span><span id="rc-matched-count"></span></div>
+      <div class="rc-row"><span>Last reconciled through</span><span id="rc-since-label"></span></div>
+      <div class="rc-row"><span>Will be marked reconciled</span><span id="rc-matched-count"></span></div>
     </div>
 
     <div id="rc-compare-box" class="rc-result-box" style="display:none;"></div>
@@ -2520,7 +2521,6 @@
       cumulativeSum: calc.cumulativeSum,
       matchedCount: calc.matchedCount,
       sinceDateLabel: calc.sinceDateLabel,
-      sinceDateIso: calc.sinceDateIso,
     };
 
     document.getElementById('rc-result-date').textContent = asOfDate;
@@ -2791,14 +2791,18 @@
     if (!monthStr) { showAlert('Pick a billing month.'); return; }
     if (isNaN(amount) || amount <= 0) { showAlert('Enter a positive amount.'); return; }
 
-    const tooOld = rcState.sinceDateIso && dateStr <= rcState.sinceDateIso;
-    const tooNew = dateStr > rcState.asOfDate;
-    if (tooOld || tooNew) {
-      const windowLabel = (rcState.sinceDateIso || '(beginning)') + ' → ' + rcState.asOfDate;
+    // Only a FUTURE date is a problem now. There used to be a `tooOld` check
+    // here too (date <= the last-reconciled-through date), back when the
+    // confirm step refused to mark anything below that bound -- adding such a
+    // row would have moved the book balance without ever being markable. The
+    // bound is gone (see sumClearedTransactions in api/_lib/reconcile.js), so
+    // a back-dated row now reconciles like any other and needs no warning.
+    // A date after the as-of date still counts toward neither figure.
+    if (dateStr > rcState.asOfDate) {
       showConfirm(
-        `This date is outside the current reconciliation window (${windowLabel}).\n\nAdd it anyway?`,
+        `This date is after the as-of date you're reconciling to (${rcState.asOfDate}), so it won't count toward this reconciliation.\n\nAdd it anyway?`,
         () => rcDoSaveTransaction(name, dateStr, monthStr, amount),
-        { title: 'Outside reconciliation window', confirmLabel: 'Add anyway' }
+        { title: 'After the as-of date', confirmLabel: 'Add anyway' }
       );
       return;
     }

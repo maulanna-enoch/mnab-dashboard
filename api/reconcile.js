@@ -63,7 +63,7 @@ async function actionCalculate(body, res) {
   const { rows: txnRows } = await fetchTransactionsForReconcile(sheets);
   const sinceDate = account.lastReconciledThrough || new Date(0);
 
-  const { matchedRows } = sumClearedTransactions(txnRows, account.name, sinceDate, asOfDate);
+  const { matchedRows } = sumClearedTransactions(txnRows, account.name, asOfDate);
   const { sum: rawCumulativeSum, count: cumulativeCount } = sumCumulativeClearedTransactions(txnRows, account.name, asOfDate);
   // The "Total" column (and therefore this cumulative sum) follows the same
   // ledger convention for every account: Expense adds, Income subtracts --
@@ -115,7 +115,7 @@ async function actionConfirm(body, res) {
 
   const { map: txnMap, rows: txnRows } = await fetchTransactionsForReconcile(sheets);
   const sinceDate = account.lastReconciledThrough || new Date(0);
-  const { matchedRows } = sumClearedTransactions(txnRows, account.name, sinceDate, asOfDate);
+  const { matchedRows } = sumClearedTransactions(txnRows, account.name, asOfDate);
   const { sum: rawCumulativeSum } = sumCumulativeClearedTransactions(txnRows, account.name, asOfDate);
   // Same asset-facing sign flip as actionCalculate (see its comment) --
   // keep this in sync with what the client already showed/matched against.
@@ -168,7 +168,7 @@ async function actionAddAdjustment(body, res) {
 
   const { map: txnMap, amountHeader, payeeHeader, rows: txnRows } = await fetchTransactionsForReconcile(sheets);
   const sinceDate = account.lastReconciledThrough || new Date(0);
-  const { matchedRows } = sumClearedTransactions(txnRows, account.name, sinceDate, asOfDate);
+  const { matchedRows } = sumClearedTransactions(txnRows, account.name, asOfDate);
   const { sum: rawCumulativeSum } = sumCumulativeClearedTransactions(txnRows, account.name, asOfDate);
   // Same asset-facing sign flip as actionCalculate (see its comment).
   const isCash = isCashAccountType(account.type);

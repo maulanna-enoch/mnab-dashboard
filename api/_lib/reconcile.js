@@ -239,10 +239,24 @@ async function fetchTransactionsForReconcile(sheets) {
   return { map, amountHeader, payeeHeader, rows };
 }
 
-// Incremental sum: Cleared, not-yet-reconciled transactions on this account
-// since it was last reconciled -- the set that actually gets marked
-// Reconciled=true on confirm.
-function sumClearedTransactions(txnRows, accountName, sinceDate, asOfDate) {
+// Every Cleared, not-yet-reconciled transaction on this account through
+// asOfDate -- the set that actually gets marked Reconciled=true on confirm.
+//
+// Deliberately has NO lower date bound. It used to skip anything dated on or
+// before the account's "Last Reconciled Through" date, on the assumption that
+// such a row must already have been covered by the previous reconciliation.
+// That assumption is wrong in a very ordinary case: a transaction that was
+// still *uncleared* when the account was last reconciled (so it was never
+// matched then) and only cleared afterwards -- including every row the
+// reconcile screen's own "Clear existing transactions" option offers, which
+// has no lower bound either. sumCumulativeClearedTransactions below (the book
+// balance the user actually compares against their statement) counts those
+// rows in full, so the totals would match, the user would hit "Confirm &
+// Reconcile", and the row would silently never get Reconciled=true -- and
+// never could, since the bound only moves forward. The marked set must be the
+// same set the compared balance was built from; the only difference between
+// the two is that this one skips rows already flagged Reconciled.
+function sumClearedTransactions(txnRows, accountName, asOfDate) {
   let sum = 0;
   const matchedRows = [];
   txnRows.forEach((r) => {
@@ -250,7 +264,6 @@ function sumClearedTransactions(txnRows, accountName, sinceDate, asOfDate) {
     if (!r.isCleared) return;
     if (r.isReconciled) return;
     if (!r.date) return;
-    if (r.date <= sinceDate) return;
     if (r.date > asOfDate) return;
     sum += r.amount;
     matchedRows.push(r.rowNumber);
