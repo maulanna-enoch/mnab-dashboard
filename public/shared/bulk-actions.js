@@ -87,6 +87,13 @@
  * reason -- this module only ever sees rowNumbers the host already handed
  * it via toggle()/selectAllVisible(), never a "currently highlighted" row.
  *
+ * A module that has no single-row meaning for these keys at all can ask
+ * instead of hard-coding them: `BulkSelect.ownsKey(event)` answers "is the
+ * bar showing AND is this one of its hotkeys?". shared/keyboard-nav.js uses
+ * it so its H/B/T/A page-nav yields H to "Change date" while rows are
+ * selected -- and automatically yields any future hotkey a host adds to its
+ * `actions` config. See ownsKey() below.
+ *
  * Bulk delete's own confirmation (see confirmDanger() below) replaces a
  * plain browser confirm() with a custom dialog matching the D-confirms/
  * C-cancels mnemonic convention the Transactions page's single-row delete
@@ -394,6 +401,31 @@
     return e.key.length === 1 && e.key.toLowerCase() === hotkey.toLowerCase();
   }
 
+  // Whether this keydown currently BELONGS to the bulk bar -- the bar is
+  // showing (count() > 0) and the key is one of its action hotkeys.
+  //
+  // Host pages hard-code their own `BulkSelect.count() > 0` checks for the
+  // three keys they share with this module (C/Backspace/Enter), because
+  // those keys mean something to them either way. shared/keyboard-nav.js is
+  // the opposite case: H/B/T/A are page navigation and have nothing to do
+  // with selection, so it can't know that "Change date" happens to be bound
+  // to H. Without this, pressing H with rows selected fired BOTH -- the bar
+  // opened its date input and the page navigated to Home out from under it,
+  // dropping the selection. (preventDefault() in the listener below doesn't
+  // help: both are document-level listeners, so they each still run.)
+  //
+  // Deliberately still true while state.busy or a modal is up, even though
+  // the listener below declines to act then -- "the bar owns this key right
+  // now" is the question being answered, and navigating away mid-action
+  // would be worse than doing nothing. Which keys those are comes from the
+  // host's own `actions` config, so a hotkey added there is covered here
+  // automatically.
+  function ownsKey(e) {
+    if (!state || count() === 0) return false;
+    if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return false;
+    return state.options.actions.some((a) => hotkeyMatches(a.hotkey, e));
+  }
+
   // Registered once, at module load -- mount() only ever runs once per
   // page, so there's no risk of this piling up duplicate listeners. Only
   // acts once count() > 0 (see the file-level "Keyboard bindings" comment
@@ -429,5 +461,6 @@
     selectedRowNumbers,
     pruneToExisting,
     update,
+    ownsKey,
   };
 })(window);

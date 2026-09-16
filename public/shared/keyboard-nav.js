@@ -16,6 +16,10 @@
  * shared `.open` convention (Add/Edit transaction, reconcile, payment,
  * confirm dialogs, etc.) is open, so a hotkey press mid-form can't
  * navigate away and silently drop unsaved input.
+ *
+ * Also skipped for whichever of these letters the bulk action bar has
+ * reclaimed while rows are multi-selected -- today just H, which the bar
+ * binds to "Change date". See the BulkSelect.ownsKey() call in mount().
  */
 (function (global) {
   const ROUTES = { h: '/', b: '/installments', t: '/transactions', a: '/accounts' };
@@ -44,6 +48,20 @@
       if (isTextField) return;
 
       if (document.querySelector('.open')) return; // a sheet/overlay/modal owns the keyboard right now
+
+      // Multi-select mode reclaims some of these letters. The bulk action
+      // bar (shared/bulk-actions.js) binds "Change date" to H, which
+      // collides with Home here -- and since both listeners live on
+      // `document`, its preventDefault() doesn't stop this one, so pressing
+      // H with rows selected used to open the date input AND navigate away,
+      // losing the selection. Ask the bar which keys are currently its own
+      // rather than hard-coding H: that keeps this file ignorant of the
+      // bar's hotkey list, and covers any hotkey added there later. Only
+      // the colliding key yields -- B/T/A still navigate while rows are
+      // selected, and H is Home again the moment nothing is selected.
+      // BulkSelect is absent on pages that don't load bulk-actions.js
+      // (home, bills, payees), hence the guard.
+      if (global.BulkSelect && global.BulkSelect.ownsKey(e)) return;
 
       if (normalizePath(window.location.pathname) === normalizePath(href)) return; // already there
 
