@@ -216,6 +216,11 @@ async function fetchTransactionsForReconcile(sheets) {
     // sheet that's never run that script, in which case every row just
     // reads as not-pending.
     const pendingRaw = map['Pending'] !== undefined ? row[map['Pending']] : undefined;
+    // Match ID / Match Status: self-provisioned by EmailImport.gs (issue
+    // #51) -- same defensive read as Transfer/Payment ID/Pending above, may
+    // not exist yet on a sheet that's never had an import propose a match.
+    const matchIdRaw = map['Match ID'] !== undefined ? row[map['Match ID']] : undefined;
+    const matchStatusRaw = map['Match Status'] !== undefined ? row[map['Match Status']] : undefined;
     return {
       rowNumber: i + 2,
       sof: sofRaw ? String(sofRaw).trim() : '',
@@ -233,6 +238,8 @@ async function fetchTransactionsForReconcile(sheets) {
       isTransfer: transferRaw === true || transferRaw === 'TRUE' || transferRaw === 'true',
       paymentId: paymentIdRaw ? String(paymentIdRaw).trim() : null,
       isPending: pendingRaw === true || pendingRaw === 'TRUE' || pendingRaw === 'true',
+      matchId: matchIdRaw ? String(matchIdRaw).trim() : null,
+      matchStatus: matchStatusRaw ? String(matchStatusRaw).trim() : null,
     };
   });
 

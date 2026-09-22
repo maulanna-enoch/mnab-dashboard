@@ -217,6 +217,11 @@ async function fetchTransactionRows() {
   const headerMap = await getHeaderMap(sheets, spreadsheetId, 'transactions');
   const pendingIdx = headerMap['Pending'];
   const hasPendingColumn = pendingIdx !== undefined;
+  // Match ID / Match Status: self-provisioned by EmailImport.gs (issue #51)
+  // once an import proposes a match against a manual entry -- same
+  // graceful-fallback convention as Pending above (defaults to "no match").
+  const matchIdIdx = headerMap['Match ID'];
+  const matchStatusIdx = headerMap['Match Status'];
 
   // Columns: Payee, Income/Expense, SOF, Date, Month, Cleared, Amount,
   // Expense, Income, Total, Notes. rowNumber (1-based sheet row, accounting
@@ -250,6 +255,8 @@ async function fetchTransactionRows() {
     const notes = row[10] || '';
     const pendingRaw = hasPendingColumn ? row[pendingIdx] : undefined;
     const isPending = pendingRaw === true || pendingRaw === 'TRUE' || pendingRaw === 'true';
+    const matchIdRaw = matchIdIdx !== undefined ? row[matchIdIdx] : undefined;
+    const matchStatusRaw = matchStatusIdx !== undefined ? row[matchStatusIdx] : undefined;
 
     result.push({
       rowNumber: i + 2,
@@ -264,6 +271,8 @@ async function fetchTransactionRows() {
       amount,
       notes,
       isPending,
+      matchId: matchIdRaw ? String(matchIdRaw).trim() : null,
+      matchStatus: matchStatusRaw ? String(matchStatusRaw).trim() : null,
     });
   });
 

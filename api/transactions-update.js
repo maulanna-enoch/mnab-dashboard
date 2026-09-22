@@ -1,4 +1,50 @@
-const { getWriteSheetsClient, buildTransactionRow, dateToSerial, getHeaderMap, columnLetter, upsertPayee } = require('./_lib/sheets');
+const { getWriteSheetsClient, buildTransactionRow, dateToSerial, getHeaderMap, columnLetter, upsertPayee, getSheetGridId } = require('./_lib/sheets');
+
+// Issue #51: finds every row on `transactions` currently stamped with
+// `matchId` (self-provisioned "Match ID"/"Match Status" columns -- see
+// EmailImport.gs). Returns null if the sheet has no Match ID column at all
+// (nothing to resolve). Used by both confirmMatch and unmatchMatch below.
+async function findMatchRows(sheets, spreadsheetId, headerMap, matchId) {
+  if (headerMap['Match ID'] === undefined) return null;
+  const matchIdCol = headerMap['Match ID'];
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: 'transactions!A2:Z',
+    valueRenderOption: 'UNFORMATTED_VALUE',
+  });
+  const values = response.data.values || [];
+  const pendingCol = headerMap['Pending'];
+  const rows = [];
+  values.forEach((row, i) => {
+    if (String(row[matchIdCol] || '').trim() !== String(matchId).trim()) return;
+    const pendingRaw = pendingCol !== undefined ? row[pendingCol] : undefined;
+    const isPending = pendingRaw === true || pendingRaw === 'TRUE' || pendingRaw === 'true';
+    rows.push({ rowNumber: i + 2, isPending });
+  });
+  return rows;
+}
+
+// Clears the Match ID / Match Status columns (blank, not deleted) on every
+// row number given -- used to detach rows from a resolved match without
+// touching anything else about them.
+async function clearMatchColumns(sheets, spreadsheetId, headerMap, rowNumbers) {
+  const matchIdCol = columnLetter(headerMap['Match ID']);
+  const data = rowNumbers.map((rowNumber) => ({
+    range: `transactions!${matchIdCol}${rowNumber}`,
+    values: [['']],
+  }));
+  if (headerMap['Match Status'] !== undefined) {
+    const matchStatusCol = columnLetter(headerMap['Match Status']);
+    rowNumbers.forEach((rowNumber) => {
+      data.push({ range: `transactions!${matchStatusCol}${rowNumber}`, values: [['']] });
+    });
+  }
+  if (!data.length) return;
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId,
+    requestBody: { valueInputOption: 'RAW', data },
+  });
+}
 
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
@@ -7,7 +53,76 @@ module.exports = async (req, res) => {
   }
 
   try {
-    const { rowNumber, payee, type, sof, date, month, cleared, amount, notes, action, lat, lon, updatePayeeLocation } = req.body || {};
+    const { rowNumber, payee, type, sof, date, month, cleared, amount, notes, action, lat, lon, updatePayeeLocation, matchId } = req.body || {};
+
+    // Issue #51: user declines a proposed match ("not the same transaction")
+    // -- clears the Match ID/Status off every row sharing it (normally the
+    // imported leg and the manual leg), leaving both rows otherwise
+    // untouched and fully independent again. Graceful no-op if there's no
+    // Match ID column yet, or nothing currently carries this matchId.
+    if (action === 'unmatchMatch') {
+      if (!matchId) {
+        res.status(400).json({ error: 'Missing required field: matchId' });
+        return;
+      }
+      const sheets = getWriteSheetsClient();
+      const spreadsheetId = process.env.SHEET_ID;
+      const headerMap = await getHeaderMap(sheets, spreadsheetId, 'transactions');
+      const matchRows = await findMatchRows(sheets, spreadsheetId, headerMap, matchId);
+      if (matchRows && matchRows.length) {
+        await clearMatchColumns(sheets, spreadsheetId, headerMap, matchRows.map((r) => r.rowNumber));
+      }
+      res.status(200).json({ ok: true, updatedAt: new Date().toISOString() });
+      return;
+    }
+
+    // Issue #51: user confirms a proposed match ("yes, same transaction") --
+    // in this MVP phase the auto-imported leg (Pending=true) is deleted
+    // outright and the surviving manually-entered row has its Match ID/
+    // Status cleared, going back to being a normal, unflagged transaction.
+    // Mirrors deletePaymentRows' find-by-shared-ID-then-delete pattern in
+    // api/_lib/reconcile.js. Graceful no-op if there's no Match ID column,
+    // nothing currently carries this matchId, or (defensively) neither row
+    // in the pair turns out to be the pending/imported leg.
+    if (action === 'confirmMatch') {
+      if (!matchId) {
+        res.status(400).json({ error: 'Missing required field: matchId' });
+        return;
+      }
+      const sheets = getWriteSheetsClient();
+      const spreadsheetId = process.env.SHEET_ID;
+      const headerMap = await getHeaderMap(sheets, spreadsheetId, 'transactions');
+      const matchRows = await findMatchRows(sheets, spreadsheetId, headerMap, matchId);
+      if (matchRows && matchRows.length) {
+        const importedRows = matchRows.filter((r) => r.isPending);
+        const survivingRows = matchRows.filter((r) => !r.isPending);
+
+        if (importedRows.length) {
+          const gridId = await getSheetGridId(sheets, spreadsheetId, 'transactions');
+          // Highest row number first so deleting one doesn't shift the
+          // row-number of another still waiting to be deleted.
+          const toDelete = importedRows.map((r) => r.rowNumber).sort((a, b) => b - a);
+          for (const rn of toDelete) {
+            await sheets.spreadsheets.batchUpdate({
+              spreadsheetId,
+              requestBody: {
+                requests: [{
+                  deleteDimension: {
+                    range: { sheetId: gridId, dimension: 'ROWS', startIndex: rn - 1, endIndex: rn },
+                  },
+                }],
+              },
+            });
+          }
+        }
+
+        if (survivingRows.length) {
+          await clearMatchColumns(sheets, spreadsheetId, headerMap, survivingRows.map((r) => r.rowNumber));
+        }
+      }
+      res.status(200).json({ ok: true, updatedAt: new Date().toISOString() });
+      return;
+    }
 
     // Lightweight "confirm pending" action (issue #49) -- flips just the
     // Pending column to FALSE for one row (the "Pending -> Uncleared" step
