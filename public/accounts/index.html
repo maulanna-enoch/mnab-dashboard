@@ -339,6 +339,28 @@
   .rc-money-block .txf-amount-currency,
   .rc-money-block .txf-amount-input { font-variant-numeric: tabular-nums; }
   .rc-money-block .txf-amount-input { font-size: 26px; }
+  /* Sign toggle under the amount. The active button's colour is set
+     inline by rcApplyStatementStyle() so it echoes the amount itself
+     rather than the generic accent -- see that function for why the same
+     sign is green on one account type and red on the other.
+     Both selectors are doubled up (.rc-toggle-row.rc-sign-row) on purpose:
+     the generic .rc-toggle-row / .rc-toggle-btn rules are declared further
+     down this stylesheet, so at equal specificity they would win on source
+     order and undo the sizing here. */
+  .rc-toggle-row.rc-sign-row { max-width: 132px; margin: 6px auto 10px; gap: 6px; }
+  .rc-toggle-btn.rc-sign-btn { padding: 4px 0; font-size: 15px; line-height: 1.3; }
+  /* The Add-transaction FAB renders above this page's sheets and overlaps
+     their bottom-right corner, so hide it while any of them is open
+     (Reconcile, Add Payment, undo-last-reconciliation, the confirm modal).
+     Kept in CSS, keyed off the overlay's own `.open` class, rather than
+     toggling style.display in every open and close function -- the
+     bulk-selection bar already shows and hides this same button via
+     onSelectionChange, and two owners of one inline style fight each other
+     (closing a sheet would restore a FAB the selection bar wanted hidden).
+     A browser without :has() just keeps the old behaviour.
+     NB: no star-slash inside a CSS comment -- it ends the comment and eats
+     the rule below, which is exactly what happened on the first attempt. */
+  body:has(.rc-overlay.open) .txf-fab { display: none; }
   .rc-hint { font-size: 10.5px; color: var(--muted); margin: 4px 0 0; line-height: 1.4; }
   .rc-result-box {
     margin-top: 14px;
@@ -810,6 +832,10 @@
         </div>
         <div class="txf-amount-rule"></div>
       </label>
+      <div class="rc-toggle-row rc-sign-row">
+        <button type="button" class="rc-toggle-btn rc-sign-btn active" id="rc-sign-plus" aria-pressed="true" aria-label="Positive — debit" onclick="rcSetStatementSign(1)">+</button>
+        <button type="button" class="rc-toggle-btn rc-sign-btn" id="rc-sign-minus" aria-pressed="false" aria-label="Negative — credit" onclick="rcSetStatementSign(-1)">−</button>
+      </div>
       <p class="rc-hint" id="rc-amount-hint" style="text-align:center;">&nbsp;</p>
       <button class="btn btn-primary btn-block" style="margin-top:12px;" onclick="rcCalculate()">Calculate system total</button>
     </div>
@@ -2937,15 +2963,21 @@
   }
 
   // ---- Reconcile sheet: statement amount --------------------------------
+  // Leading-minus test shared by the formatter and the parser below. U+2212
+  // is accepted alongside ASCII '-' because the sign toggle's own label is a
+  // typographic minus, so that character comes back on a copy-paste round
+  // trip; everything downstream normalises to ASCII.
+  function isNegativeAmountInput(str) {
+    return /^[-\u2212]/.test(String(str == null ? '' : str).trim());
+  }
   // Signed variant of digitsOnly/formatAmountDisplay above. The statement
   // amount is the only amount input in the app that can legitimately be
   // negative (a credit card sitting in credit, an overdrawn cash account),
   // so a single leading minus survives instead of being stripped. Integer
   // rupiah only, same as every other amount field.
   function formatSignedAmountInput(str) {
-    const s = String(str == null ? '' : str);
-    const negative = s.trim().charAt(0) === '-';
-    const digits = digitsOnly(s);
+    const negative = isNegativeAmountInput(str);
+    const digits = digitsOnly(str);
     if (!digits) return negative ? '-' : '';
     return (negative ? '-' : '') + formatAmountDisplay(digits);
   }
@@ -2954,10 +2986,9 @@
   // same breath as the display formatting: the previous /[^0-9.-]/ parse
   // kept the dots and read a formatted "5.000.000" as NaN.
   function parseSignedAmountInput(str) {
-    const s = String(str == null ? '' : str);
-    const digits = digitsOnly(s);
+    const digits = digitsOnly(str);
     if (!digits) return NaN;
-    return (s.trim().charAt(0) === '-' ? -1 : 1) * Number(digits);
+    return (isNegativeAmountInput(str) ? -1 : 1) * Number(digits);
   }
   // Every figure the reconcile/undo sheets print, in the same id-ID
   // convention the amount inputs use, so a "5.000.000" typed in doesn't
@@ -2979,11 +3010,56 @@
         ? 'Pre-filled from the cleared balance. Editable.'
         : '\u00a0';
   }
+  // Green when the figure is good for this account, red when it isn't --
+  // which is NOT the same thing as positive/negative. On a cash/bank
+  // account a positive statement balance is money you have; on a credit
+  // card a positive statement amount is money you OWE. So the two account
+  // types colour the same sign oppositely, matching the account-detail
+  // header, which already paints an owed card red (.owed) and an in-credit
+  // card green (.positive). Empty or zero stays neutral.
+  function rcStatementColor(value) {
+    if (!isFinite(value) || value === 0) return 'var(--text)';
+    const good = currentAccountIsCash() ? value > 0 : value < 0;
+    return good ? 'var(--accent)' : 'var(--negative)';
+  }
+  // Paints the amount, the "Rp" prefix and the active sign button, and
+  // syncs which sign button reads as pressed. Driven off the input's own
+  // text, which stays the single source of truth for the sign -- the
+  // toggle only writes or removes the leading minus.
+  function rcApplyStatementStyle() {
+    const el = document.getElementById('rc-statement-amount');
+    const color = rcStatementColor(parseSignedAmountInput(el.value));
+    el.style.color = color;
+    document.getElementById('rc-amount-currency').style.color = color;
+    const negative = isNegativeAmountInput(el.value);
+    [['rc-sign-plus', !negative], ['rc-sign-minus', negative]].forEach(([id, on]) => {
+      const btn = document.getElementById(id);
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      btn.style.color = on ? color : '';
+      btn.style.borderColor = on ? color : '';
+    });
+  }
+  function rcSetStatementSign(sign) {
+    const el = document.getElementById('rc-statement-amount');
+    const digits = digitsOnly(el.value);
+    el.value = sign < 0
+      ? '-' + formatAmountDisplay(digits)
+      : formatAmountDisplay(digits);
+    // Flipping the sign is an edit like any other, so the as-of-date
+    // listener below must stop re-deriving over it.
+    rcStatementTouched = true;
+    resizeRcStatementInput();
+    rcUpdateStatementHint();
+    rcApplyStatementStyle();
+    el.focus();
+  }
   function rcSetStatementAmount(value) {
     const el = document.getElementById('rc-statement-amount');
     el.value = value == null ? '' : formatSignedAmountInput(String(value));
     resizeRcStatementInput();
     rcUpdateStatementHint();
+    rcApplyStatementStyle();
   }
   // The book balance this reconciliation will be compared against, computed
   // from the transactions already loaded for the account on screen.
@@ -3012,6 +3088,7 @@
     rcStatementTouched = true;
     resizeRcStatementInput();
     rcUpdateStatementHint();
+    rcApplyStatementStyle();
   });
   // Re-derive the pre-fill when the as-of date moves, but never overwrite a
   // figure the user has typed -- same "touched" convention the billing-month
