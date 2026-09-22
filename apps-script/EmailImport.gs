@@ -682,33 +682,68 @@ function parseSlashDate_(str) {
 }
 
 // ── mnab/mandiri PARSER ─────────────────────────────────────────────────
-// Validated against a real "Pembayaran Berhasil!" (Livin' by Mandiri) email.
+// Livin' by Mandiri sends more than one template from the same sender, so —
+// like parseOcbcEmail_ below — this dispatches on the subject line first.
+// Validated against a real "Pembayaran Berhasil!" (QRIS merchant payment,
+// parseMandiriPayment_) and a real "Top-up e-money Berhasil" (e-money card
+// top-up, parseMandiriTopUp_) email. The payment template stays the DEFAULT
+// branch, so every Mandiri subject that isn't recognized here behaves
+// exactly as it did before this dispatcher existed.
 
 function parseMandiriEmail_(subject, bodyHtml) {
+  if (/top[-\s]?up/i.test(subject)) {
+    return parseMandiriTopUp_(bodyHtml);
+  }
+  return parseMandiriPayment_(bodyHtml);
+}
+
+// Shared label/value extractor for Livin's templates. Each label in these
+// templates sits alone on its own line (one per <td>/<p>), so the boundary
+// check requires a LATER label to also be alone on its own line — not just
+// present anywhere in the captured text. Without that anchor, a merchant
+// name containing a label word (e.g. "24 JAM" containing "Jam", the
+// time-field label) would falsely truncate the capture right there. Caught
+// by testing against a real "24 JAM ..." laundromat payee.
+//
+// `labels` must list every label the template can show, IN THE ORDER THEY
+// APPEAR (same contract as extractOcbcEnglishFields_ below).
+//
+// Both the label anchor and the boundary tolerate leading/trailing spaces
+// and tabs on the line — htmlToText_ leaves the source HTML's own
+// indentation in place, and the top-up template's labels come through
+// padded (" Penyedia Jasa ") where the payment template's don't. This is a
+// strict superset of what the payment parser matched before, so its
+// validated behaviour is unchanged.
+//
+// Deliberately keeps internal newlines rather than collapsing to spaces:
+// several of these values are multi-line ("Penerima" is merchant name then
+// city; "Rekening Sumber" is account name then masked number) and callers
+// need the \n still there to split on. The LAST label in `labels` has no
+// later label to stop at, so it captures through the end of the email —
+// footer included; callers pull what they need out of it with their own
+// narrower regex rather than trusting the whole block.
+function mandiriValueAfter_(text, labels, label) {
+  var idx = labels.indexOf(label);
+  var next = labels.slice(idx + 1).map(function (l) { return l.replace(/[.]/g, '\\.'); });
+  var boundary = next.length ? '(?:' + next.join('|') + ')' : '$';
+  var re = new RegExp(
+      '(?:^|\\n)[ \\t]*' + label.replace(/[.]/g, '\\.') + '\\s*\\n([\\s\\S]*?)' +
+      '(?:\\n[ \\t]*(?:' + boundary + ')[ \\t]*(?:\\n|$)|$)',
+      'i'
+  );
+  var m = text.match(re);
+  return m ? m[1].trim() : null;
+}
+
+// "Pembayaran Berhasil!" — QRIS / merchant payment.
+var MANDIRI_PAYMENT_LABELS = ['Penerima', 'Tanggal', 'Jam', 'Nominal Transaksi', 'No. Referensi',
+  'No. Ref. QRIS', 'Merchant PAN', 'Customer PAN', 'Pengakuisisi', 'Terminal ID', 'Sumber Dana'];
+
+function parseMandiriPayment_(bodyHtml) {
   var text = htmlToText_(bodyHtml);
 
-  var LABELS = ['Penerima', 'Tanggal', 'Jam', 'Nominal Transaksi', 'No. Referensi',
-    'No. Ref. QRIS', 'Merchant PAN', 'Customer PAN', 'Pengakuisisi', 'Terminal ID', 'Sumber Dana'];
-
-  // Each label in this template sits alone on its own line (one per <td>/<p>),
-  // so the boundary check requires the NEXT label to also be alone on its own
-  // line — not just present anywhere in the captured text. Without that
-  // anchor, a merchant name containing a label word (e.g. "24 JAM" containing
-  // "Jam", the time-field label) would falsely truncate the capture right
-  // there. Caught by testing against a real "24 JAM ..." laundromat payee.
   function valueAfter(label) {
-    var idx = LABELS.indexOf(label);
-    var next = LABELS.slice(idx + 1).map(function (l) { return l.replace(/[.]/g, '\\.'); });
-    var boundary = next.length ? '(?:' + next.join('|') + ')' : '$';
-    var re = new RegExp(
-        '(?:^|\\n)' + label.replace(/[.]/g, '\\.') + '\\s*\\n([\\s\\S]*?)(?:\\n(?:' + boundary + ')(?:\\n|$)|$)',
-        'i'
-    );
-    var m = text.match(re);
-    // Deliberately keep internal newlines rather than collapsing to spaces:
-    // "Penerima" is a two-line value (merchant name, then city) and callers
-    // that want just the first line need the \n still there to split on.
-    return m ? m[1].trim() : null;
+    return mandiriValueAfter_(text, MANDIRI_PAYMENT_LABELS, label);
   }
 
   var recipient = valueAfter('Penerima');
@@ -730,6 +765,64 @@ function parseMandiriEmail_(subject, bodyHtml) {
     date: parseIndonesianDate_(dateStr),
     sof: sof,
     notes: "QRIS via Livin' by Mandiri — Ref " + refNo
+  };
+}
+
+// "Top-up e-money Berhasil" — topping up a prepaid e-money card from a
+// Mandiri account. Different label set from the payment template above
+// ("Penyedia Jasa"/"Nominal Top-up"/"Nomor Referensi"/"Rekening Sumber"
+// rather than "Penerima"/"Nominal Transaksi"/"No. Referensi"/"Sumber
+// Dana"), which is why it needs its own parser rather than extra labels on
+// that one. Validated against a real e-money top-up sample.
+//
+// Two masked numbers appear in this template and they mean opposite things:
+// "Penyedia Jasa" shows the e-money CARD being topped up (the destination —
+// deliberately NOT looked up in MANDIRI_SOF_MAP, it's not a funding
+// account), while "Rekening Sumber" shows the Mandiri account the money
+// actually left, which is the one that resolves to the SOF. Don't swap them.
+//
+// Booked as a plain Expense on the source account, matching how the Jago
+// e-wallet top-up template is handled — nothing this script writes ever
+// sets the Transfer flag, so the balance sitting on the e-money card isn't
+// tracked as its own account.
+var MANDIRI_TOPUP_LABELS = ['Penyedia Jasa', 'Tanggal', 'Jam', 'Nominal Top-up',
+  'Nomor Referensi', 'Rekening Sumber'];
+
+function parseMandiriTopUp_(bodyHtml) {
+  var text = htmlToText_(bodyHtml);
+
+  function valueAfter(label) {
+    return mandiriValueAfter_(text, MANDIRI_TOPUP_LABELS, label);
+  }
+
+  var providerRaw = valueAfter('Penyedia Jasa');
+  var dateStr = valueAfter('Tanggal');
+  var nominal = valueAfter('Nominal Top-up');
+  var refNo = valueAfter('Nomor Referensi');
+  var sofRaw = valueAfter('Rekening Sumber');
+
+  if (!providerRaw || !dateStr || !nominal || !sofRaw) return null; // → AI fallback
+
+  // "Rekening Sumber" is the last label in this template, so its captured
+  // value runs through the email footer — take only the first masked number
+  // in it, which is the source account's last 4.
+  var last4 = (sofRaw.match(/\*{2,4}(\d{4})/) || [])[1];
+  var sof = MANDIRI_SOF_MAP[last4];
+  if (!sof) return null; // unrecognized source account — don't guess, fall back to AI / manual review
+
+  // "Penyedia Jasa" is two lines: the provider ("e-money") then the masked
+  // card number being topped up ("****7267").
+  var provider = providerRaw.split('\n')[0].trim();
+  var targetMask = (providerRaw.match(/\*{2,4}\d{4}/) || [])[0];
+
+  return {
+    payee: provider + ' top up' + (targetMask ? ' (' + targetMask + ')' : ''),
+    type: 'Expense',
+    amount: parseIndonesianAmount_(nominal), // "Rp 100.000,00" — dot=thousands, comma=decimal
+    date: parseIndonesianDate_(dateStr),
+    sof: sof,
+    notes: "Top-up " + provider + (targetMask ? ' ' + targetMask : '') +
+        " via Livin' by Mandiri — Ref " + (refNo || 'unknown')
   };
 }
 
@@ -989,10 +1082,10 @@ function parseOcbcBillPayment_(bodyHtml) {
 // each per-template function below just picks the fields it needs out of
 // that map. Dispatched on subject line, validated against five real
 // samples of that table-shaped kind: money received, e-Wallet top up, a
-// QRIS/merchant payment, a Jago Partner autodebit (Bibit), and a transfer
-// to another bank account.
+// QRIS/merchant payment, a Jago Partner autodebit (Bibit), a transfer
+// to another bank account, and a cash withdrawal.
 //
-// A sixth template — "You've received money in your <Pocket> Pocket" (see
+// Another template — "You've received money in your <Pocket> Pocket" (see
 // parseJagoPocketReceived_ below) — is structurally different (plain
 // paragraphs, no transfer-table markup at all, e.g. dividends/proceeds
 // landing in the RDN Pocket from a securities company), so it's checked
@@ -1000,8 +1093,8 @@ function parseOcbcBillPayment_(bodyHtml) {
 // otherwise bail out on it for lacking 'Amount'/'Transaction Date' table
 // rows.
 //
-// All six samples resolve to the single JAGO_SOF account (see CONFIG up
-// top) — Jago's own multiple underlying Pocket/account numbers aren't
+// All of these samples resolve to the single JAGO_SOF account (see CONFIG
+// up top) — Jago's own multiple underlying Pocket/account numbers aren't
 // otherwise distinguished here.
 
 function parseJagoEmail_(subject, bodyHtml, messageDate) {
@@ -1030,6 +1123,9 @@ function parseJagoEmail_(subject, bodyHtml, messageDate) {
   }
   if (/made a transfer/i.test(subject)) {
     return parseJagoTransfer_(table, amount, date);
+  }
+  if (/withdrawn cash/i.test(subject)) {
+    return parseJagoCashWithdrawal_(table, amount, date);
   }
   return null; // unrecognized Jago subject/template → AI fallback
 }
@@ -1177,6 +1273,29 @@ function parseJagoTransfer_(table, amount, date) {
     date: date,
     sof: JAGO_SOF,
     notes: 'Jago transfer' + (to[1] ? ' to ' + to[1] : '')
+  };
+}
+
+// "You have withdrawn cash 💵" — ATM / cardless cash withdrawal off a Jago
+// Pocket. Its table carries ONLY Amount and Transaction Date — no From/To
+// row, no ATM/location field, nothing naming a counterparty — so unlike
+// every other Jago template here there's nothing to read a payee out of,
+// and it's a fixed label instead. (The subject's trailing 💵 emoji is not
+// matched on; the text alone is enough and emoji rendering isn't
+// guaranteed to survive intact.)
+//
+// Booked as a plain Expense on the Jago account, NOT as a Transfer to a
+// separate cash/wallet account — nothing this script writes ever sets the
+// Transfer flag. Since every row lands Pending anyway, re-tag it by hand at
+// review time if you'd rather track physical cash as its own account.
+function parseJagoCashWithdrawal_(table, amount, date) {
+  return {
+    payee: 'Cash withdrawal',
+    type: 'Expense',
+    amount: amount,
+    date: date,
+    sof: JAGO_SOF,
+    notes: 'Jago cash withdrawal'
   };
 }
 
