@@ -88,7 +88,8 @@
   margin-bottom: 14px;
 }
 .txf-sheet-title { font-size: 15px; font-weight: 600; }
-.txf-sheet-close { color: var(--muted); font-size: 20px; cursor: pointer; }
+.txf-sheet-close { color: var(--muted); font-size: 20px; cursor: pointer; background: none; border: none; padding: 0; line-height: 1; font-family: inherit; }
+.txf-sheet-close:focus-visible { outline: 2px solid var(--accent, #22c55e); outline-offset: 2px; border-radius: 4px; }
 .txf-field-label { font-size: 11px; color: var(--muted); }
 .txf-field {
   width: 100%;

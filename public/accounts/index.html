@@ -39,11 +39,25 @@
 
   .back-link {
     display: block;
+    width: 100%;
     color: var(--muted);
     text-decoration: none;
     font-size: 0.85rem;
     margin-bottom: 4px;
     cursor: pointer;
+    background: none;
+    border: none;
+    padding: 0;
+    text-align: left;
+    font-family: inherit;
+  }
+  .back-link:focus-visible,
+  .last-recon-link:focus-visible,
+  .rc-sheet-close:focus-visible,
+  .rc-toggle-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 4px;
   }
   h1 {
     font-size: 1.1rem;
@@ -116,12 +130,17 @@
   .btn-block { width: 100%; }
   .last-recon-link {
     display: block;
+    width: 100%;
     text-align: center;
     font-size: 0.75rem;
     color: var(--muted);
     text-decoration: underline;
     margin-top: 10px;
     cursor: pointer;
+    background: none;
+    border: none;
+    padding: 0;
+    font-family: inherit;
   }
 
   .date-header {
@@ -297,7 +316,7 @@
     margin-bottom: 14px;
   }
   .rc-sheet-title { font-size: 15px; font-weight: 600; }
-  .rc-sheet-close { color: var(--muted); font-size: 20px; cursor: pointer; }
+  .rc-sheet-close { color: var(--muted); font-size: 20px; cursor: pointer; background: none; border: none; padding: 0; line-height: 1; font-family: inherit; }
   .rc-field-label { font-size: 11px; color: var(--muted); font-weight: 600; margin: 12px 0 4px; display: block; }
   .rc-field {
     width: 100%;
@@ -333,6 +352,8 @@
     background: var(--bg);
     color: var(--muted);
     font-size: 13px;
+    cursor: pointer;
+    font-family: inherit;
   }
   .rc-toggle-btn.active { border-color: var(--accent); color: var(--text); }
   .rc-log-entry { font-size: 12.5px; }
@@ -637,7 +658,7 @@
 
 <div class="wrap" id="screen-detail" style="display:none;">
   <div class="detail-sticky">
-    <a class="back-link" onclick="goto('accounts')">← Accounts</a>
+    <button type="button" class="back-link" onclick="goto('accounts')">← Accounts</button>
     <h1 id="detail-title">Account</h1>
 
     <div id="detail-loading" class="loading" style="display:none;">Loading…</div>
@@ -657,7 +678,7 @@
           <button class="btn btn-primary" onclick="openReconcile()">Reconcile</button>
           <button class="btn btn-secondary" id="detail-pay-btn" style="display:none;" onclick="openPayCard()">Add Payment</button>
         </div>
-        <div class="last-recon-link" onclick="openUndo()">View / undo last reconciliation</div>
+        <button type="button" class="last-recon-link" onclick="openUndo()">View / undo last reconciliation</button>
       </div>
 
       <div class="upcoming-toggle" id="detail-upcoming-toggle">
@@ -763,7 +784,7 @@
   <div class="rc-sheet">
     <div class="rc-sheet-header">
       <div class="rc-sheet-title">Reconcile <span id="rc-account-name"></span></div>
-      <div class="rc-sheet-close" onclick="closeReconcile()">✕</div>
+      <button type="button" class="rc-sheet-close" onclick="closeReconcile()">✕</button>
     </div>
 
     <div class="rc-step">
@@ -789,8 +810,8 @@
       <input type="text" class="rc-field" id="rc-add-name" placeholder="e.g. Grab to office">
       <label class="rc-field-label">Type</label>
       <div class="rc-toggle-row">
-        <div class="rc-toggle-btn active" id="rc-add-type-expense" onclick="rcSetAddType('Expense')">Expense</div>
-        <div class="rc-toggle-btn" id="rc-add-type-income" onclick="rcSetAddType('Income')">Income</div>
+        <button type="button" class="rc-toggle-btn active" id="rc-add-type-expense" onclick="rcSetAddType('Expense')">Expense</button>
+        <button type="button" class="rc-toggle-btn" id="rc-add-type-income" onclick="rcSetAddType('Income')">Income</button>
       </div>
       <label class="rc-field-label">Date</label>
       <input type="date" class="rc-field" id="rc-add-date">
@@ -821,7 +842,7 @@
   <div class="rc-sheet">
     <div class="rc-sheet-header">
       <div class="rc-sheet-title">Add Payment — <span id="pay-account-name"></span></div>
-      <div class="rc-sheet-close" onclick="closePayCard()">✕</div>
+      <button type="button" class="rc-sheet-close" onclick="closePayCard()">✕</button>
     </div>
 
     <label class="txf-amount-block" for="pay-amount">
@@ -873,12 +894,13 @@
   <div class="rc-sheet">
     <div class="rc-sheet-header">
       <div class="rc-sheet-title">Last reconciliation — <span id="undo-account-name"></span></div>
-      <div class="rc-sheet-close" onclick="closeUndo()">✕</div>
+      <button type="button" class="rc-sheet-close" onclick="closeUndo()">✕</button>
     </div>
     <div id="undo-body"></div>
   </div>
 </div>
 
+<script src="/shared/modal-a11y.js"></script>
 <script src="/shared/transaction-form.js"></script>
 <script src="/shared/swipe-actions.js"></script>
 <script src="/shared/bulk-actions.js"></script>
@@ -928,6 +950,14 @@
     }
   }
 
+  // Both dialogs below now also get Escape-to-dismiss and a Tab focus trap
+  // via ModalA11y (see shared/modal-a11y.js), on top of whatever letter
+  // hotkeys they opt into through opts.hotkeys -- Escape works whether or
+  // not a call passes those. showAlert focuses OK (nothing to protect
+  // against); showConfirm defaults focus to Cancel rather than the
+  // confirm/danger action, so tabbing through quickly (or Escape, which
+  // routes through the same close()) can't accidentally trigger a
+  // destructive action on a stray Enter.
   function showAlert(message, title) {
     document.getElementById('modal-title').textContent = title || 'Notice';
     document.getElementById('modal-message').textContent = message;
@@ -935,8 +965,11 @@
     const okBtn = document.getElementById('modal-ok-btn');
     okBtn.textContent = 'OK';
     modalHotkeys = null;
-    okBtn.onclick = () => document.getElementById('modal-overlay').classList.remove('open');
-    document.getElementById('modal-overlay').classList.add('open');
+    const overlay = document.getElementById('modal-overlay');
+    const dismiss = () => { ModalA11y.close(overlay); overlay.classList.remove('open'); };
+    okBtn.onclick = dismiss;
+    overlay.classList.add('open');
+    ModalA11y.open(overlay, { focus: okBtn, onClose: dismiss });
   }
   function showConfirm(message, onConfirm, opts) {
     opts = opts || {};
@@ -949,10 +982,12 @@
     setModalBtnLabel(okBtn, opts.confirmLabel || 'Confirm', opts.hotkeys && opts.hotkeys.confirm);
     okBtn.className = opts.danger ? 'btn btn-danger' : 'btn btn-primary';
     modalHotkeys = opts.hotkeys || null;
-    const close = () => { document.getElementById('modal-overlay').classList.remove('open'); modalHotkeys = null; };
+    const overlay = document.getElementById('modal-overlay');
+    const close = () => { ModalA11y.close(overlay); overlay.classList.remove('open'); modalHotkeys = null; };
     cancelBtn.onclick = close;
     okBtn.onclick = () => { close(); onConfirm(); };
-    document.getElementById('modal-overlay').classList.add('open');
+    overlay.classList.add('open');
+    ModalA11y.open(overlay, { focus: cancelBtn, onClose: close });
   }
 
   // D/C hotkeys for whichever showConfirm dialog opted in via opts.hotkeys
@@ -2487,13 +2522,23 @@
       : 'Actual total per your bank/cash records for this period';
 
     rcState = null;
-    document.getElementById('rc-overlay').classList.add('open');
+    const overlay = document.getElementById('rc-overlay');
+    overlay.classList.add('open');
+    // Focus the as-of-date field so data entry can start immediately, and
+    // give the sheet a Tab trap + Escape-to-close (via the ✕ button's own
+    // closeReconcile, same as before) -- see shared/modal-a11y.js. Before
+    // this, the sheet's only close control was a non-focusable div, so a
+    // keyboard-only user opening Reconcile before pressing "Calculate" had
+    // no way to back out at all.
+    ModalA11y.open(overlay, { focus: document.getElementById('rc-asof-date'), onClose: closeReconcile });
   }
   function closeReconcile() {
-    document.getElementById('rc-overlay').classList.remove('open');
+    const overlay = document.getElementById('rc-overlay');
+    ModalA11y.close(overlay);
+    overlay.classList.remove('open');
   }
   function rcSetBusy(busy) {
-    document.querySelectorAll('#rc-overlay button').forEach((b) => { b.disabled = busy; });
+    document.querySelectorAll('#rc-overlay button:not(.rc-sheet-close)').forEach((b) => { b.disabled = busy; });
   }
 
   async function rcCalculate() {
@@ -2928,8 +2973,9 @@
 
     const cashSelect = document.getElementById('pay-cash-account');
     cashSelect.innerHTML = '<option value="">Loading…</option>';
-    document.getElementById('pay-overlay').classList.add('open');
-    document.getElementById('pay-amount').focus();
+    const overlay = document.getElementById('pay-overlay');
+    overlay.classList.add('open');
+    ModalA11y.open(overlay, { focus: document.getElementById('pay-amount'), onClose: closePayCard });
     refreshPrefillAmount();
     try {
       const cashAccounts = await getCashAccounts();
@@ -2941,10 +2987,12 @@
     }
   }
   function closePayCard() {
-    document.getElementById('pay-overlay').classList.remove('open');
+    const overlay = document.getElementById('pay-overlay');
+    ModalA11y.close(overlay);
+    overlay.classList.remove('open');
   }
   function paySetBusy(busy) {
-    document.querySelectorAll('#pay-overlay button').forEach((b) => { b.disabled = busy; });
+    document.querySelectorAll('#pay-overlay button:not(.rc-sheet-close)').forEach((b) => { b.disabled = busy; });
   }
 
   async function savePayCard() {
@@ -3006,7 +3054,16 @@
     document.getElementById('undo-account-name').textContent = currentAccount;
     const body = document.getElementById('undo-body');
     body.innerHTML = '<p class="sub">Looking up…</p>';
-    document.getElementById('undo-overlay').classList.add('open');
+    const overlay = document.getElementById('undo-overlay');
+    overlay.classList.add('open');
+    // No explicit focus target -- the ✕ close button is the only focusable
+    // element in the sheet at this point (the lookup below hasn't resolved
+    // yet), so ModalA11y's own "first focusable element" fallback lands on
+    // it. That's also what fixes the real keyboard trap this sheet used to
+    // have: when there's no undoable reconciliation, the body ends up with
+    // no button at all, and the ✕ used to be a non-focusable div -- there
+    // was no keyboard-reachable way to close this sheet in that case.
+    ModalA11y.open(overlay, { onClose: closeUndo });
 
     let e;
     try {
@@ -3043,15 +3100,15 @@
         showConfirm(
           'This will un-mark those transactions as reconciled, delete the auto-inserted adjustment row (if there was one), and restore the Accounts tab to its prior state. Continue?',
           async () => {
-            document.querySelectorAll('#undo-overlay button').forEach((b) => { b.disabled = true; });
+            document.querySelectorAll('#undo-overlay button:not(.rc-sheet-close)').forEach((b) => { b.disabled = true; });
             try {
               const r = await apiPost('/api/reconcile', { action: 'undo', account: currentAccount });
-              document.querySelectorAll('#undo-overlay button').forEach((b) => { b.disabled = false; });
+              document.querySelectorAll('#undo-overlay button:not(.rc-sheet-close)').forEach((b) => { b.disabled = false; });
               showAlert('Undone. ' + r.restoredCount + ' transaction(s) un-reconciled' + (r.deletedAdjustment ? ', adjustment row deleted' : '') + '.', 'Done');
               closeUndo();
               openAccountDetail(currentAccount);
             } catch (err) {
-              document.querySelectorAll('#undo-overlay button').forEach((b) => { b.disabled = false; });
+              document.querySelectorAll('#undo-overlay button:not(.rc-sheet-close)').forEach((b) => { b.disabled = false; });
               showAlert(err.message, 'Undo failed');
             }
           },
@@ -3064,7 +3121,9 @@
     }
   }
   function closeUndo() {
-    document.getElementById('undo-overlay').classList.remove('open');
+    const overlay = document.getElementById('undo-overlay');
+    ModalA11y.close(overlay);
+    overlay.classList.remove('open');
   }
 
   // ---- Hardware-keyboard shortcuts within this page (issue #63) ----
