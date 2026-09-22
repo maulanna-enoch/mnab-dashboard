@@ -34,7 +34,7 @@
       <div class="txf-sheet">
         <div class="txf-sheet-header">
           <div class="txf-sheet-title" id="txf-sheet-title">Add transaction</div>
-          <div class="txf-sheet-close" id="txf-sheet-close">&times;</div>
+          <button type="button" class="txf-sheet-close" id="txf-sheet-close">&times;</button>
         </div>
 
         <div class="txf-toggle-row" id="txf-type-toggle">
@@ -412,19 +412,20 @@
     // Autofocus the amount field for a new transaction so typing the amount
     // can start immediately -- but not when editing an existing one, where
     // jumping straight to the amount could be surprising / cause an
-    // accidental edit before the rest of the fields have been reviewed. If
-    // the amount arrived pre-filled (opts.prefillAmount), focus Payee next
-    // instead, since Amount is already done.
-    if (!isEditOpen) {
-      if (opts.prefillAmount != null) {
-        state.payeeEl.focus();
-      } else {
-        state.amountInput.focus();
-      }
-    }
+    // accidental edit before the rest of the fields have been reviewed
+    // (Payee is focused instead). If the amount arrived pre-filled
+    // (opts.prefillAmount), focus Payee next instead, since Amount is
+    // already done. ModalA11y.open() applies this focus target, then keeps
+    // Tab cycling within the sheet and wires Escape to close() -- see that
+    // file's header comment.
+    const focusTarget = isEditOpen
+      ? state.payeeEl
+      : (opts.prefillAmount != null ? state.payeeEl : state.amountInput);
+    ModalA11y.open(state.overlay, { focus: focusTarget, onClose: close });
   }
 
   function close() {
+    ModalA11y.close(state.overlay);
     state.overlay.classList.remove('open');
   }
 
