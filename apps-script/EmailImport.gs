@@ -468,7 +468,7 @@ function handleMessage_(message, labelKey, headerMap, dryRun) {
       date: parsed.date,
       amount: 0,
       notes: 'Attempted ' + formatIdr_(parsed.amount) + ' — ' + failure.reason +
-          (parsed.notes ? '. ' + parsed.notes : '') + '. (Auto-imported, unreviewed — no funds actually moved.)',
+          (parsed.notes ? '. ' + parsed.notes : '') + '. (Auto-imported — no money movement)',
       messageId: messageId
     }, headerMap, dryRun);
   }
@@ -479,7 +479,7 @@ function handleMessage_(message, labelKey, headerMap, dryRun) {
     sof: parsed.sof,
     date: parsed.date,
     amount: parsed.amount,
-    notes: (parsed.notes || '') + ' (Auto-imported, unreviewed.)',
+    notes: (parsed.notes || '') + ' (Auto-imported)',
     messageId: messageId
   }, headerMap, dryRun);
 }
