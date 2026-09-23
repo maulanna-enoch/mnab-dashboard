@@ -327,6 +327,40 @@
     padding: 9px 10px;
     font-size: 14px;
   }
+  /* The Reconcile sheet's statement amount borrows the transaction form's
+     big money-input treatment (the txf-amount-* classes in
+     shared/transaction-form.css, already loaded on this page for the Add
+     Payment sheet) so the one figure typed by hand during a reconciliation
+     looks and behaves like every other amount field in the app. Only
+     spacing, size and figure alignment are overridden here. */
+  .rc-money-block { margin: 14px 0 0; }
+  .rc-money-block .txf-amount-label { font-size: 11px; font-weight: 600; }
+  .rc-money-block .txf-amount-row { min-height: 44px; }
+  .rc-money-block .txf-amount-currency,
+  .rc-money-block .txf-amount-input { font-variant-numeric: tabular-nums; }
+  .rc-money-block .txf-amount-input { font-size: 26px; }
+  /* Sign toggle under the amount. The active button's colour is set
+     inline by rcApplyStatementStyle() so it echoes the amount itself
+     rather than the generic accent -- see that function for why the same
+     sign is green on one account type and red on the other.
+     Both selectors are doubled up (.rc-toggle-row.rc-sign-row) on purpose:
+     the generic .rc-toggle-row / .rc-toggle-btn rules are declared further
+     down this stylesheet, so at equal specificity they would win on source
+     order and undo the sizing here. */
+  .rc-toggle-row.rc-sign-row { max-width: 132px; margin: 6px auto 10px; gap: 6px; }
+  .rc-toggle-btn.rc-sign-btn { padding: 4px 0; font-size: 15px; line-height: 1.3; }
+  /* The Add-transaction FAB renders above this page's sheets and overlaps
+     their bottom-right corner, so hide it while any of them is open
+     (Reconcile, Add Payment, undo-last-reconciliation, the confirm modal).
+     Kept in CSS, keyed off the overlay's own `.open` class, rather than
+     toggling style.display in every open and close function -- the
+     bulk-selection bar already shows and hides this same button via
+     onSelectionChange, and two owners of one inline style fight each other
+     (closing a sheet would restore a FAB the selection bar wanted hidden).
+     A browser without :has() just keeps the old behaviour.
+     NB: no star-slash inside a CSS comment -- it ends the comment and eats
+     the rule below, which is exactly what happened on the first attempt. */
+  body:has(.rc-overlay.open) .txf-fab { display: none; }
   .rc-hint { font-size: 10.5px; color: var(--muted); margin: 4px 0 0; line-height: 1.4; }
   .rc-result-box {
     margin-top: 14px;
@@ -790,8 +824,19 @@
     <div class="rc-step">
       <label class="rc-field-label">As-of / statement date</label>
       <input type="date" class="rc-field" id="rc-asof-date">
-      <label class="rc-field-label" id="rc-amount-label">Statement / actual amount</label>
-      <input type="text" inputmode="numeric" class="rc-field" id="rc-statement-amount" placeholder="e.g. 5000000">
+      <label class="txf-amount-block rc-money-block" for="rc-statement-amount">
+        <div class="txf-amount-label" id="rc-amount-label">Statement / actual amount</div>
+        <div class="txf-amount-row">
+          <span class="txf-amount-currency" id="rc-amount-currency">Rp</span>
+          <input id="rc-statement-amount" class="txf-amount-input" type="text" inputmode="numeric" placeholder="0" />
+        </div>
+        <div class="txf-amount-rule"></div>
+      </label>
+      <div class="rc-toggle-row rc-sign-row">
+        <button type="button" class="rc-toggle-btn rc-sign-btn active" id="rc-sign-plus" aria-pressed="true" aria-label="Positive — debit" onclick="rcSetStatementSign(1)">+</button>
+        <button type="button" class="rc-toggle-btn rc-sign-btn" id="rc-sign-minus" aria-pressed="false" aria-label="Negative — credit" onclick="rcSetStatementSign(-1)">−</button>
+      </div>
+      <p class="rc-hint" id="rc-amount-hint" style="text-align:center;">&nbsp;</p>
       <button class="btn btn-primary btn-block" style="margin-top:12px;" onclick="rcCalculate()">Calculate system total</button>
     </div>
 
@@ -2509,7 +2554,8 @@
     const account = currentAccountMeta;
     document.getElementById('rc-account-name').textContent = currentAccount;
     document.getElementById('rc-asof-date').value = todayISO();
-    document.getElementById('rc-statement-amount').value = '';
+    rcStatementTouched = false;
+    rcSetStatementAmount(rcClearedBalanceThrough(todayISO()));
     document.getElementById('rc-result-box').style.display = 'none';
     document.getElementById('rc-compare-box').style.display = 'none';
     document.getElementById('rc-actions').style.display = 'none';
@@ -2545,8 +2591,8 @@
     const asOfDate = document.getElementById('rc-asof-date').value;
     if (!asOfDate) { showAlert('Pick a date.'); return; }
     const raw = document.getElementById('rc-statement-amount').value;
-    const statementAmount = Number(String(raw).replace(/[^0-9.-]/g, ''));
-    if (isNaN(statementAmount) || raw.trim() === '') { showAlert("That doesn't look like a number.", "Statement amount"); return; }
+    const statementAmount = parseSignedAmountInput(raw);
+    if (isNaN(statementAmount)) { showAlert("That doesn't look like a number.", "Statement amount"); return; }
 
     rcSetBusy(true);
     let calc;
@@ -2569,7 +2615,7 @@
     };
 
     document.getElementById('rc-result-date').textContent = asOfDate;
-    document.getElementById('rc-result-sum').textContent = rcState.cumulativeSum.toLocaleString();
+    document.getElementById('rc-result-sum').textContent = rcNum(rcState.cumulativeSum);
     document.getElementById('rc-since-label').textContent = rcState.sinceDateLabel;
     document.getElementById('rc-matched-count').textContent = rcState.matchedCount + ' txn(s)';
     document.getElementById('rc-result-box').style.display = 'block';
@@ -2597,9 +2643,9 @@
       box.className = 'rc-result-box mismatch';
       box.innerHTML = `
         <b>These do not match.</b>
-        <div class="rc-row"><span>Book balance</span><span>${rcState.cumulativeSum.toLocaleString()}</span></div>
-        <div class="rc-row"><span>You entered</span><span>${statementAmount.toLocaleString()}</span></div>
-        <div class="rc-row"><b>Variance</b><b>${variance.toLocaleString()}</b></div>
+        <div class="rc-row"><span>Book balance</span><span>${rcNum(rcState.cumulativeSum)}</span></div>
+        <div class="rc-row"><span>You entered</span><span>${rcNum(statementAmount)}</span></div>
+        <div class="rc-row"><b>Variance</b><b>${rcNum(variance)}</b></div>
         <p class="rc-hint">Positive variance = statement is higher than what's logged (something's missing). Negative = statement is lower (over-logged or a refund).</p>
       `;
       const row = document.createElement('div');
@@ -2670,7 +2716,7 @@
       : (rcState.variance > 0 ? 'Expense' : 'Income');
     const projAmount = Math.abs(rcState.variance);
     showConfirm(
-      `This will insert one new "Reconciliation" ${projType} transaction for ${projAmount.toLocaleString()} dated ${rcState.asOfDate}, and mark ${rcState.matchedCount + 1} transaction(s) as reconciled.\n\nYou can undo this afterward via "View / undo last reconciliation", but only until this account is reconciled again. Continue?`,
+      `This will insert one new "Reconciliation" ${projType} transaction for ${rcNum(projAmount)} dated ${rcState.asOfDate}, and mark ${rcState.matchedCount + 1} transaction(s) as reconciled.\n\nYou can undo this afterward via "View / undo last reconciliation", but only until this account is reconciled again. Continue?`,
       async () => {
         rcSetBusy(true);
         try {
@@ -2681,7 +2727,7 @@
             statementAmount: rcState.statementAmount,
           });
           rcSetBusy(false);
-          showAlert(`Inserted a Reconciliation ${r.type} row for ${r.amount.toLocaleString()}. ${r.matchedCount} transaction(s) total marked reconciled.`, 'Done');
+          showAlert(`Inserted a Reconciliation ${r.type} row for ${rcNum(r.amount)}. ${r.matchedCount} transaction(s) total marked reconciled.`, 'Done');
           closeReconcile();
           openAccountDetail(currentAccount);
         } catch (err) {
@@ -2800,7 +2846,7 @@
   function rcUpdateClearSelectionUI() {
     const selected = currentAccountTxns.filter((t) => rcClearSelection.has(t.rowNumber));
     const total = selected.reduce((s, t) => s + (t.type === 'Income' ? -t.amount : t.amount), 0);
-    document.getElementById('rc-clear-selected-total').textContent = total.toLocaleString();
+    document.getElementById('rc-clear-selected-total').textContent = rcNum(total);
     document.getElementById('rc-clear-save-btn').disabled = selected.length === 0;
   }
 
@@ -2829,7 +2875,10 @@
     const dateStr = document.getElementById('rc-add-date').value;
     const monthStr = document.getElementById('rc-add-month').value;
     const rawAmount = document.getElementById('rc-add-amount').value;
-    const amount = Number(String(rawAmount).replace(/[^0-9.-]/g, ''));
+    // '.' is a thousand separator in this field now (see its input
+    // listener), so it has to be stripped rather than read as a decimal
+    // point -- the old /[^0-9.-]/ parse would have seen NaN.
+    const amount = Number(digitsOnly(rawAmount));
 
     if (!name) { showAlert('Enter a name for the transaction.'); return; }
     if (!dateStr) { showAlert('Pick a date.'); return; }
@@ -2912,6 +2961,146 @@
   function formatAmountDisplay(digits) {
     return digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   }
+
+  // ---- Reconcile sheet: statement amount --------------------------------
+  // Leading-minus test shared by the formatter and the parser below. U+2212
+  // is accepted alongside ASCII '-' because the sign toggle's own label is a
+  // typographic minus, so that character comes back on a copy-paste round
+  // trip; everything downstream normalises to ASCII.
+  function isNegativeAmountInput(str) {
+    return /^[-\u2212]/.test(String(str == null ? '' : str).trim());
+  }
+  // Signed variant of digitsOnly/formatAmountDisplay above. The statement
+  // amount is the only amount input in the app that can legitimately be
+  // negative (a credit card sitting in credit, an overdrawn cash account),
+  // so a single leading minus survives instead of being stripped. Integer
+  // rupiah only, same as every other amount field.
+  function formatSignedAmountInput(str) {
+    const negative = isNegativeAmountInput(str);
+    const digits = digitsOnly(str);
+    if (!digits) return negative ? '-' : '';
+    return (negative ? '-' : '') + formatAmountDisplay(digits);
+  }
+  // Inverse of the above. NOTE: '.' is a thousand separator here, never a
+  // decimal point -- which is exactly why the parse had to change in the
+  // same breath as the display formatting: the previous /[^0-9.-]/ parse
+  // kept the dots and read a formatted "5.000.000" as NaN.
+  function parseSignedAmountInput(str) {
+    const digits = digitsOnly(str);
+    if (!digits) return NaN;
+    return (isNegativeAmountInput(str) ? -1 : 1) * Number(digits);
+  }
+  // Every figure the reconcile/undo sheets print, in the same id-ID
+  // convention the amount inputs use, so a "5.000.000" typed in doesn't
+  // come back as "5,000,000" one line below it.
+  function rcNum(value) {
+    return Number(value).toLocaleString('id-ID');
+  }
+
+  let rcStatementTouched = false;
+
+  function resizeRcStatementInput() {
+    const el = document.getElementById('rc-statement-amount');
+    el.style.width = (el.value.length + 1) + 'ch';
+  }
+  function rcUpdateStatementHint() {
+    const el = document.getElementById('rc-statement-amount');
+    document.getElementById('rc-amount-hint').textContent =
+      (!rcStatementTouched && el.value)
+        ? 'Pre-filled from the cleared balance. Editable.'
+        : '\u00a0';
+  }
+  // Green when the figure is good for this account, red when it isn't --
+  // which is NOT the same thing as positive/negative. On a cash/bank
+  // account a positive statement balance is money you have; on a credit
+  // card a positive statement amount is money you OWE. So the two account
+  // types colour the same sign oppositely, matching the account-detail
+  // header, which already paints an owed card red (.owed) and an in-credit
+  // card green (.positive). Empty or zero stays neutral.
+  function rcStatementColor(value) {
+    if (!isFinite(value) || value === 0) return 'var(--text)';
+    const good = currentAccountIsCash() ? value > 0 : value < 0;
+    return good ? 'var(--accent)' : 'var(--negative)';
+  }
+  // Paints the amount, the "Rp" prefix and the active sign button, and
+  // syncs which sign button reads as pressed. Driven off the input's own
+  // text, which stays the single source of truth for the sign -- the
+  // toggle only writes or removes the leading minus.
+  function rcApplyStatementStyle() {
+    const el = document.getElementById('rc-statement-amount');
+    const color = rcStatementColor(parseSignedAmountInput(el.value));
+    el.style.color = color;
+    document.getElementById('rc-amount-currency').style.color = color;
+    const negative = isNegativeAmountInput(el.value);
+    [['rc-sign-plus', !negative], ['rc-sign-minus', negative]].forEach(([id, on]) => {
+      const btn = document.getElementById(id);
+      btn.classList.toggle('active', on);
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      btn.style.color = on ? color : '';
+      btn.style.borderColor = on ? color : '';
+    });
+  }
+  function rcSetStatementSign(sign) {
+    const el = document.getElementById('rc-statement-amount');
+    const digits = digitsOnly(el.value);
+    el.value = sign < 0
+      ? '-' + formatAmountDisplay(digits)
+      : formatAmountDisplay(digits);
+    // Flipping the sign is an edit like any other, so the as-of-date
+    // listener below must stop re-deriving over it.
+    rcStatementTouched = true;
+    resizeRcStatementInput();
+    rcUpdateStatementHint();
+    rcApplyStatementStyle();
+    el.focus();
+  }
+  function rcSetStatementAmount(value) {
+    const el = document.getElementById('rc-statement-amount');
+    el.value = value == null ? '' : formatSignedAmountInput(String(value));
+    resizeRcStatementInput();
+    rcUpdateStatementHint();
+    rcApplyStatementStyle();
+  }
+  // The book balance this reconciliation will be compared against, computed
+  // from the transactions already loaded for the account on screen.
+  // Deliberately mirrors sumCumulativeClearedTransactions() in
+  // api/_lib/reconcile.js plus the cash-account sign flip in
+  // api/reconcile.js's actionCalculate (positive = money you have for
+  // cash/bank, positive = amount owed for a credit card) -- including its
+  // skip of undated rows -- so an untouched pre-fill lands on a zero
+  // variance against what the server comes back with. Returns null when
+  // there's nothing loaded to base it on, leaving the field blank as before.
+  function rcClearedBalanceThrough(asOfDate) {
+    if (!asOfDate || !currentAccountTxns.length) return null;
+    let sum = 0;
+    currentAccountTxns.forEach((t) => {
+      if (!t.isCleared) return;
+      if (!t.date || t.date > asOfDate) return;
+      sum += (t.type === 'Income' ? -t.amount : t.amount);
+    });
+    sum = Math.round(sum);
+    return currentAccountIsCash() ? -sum : sum;
+  }
+
+  document.getElementById('rc-statement-amount').addEventListener('input', () => {
+    const el = document.getElementById('rc-statement-amount');
+    el.value = formatSignedAmountInput(el.value);
+    rcStatementTouched = true;
+    resizeRcStatementInput();
+    rcUpdateStatementHint();
+    rcApplyStatementStyle();
+  });
+  // Re-derive the pre-fill when the as-of date moves, but never overwrite a
+  // figure the user has typed -- same "touched" convention the billing-month
+  // pre-fill uses in shared/transaction-form.js.
+  document.getElementById('rc-asof-date').addEventListener('change', () => {
+    if (rcStatementTouched) return;
+    rcSetStatementAmount(rcClearedBalanceThrough(document.getElementById('rc-asof-date').value));
+  });
+  document.getElementById('rc-add-amount').addEventListener('input', () => {
+    const el = document.getElementById('rc-add-amount');
+    el.value = formatAmountDisplay(digitsOnly(el.value));
+  });
   function resizePayAmountInput() {
     const el = document.getElementById('pay-amount');
     el.style.width = (el.value.length + 1) + 'ch';
@@ -3079,14 +3268,14 @@
     }
 
     const adj = e.adjustmentType
-      ? `<div class="rc-row"><span>Adjustment row</span><span>${e.adjustmentType} ${e.adjustmentAmount.toLocaleString()}</span></div>`
+      ? `<div class="rc-row"><span>Adjustment row</span><span>${e.adjustmentType} ${rcNum(e.adjustmentAmount)}</span></div>`
       : '';
     body.innerHTML = `
       <div class="rc-result-box rc-log-entry">
         <div class="rc-row"><span>Period</span><span>${e.periodStartLabel} → ${e.periodEndLabel}</span></div>
-        <div class="rc-row"><span>System total</span><span>${e.systemTotal.toLocaleString()}</span></div>
-        <div class="rc-row"><span>Statement amount</span><span>${e.statementAmount.toLocaleString()}</span></div>
-        <div class="rc-row"><span>Variance</span><span>${e.variance.toLocaleString()}</span></div>
+        <div class="rc-row"><span>System total</span><span>${rcNum(e.systemTotal)}</span></div>
+        <div class="rc-row"><span>Statement amount</span><span>${rcNum(e.statementAmount)}</span></div>
+        <div class="rc-row"><span>Variance</span><span>${rcNum(e.variance)}</span></div>
         <div class="rc-row"><span>Transactions marked reconciled</span><span>${e.matchedCount}</span></div>
         ${adj}
       </div>
