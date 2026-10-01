@@ -222,6 +222,11 @@ async function fetchTransactionRows() {
   // graceful-fallback convention as Pending above (defaults to "no match").
   const matchIdIdx = headerMap['Match ID'];
   const matchStatusIdx = headerMap['Match Status'];
+  // Transfer / Payment ID: self-provisioned by a card payment (Add Payment,
+  // or "Convert to card payment" on the edit sheet) -- same graceful
+  // fallback, defaults to "not a payment leg".
+  const transferIdx = headerMap['Transfer'];
+  const paymentIdIdx = headerMap['Payment ID'];
 
   // Columns: Payee, Income/Expense, SOF, Date, Month, Cleared, Amount,
   // Expense, Income, Total, Notes. rowNumber (1-based sheet row, accounting
@@ -257,6 +262,8 @@ async function fetchTransactionRows() {
     const isPending = pendingRaw === true || pendingRaw === 'TRUE' || pendingRaw === 'true';
     const matchIdRaw = matchIdIdx !== undefined ? row[matchIdIdx] : undefined;
     const matchStatusRaw = matchStatusIdx !== undefined ? row[matchStatusIdx] : undefined;
+    const transferRaw = transferIdx !== undefined ? row[transferIdx] : undefined;
+    const paymentIdRaw = paymentIdIdx !== undefined ? row[paymentIdIdx] : undefined;
 
     result.push({
       rowNumber: i + 2,
@@ -273,6 +280,8 @@ async function fetchTransactionRows() {
       isPending,
       matchId: matchIdRaw ? String(matchIdRaw).trim() : null,
       matchStatus: matchStatusRaw ? String(matchStatusRaw).trim() : null,
+      isTransfer: transferRaw === true || transferRaw === 'TRUE' || transferRaw === 'true',
+      paymentId: paymentIdRaw ? String(paymentIdRaw).trim() : null,
     });
   });
 

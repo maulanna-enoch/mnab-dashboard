@@ -28,6 +28,8 @@ module.exports = async (req, res) => {
         pending: r.isPending,
         matchId: r.matchId,
         matchStatus: r.matchStatus,
+        transfer: r.isTransfer,
+        paymentId: r.paymentId,
       })),
       updatedAt: new Date().toISOString(),
     });

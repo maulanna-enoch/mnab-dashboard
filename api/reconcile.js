@@ -19,6 +19,7 @@ const {
   appendAdjustmentRow,
   appendPlainTransactionRow,
   appendCardPaymentRows,
+  convertRowToCardPayment,
   tryFlipDiaryBilledToPaid,
   tryFlipDiaryPaidToBilled,
   getDiaryBilledAmount,
@@ -408,6 +409,106 @@ async function actionPayCard(body, res) {
   res.status(200).json({ ok: true, ...result, diaryFlipped: !!diaryFlip.flipped });
 }
 
+// "Convert to card payment" from the Edit transaction sheet. For a cash/bank
+// expense that was really a credit card bill payment -- typically an
+// EmailImport.gs row such as OCBC's "Successful Bill Payment" email, which
+// can only ever be imported as a plain Expense. Re-tags that row in place as
+// the cash leg and appends the card's Income leg (see
+// convertRowToCardPayment), then does the same best-effort Diary
+// Billed->Paid flip as actionPayCard. Field values come from the edit form
+// so anything the user changed before converting is saved too.
+async function actionConvertToCardPayment(body, res) {
+  const {
+    rowNumber: rowNumberRaw, cardAccount, sof: cashAccount, payee, amount,
+    date: dateStr, month: monthStr, cleared, notes,
+  } = body || {};
+
+  const rowNumber = parseInt(rowNumberRaw, 10);
+  if (!rowNumber || rowNumber < 2) {
+    res.status(400).json({ error: 'rowNumber is required.' });
+    return;
+  }
+  if (!cardAccount) {
+    res.status(400).json({ error: 'Pick the card being paid.' });
+    return;
+  }
+  if (!cashAccount) {
+    res.status(400).json({ error: 'sof (the paying account) is required.' });
+    return;
+  }
+  if (!payee || !String(payee).trim()) {
+    res.status(400).json({ error: 'Payee is required.' });
+    return;
+  }
+  const numAmount = Number(amount);
+  if (Number.isNaN(numAmount) || numAmount <= 0) {
+    res.status(400).json({ error: 'Amount must be a positive number.' });
+    return;
+  }
+  const date = parseISODate(dateStr);
+  if (!date) {
+    res.status(400).json({ error: 'Invalid payment date.' });
+    return;
+  }
+  // Same default as actionPayCard: the card's own statement-month guess for
+  // the payment date, minus one (paying down the prior closed statement).
+  const month = monthStr ? parseISOMonth(monthStr) : shiftMonth(billingMonthForDate(date), -1);
+  if (!month) {
+    res.status(400).json({ error: 'Invalid statement month.' });
+    return;
+  }
+
+  const sheets = getWriteSheetsClient();
+  const { accounts } = await fetchAccountsForReconcile(sheets);
+  const card = findAccount(accounts, cardAccount);
+  if (!card) {
+    res.status(404).json({ error: `Account "${cardAccount}" not found.` });
+    return;
+  }
+  if (isCashAccountType(card.type)) {
+    res.status(400).json({ error: `"${card.name}" isn't a credit card account.` });
+    return;
+  }
+  const cash = findAccount(accounts, cashAccount);
+  if (!cash) {
+    res.status(404).json({ error: `Account "${cashAccount}" not found.` });
+    return;
+  }
+  if (!isCashAccountType(cash.type)) {
+    res.status(400).json({ error: 'Only a cash/bank account expense can be converted to a card payment.' });
+    return;
+  }
+
+  let result;
+  try {
+    result = await convertRowToCardPayment(sheets, {
+      rowNumber,
+      cardAccount: card.name,
+      cashAccount: cash.name,
+      payee: String(payee).trim(),
+      amount: numAmount,
+      date,
+      month,
+      cleared,
+      notes: notes ? String(notes).trim() : '',
+    });
+  } catch (err) {
+    // convertRowToCardPayment's guard failures are user-facing (stale row,
+    // already a payment, etc.) -- a conflict, not a server fault.
+    res.status(409).json({ error: err.message });
+    return;
+  }
+
+  let diaryFlip = { flipped: false };
+  try {
+    diaryFlip = await tryFlipDiaryBilledToPaid(sheets, { cardAccount: card.name, month, amountPaid: numAmount });
+  } catch (err) {
+    console.error('Diary Billed->Paid flip failed (non-fatal):', err);
+  }
+
+  res.status(200).json({ ok: true, ...result, cardAccount: card.name, diaryFlipped: !!diaryFlip.flipped });
+}
+
 // New: "Undo payment" -- deletes both legs of a card payment written by
 // actionPayCard, keyed on the shared "Payment ID" column rather than a
 // rowNumber (a payment's two rows live on two different accounts, and
@@ -420,8 +521,8 @@ async function actionUndoPayment(body, res) {
   }
 
   const sheets = getWriteSheetsClient();
-  const { deletedCount, cardAccount, month } = await deletePaymentRows(sheets, paymentId);
-  if (!deletedCount) {
+  const { deletedCount, revertedCount, cardAccount, month } = await deletePaymentRows(sheets, paymentId);
+  if (!deletedCount && !revertedCount) {
     res.status(404).json({ error: 'Could not find any transactions for this payment -- they may already have been removed.' });
     return;
   }
@@ -438,7 +539,7 @@ async function actionUndoPayment(body, res) {
     }
   }
 
-  res.status(200).json({ deletedCount, diaryFlipped: !!diaryFlip.flipped });
+  res.status(200).json({ deletedCount, revertedCount, diaryFlipped: !!diaryFlip.flipped });
 }
 
 // Read-only. Looks up the card's Diary "Billed" line for a given billing
@@ -707,10 +808,12 @@ module.exports = async (req, res) => {
         return await actionPayCard(req.body, res);
       case 'undo-payment':
         return await actionUndoPayment(req.body, res);
+      case 'convert-to-card-payment':
+        return await actionConvertToCardPayment(req.body, res);
       case 'undo':
         return await actionUndo(req.body, res);
       default:
-        res.status(400).json({ error: 'Unknown or missing action. Use one of: calculate, confirm, add-adjustment, add-transaction, clear-transactions, pay-card, undo-payment, undo.' });
+        res.status(400).json({ error: 'Unknown or missing action. Use one of: calculate, confirm, add-adjustment, add-transaction, clear-transactions, pay-card, undo-payment, convert-to-card-payment, undo.' });
     }
   } catch (err) {
     console.error(err);

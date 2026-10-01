@@ -246,3 +246,47 @@
   background: #eab308;
   color: #0f1115;
 }
+
+/* "Convert to card payment" (edit sheet only) -- a secondary action link
+   under Save, which swaps Save/Delete for an inline panel rather than
+   stacking a second modal on top of this sheet. */
+.txf-convert-link {
+  display: none;
+  width: 100%;
+  padding: 10px;
+  margin-bottom: 8px;
+  border-radius: 10px;
+  border: 1px solid #374151;
+  background: transparent;
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+}
+.txf-convert-panel {
+  border: 1px solid #374151;
+  border-radius: 10px;
+  padding: 12px;
+  margin-bottom: 12px;
+  background: rgba(255,255,255,0.02);
+}
+.txf-convert-title { font-size: 13.5px; font-weight: 600; color: var(--text); margin-bottom: 10px; }
+.txf-convert-billed { font-size: 12px; color: var(--muted); min-height: 16px; margin: -4px 0 8px; }
+.txf-convert-billed.match { color: var(--accent); }
+.txf-convert-billed.mismatch { color: #eab308; }
+.txf-convert-hint { font-size: 11.5px; color: var(--muted); line-height: 1.45; margin-bottom: 12px; }
+.txf-convert-hint b { color: var(--text); font-weight: 600; }
+.txf-convert-actions { display: flex; gap: 8px; }
+.txf-convert-actions button {
+  flex: 1;
+  padding: 11px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.txf-convert-cancel-btn { border: 1px solid #374151; background: var(--bg); color: var(--muted); }
+.txf-convert-confirm-btn { border: none; background: var(--accent); color: #0f1115; }
+.txf-convert-confirm-btn:disabled { opacity: 0.6; cursor: default; }

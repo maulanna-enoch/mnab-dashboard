@@ -1827,9 +1827,12 @@
   // swipe-left gesture and the full Add/Edit sheet's own Delete link.
   function dtxKbdHandleDelete(txn) {
     const isPayment = !!txn.transfer;
-    const message = isPayment
-      ? `Undo this card payment ("${txn.payee}")? This removes BOTH the charge on the card and the matching entry on the paying account.`
-      : `Delete "${txn.payee}"?`;
+    const isConverted = isPayment && String(txn.paymentId || '').startsWith('cnv_');
+    const message = !isPayment
+      ? `Delete "${txn.payee}"?`
+      : isConverted
+        ? `Undo this card payment ("${txn.payee}")? This removes the entry on the card and turns the paying account's entry back into a normal expense.`
+        : `Undo this card payment ("${txn.payee}")? This removes BOTH the charge on the card and the matching entry on the paying account.`;
     showConfirm(
       message,
       async () => {
@@ -3219,7 +3222,9 @@
 
   function openUndoPaymentMenu(txn) {
     showConfirm(
-      `"${txn.payee}" is one leg of a card payment. Undoing it removes BOTH this entry and its matching entry on the other account.`,
+      String(txn.paymentId || '').startsWith('cnv_')
+        ? `"${txn.payee}" is one leg of a card payment converted from an existing transaction. Undoing it removes the card's entry and turns the paying account's entry back into a normal expense.`
+        : `"${txn.payee}" is one leg of a card payment. Undoing it removes BOTH this entry and its matching entry on the other account.`,
       () => doUndoPayment(txn),
       { title: 'Card payment', confirmLabel: 'Undo Payment', cancelLabel: 'Close', danger: true }
     );
@@ -3404,9 +3409,12 @@
   // delete, or reconcile's undo-payment for one leg of a card payment).
   function handleKeyboardDeleteTxn(txn) {
     const isPayment = !!txn.transfer;
-    const message = isPayment
-      ? `Undo this card payment ("${txn.payee}")? This removes BOTH the charge on the card and the matching entry on the paying account.`
-      : `Delete "${txn.payee}"?`;
+    const isConverted = isPayment && String(txn.paymentId || '').startsWith('cnv_');
+    const message = !isPayment
+      ? `Delete "${txn.payee}"?`
+      : isConverted
+        ? `Undo this card payment ("${txn.payee}")? This removes the entry on the card and turns the paying account's entry back into a normal expense.`
+        : `Undo this card payment ("${txn.payee}")? This removes BOTH the charge on the card and the matching entry on the paying account.`;
     showConfirm(
       message,
       async () => {
