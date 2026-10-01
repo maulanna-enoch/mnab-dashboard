@@ -521,6 +521,10 @@ function handleMessage_(message, labelKey, headerMap, dryRun) {
     }, headerMap, dryRun);
   }
 
+  if (parsed.transferToSof) {
+    return writeTransferPair_(parsed, messageId, headerMap, dryRun);
+  }
+
   return writeRow_({
     payee: parsed.payee,
     type: parsed.type || 'Expense',
@@ -530,6 +534,68 @@ function handleMessage_(message, labelKey, headerMap, dryRun) {
     notes: (parsed.notes || '') + ' (Auto-imported)',
     messageId: messageId
   }, headerMap, dryRun);
+}
+
+// Self-transfer between two of the user's own accounts (so far only
+// parseMandiriCardPayment_ asks for this): writes the two legs the
+// dashboard's "Add Payment" writes — Expense on `parsed.sof`, Income on
+// `parsed.transferToSof`, both Transfer = TRUE, both sharing one Payment
+// ID and this email's Message ID. Each leg still goes through writeRow_
+// on its own, so each lands Pending and each gets its own manual-match
+// check (a payment already logged by hand matches leg-for-leg).
+//
+// The legs are only ever written together: the Message ID guard in
+// runImportPass_ is per message, so a run that died between the two
+// appends would never come back for the second one. If the first append
+// throws, nothing was written; the second can only fail on a sheet error
+// that would have failed the first too.
+function writeTransferPair_(parsed, messageId, headerMap, dryRun) {
+  if (!dryRun) ensureTransferColumns_(headerMap);
+  var paymentId = 'pay_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); // same shape as generatePaymentId() in api/_lib/reconcile.js
+  var notes = (parsed.notes || '') + ' (Auto-imported)';
+
+  writeRow_({
+    payee: 'Payment to ' + parsed.transferToSof,
+    type: 'Expense',
+    sof: parsed.sof,
+    date: parsed.date,
+    amount: parsed.amount,
+    notes: notes,
+    messageId: messageId,
+    transfer: true,
+    paymentId: paymentId
+  }, headerMap, dryRun);
+
+  return writeRow_({
+    payee: 'Payment from ' + parsed.sof,
+    type: 'Income',
+    sof: parsed.transferToSof,
+    date: parsed.date,
+    amount: parsed.amount,
+    notes: notes,
+    messageId: messageId,
+    transfer: true,
+    paymentId: paymentId
+  }, headerMap, dryRun);
+}
+
+// 'Transfer' and 'Payment ID' are normally already on `transactions` (the
+// dashboard's Add Payment self-provisions them), but provision them here
+// too, same append-at-the-end pattern as ensureImportColumns_, rather than
+// silently dropping the flag. Kept out of IMPORT_COLUMNS on purpose so a
+// run with no transfers in it never touches the header row.
+var TRANSFER_COLUMNS = ['Transfer', 'Payment ID'];
+
+function ensureTransferColumns_(headerMap) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TRANSACTIONS_SHEET_NAME);
+  TRANSFER_COLUMNS.forEach(function (name) {
+    if (!headerMap[name]) {
+      var newCol = sheet.getLastColumn() + 1;
+      sheet.getRange(1, newCol).setValue(name);
+      headerMap[name] = newCol;
+      Logger.log('Auto-provisioned a new "' + name + '" column on transactions at position ' + newCol + '.');
+    }
+  });
 }
 
 function manualReviewRow_(message, labelKey, reasonNote) {
@@ -665,6 +731,12 @@ function writeRow_(row, headerMap, dryRun) {
     'Match ID': matchId,
     'Match Status': matchedRow ? 'Proposed' : ''
   };
+  // Only set on transfer legs (writeTransferPair_) — every other import
+  // leaves these cells blank exactly as before, rather than writing FALSE.
+  if (row.transfer) {
+    values['Transfer'] = true;
+    values['Payment ID'] = row.paymentId || '';
+  }
 
   if (dryRun) {
     Logger.log('[DRY RUN] Would append row: ' + JSON.stringify(values));
@@ -832,14 +904,27 @@ function parseSlashDate_(str) {
 // Livin' by Mandiri sends more than one template from the same sender, so —
 // like parseOcbcEmail_ below — this dispatches on the subject line first.
 // Validated against a real "Pembayaran Berhasil!" (QRIS merchant payment,
-// parseMandiriPayment_) and a real "Top-up e-money Berhasil" (e-money card
-// top-up, parseMandiriTopUp_) email. The payment template stays the DEFAULT
-// branch, so every Mandiri subject that isn't recognized here behaves
-// exactly as it did before this dispatcher existed.
+// parseMandiriPayment_), a real "Top-up e-money Berhasil" (e-money card
+// top-up, parseMandiriTopUp_) and real "Pembayaran Berhasil" credit card
+// bill payments (parseMandiriCardPayment_). The QRIS payment template stays
+// the DEFAULT branch, so every Mandiri email that isn't recognized here
+// behaves exactly as it did before this dispatcher existed.
+//
+// The card-payment template can't be told apart by subject: it's
+// "Pembayaran Berhasil", the QRIS one is "Pembayaran Berhasil!" — one "!"
+// apart, too fragile to dispatch on. So that branch checks the BODY
+// instead: a "Penyedia Jasa" (service provider) value of "Kartu Kredit
+// ..." only ever appears on a card bill payment. Before this branch
+// existed these emails fell through to parseMandiriPayment_, failed (no
+// "Penerima" label), and went to the AI fallback — which booked them as a
+// plain Expense, i.e. as spending, not as a transfer.
 
 function parseMandiriEmail_(subject, bodyHtml) {
   if (/top[-\s]?up/i.test(subject)) {
     return parseMandiriTopUp_(bodyHtml);
+  }
+  if (isMandiriCardPayment_(bodyHtml)) {
+    return parseMandiriCardPayment_(bodyHtml);
   }
   return parseMandiriPayment_(bodyHtml);
 }
@@ -929,9 +1014,10 @@ function parseMandiriPayment_(bodyHtml) {
 // actually left, which is the one that resolves to the SOF. Don't swap them.
 //
 // Booked as a plain Expense on the source account, matching how the Jago
-// e-wallet top-up template is handled — nothing this script writes ever
-// sets the Transfer flag, so the balance sitting on the e-money card isn't
-// tracked as its own account.
+// e-wallet top-up template is handled — the e-money card isn't one of the
+// user's tracked accounts, so there's no second leg to write. (Contrast
+// parseMandiriCardPayment_ below, where both sides ARE tracked accounts
+// and the payment is written as a Transfer pair.)
 var MANDIRI_TOPUP_LABELS = ['Penyedia Jasa', 'Tanggal', 'Jam', 'Nominal Top-up',
   'Nomor Referensi', 'Rekening Sumber'];
 
@@ -970,6 +1056,84 @@ function parseMandiriTopUp_(bodyHtml) {
     sof: sof,
     notes: "Top-up " + provider + (targetMask ? ' ' + targetMask : '') +
         " via Livin' by Mandiri — Ref " + (refNo || 'unknown')
+  };
+}
+
+// "Pembayaran Berhasil" — paying a Mandiri credit card bill from a Mandiri
+// account in Livin'. Validated against three real samples (cards ****2166,
+// ****2069, ****2892, all paid from ****0875). Body shape:
+//
+//   Penyedia Jasa      Kartu Kredit Mandiri / ****2166   ← card being PAID
+//   Tanggal            27 Sep 2026
+//   Jam                22:23:33 WIB
+//   Nominal Pembayaran Rp 4.626.726,00
+//   Biaya Transaksi    Rp 0,00
+//   Total Transaksi    Rp 4.626.726,00
+//   No. Referensi      2609271122061878958
+//   Rekening Sumber    MAULANNA MARYUNANI / ****0875     ← account PAYING
+//
+// Same two-masked-numbers trap as the top-up template: "Penyedia Jasa" is
+// the destination, "Rekening Sumber" is the source. Here BOTH resolve
+// through MANDIRI_SOF_MAP, because both are tracked accounts.
+//
+// Written as a self-transfer, the same shape the dashboard's "Add Payment"
+// (appendCardPaymentRows in api/_lib/reconcile.js) and Payments.gs use: an
+// Expense leg on the source account and an Income leg on the card, both
+// with Transfer = TRUE and a shared Payment ID, same payee wording. That
+// keeps it out of spend/income totals, and lets the dashboard's
+// undo-payment action remove both legs together. handleMessage_ does the
+// two-leg write; this parser just returns `transferToSof` alongside the
+// usual fields to ask for it.
+//
+// Both legs use "Nominal Pembayaran" (what reached the card). Every sample
+// so far had Biaya Transaksi Rp 0; if a non-zero fee ever shows up it's
+// noted on the row rather than booked, so the two legs stay equal.
+var MANDIRI_CARD_PAYMENT_LABELS = ['Penyedia Jasa', 'Tanggal', 'Jam', 'Nominal Pembayaran',
+  'Biaya Transaksi', 'Total Transaksi', 'No. Referensi', 'Rekening Sumber'];
+
+function isMandiriCardPayment_(bodyHtml) {
+  var provider = mandiriValueAfter_(htmlToText_(bodyHtml), MANDIRI_CARD_PAYMENT_LABELS, 'Penyedia Jasa');
+  return !!provider && /^kartu kredit/i.test(provider.split('\n')[0].trim());
+}
+
+function parseMandiriCardPayment_(bodyHtml) {
+  var text = htmlToText_(bodyHtml);
+
+  function valueAfter(label) {
+    return mandiriValueAfter_(text, MANDIRI_CARD_PAYMENT_LABELS, label);
+  }
+
+  var providerRaw = valueAfter('Penyedia Jasa');
+  var dateStr = valueAfter('Tanggal');
+  var nominal = valueAfter('Nominal Pembayaran');
+  var fee = valueAfter('Biaya Transaksi');
+  var refNo = valueAfter('No. Referensi');
+  var sofRaw = valueAfter('Rekening Sumber');
+
+  if (!providerRaw || !dateStr || !nominal || !sofRaw) return null; // → AI fallback
+
+  var cardLast4 = (providerRaw.match(/\*{2,4}(\d{4})/) || [])[1];
+  var sourceLast4 = (sofRaw.match(/\*{2,4}(\d{4})/) || [])[1]; // last label — runs into the footer, first mask only
+  var cardSof = MANDIRI_SOF_MAP[cardLast4];
+  var sourceSof = MANDIRI_SOF_MAP[sourceLast4];
+  if (!cardSof || !sourceSof) return null; // unrecognized card/account — don't guess
+
+  var date = parseIndonesianDate_(dateStr);
+  var amount = parseIndonesianAmount_(nominal);
+  if (!date || !amount) return null;
+
+  var feeAmount = fee ? parseIndonesianAmount_(fee) : 0;
+  var notes = "Card payment via Livin' by Mandiri — Ref " + (refNo || 'unknown');
+  if (feeAmount) notes += '. Bank fee ' + formatIdr_(feeAmount) + ' not booked — add it by hand';
+
+  return {
+    payee: 'Payment to ' + cardSof, // source leg; handleMessage_ writes the card leg's payee
+    type: 'Expense',
+    amount: amount,
+    date: date,
+    sof: sourceSof,
+    transferToSof: cardSof,
+    notes: notes
   };
 }
 
