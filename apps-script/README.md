@@ -9,3 +9,9 @@ The Apps Script project bound to the MNAB Google Sheet (`Reconcile.gs`, `Templat
 `InstallmentsBills.gs` is the third. Same rules apply: not auto-synced, paste the merged result into the Apps Script editor by hand after merging a change here.
 
 The other bound files (`Templates.gs`, `Payments.gs`) are not yet in this folder. Feel free to add them here the same way when they next need a tracked change.
+
+## Deploying from a phone: `Deployer.gs`
+
+`Deployer.gs` adds a private web page, bound to the same Apps Script project, that does the paste for you. You pick a branch and one tracked file and see a preview. Two taps then write that file into the project. Before writing, it saves a numbered snapshot of the project, and a "Roll back" button restores the file from that snapshot. It only ever replaces one existing file, and leaves everything else (including the untracked `Payments.gs` / `Templates.gs` and the manifest) exactly as it was. It's still a manual deploy and nothing runs on a trigger, in line with the "no automated pushes to the live script" decision.
+
+It needs a one-time setup at a computer: turn on the Apps Script API, paste the file in, add two OAuth scopes to `appsscript.json`, and deploy it as a web app that only you can access. The steps are at the top of the file. `Deployer.gs` itself is not deployable through the page, so update it by hand.
