@@ -94,8 +94,23 @@
           <button class="txf-toggle-btn" data-status="Uncleared">Uncleared</button>
         </div>
 
+        <div class="txf-convert-panel" id="txf-convert-panel" style="display:none;">
+          <div class="txf-convert-title">Convert to credit card payment</div>
+          <label class="txf-field-label" for="txf-convert-card">Card being paid</label>
+          <select id="txf-convert-card" class="txf-field"></select>
+          <label class="txf-field-label" for="txf-convert-month">Card statement month</label>
+          <input id="txf-convert-month" class="txf-field" type="month" />
+          <div class="txf-convert-billed" id="txf-convert-billed"></div>
+          <div class="txf-convert-hint" id="txf-convert-hint"></div>
+          <div class="txf-convert-actions">
+            <button type="button" class="txf-convert-cancel-btn" id="txf-convert-cancel-btn">Cancel</button>
+            <button type="button" class="txf-convert-confirm-btn" id="txf-convert-confirm-btn">Convert</button>
+          </div>
+        </div>
+
         <div id="txf-form-error" class="txf-error" style="display:none; margin-bottom: 8px;"></div>
         <button class="txf-save-btn" id="txf-save-btn">Save</button>
+        <button type="button" class="txf-convert-link" id="txf-convert-link" style="display:none;">Convert to card payment</button>
         <div class="txf-delete-link" id="txf-delete-link">Delete transaction</div>
       </div>
     </div>
@@ -218,8 +233,193 @@
       if (data.error) throw new Error(data.error);
       state.accountsCache = data.accounts || [];
       sofEl.innerHTML = data.accounts.map((a) => `<option value="${a.name}">${a.name}</option>`).join('');
+      // An edit sheet opened before this resolved couldn't know which
+      // accounts are cards yet -- re-check now that it can.
+      if (state.overlay.classList.contains('open')) {
+        if (state.editingTxn) state.sofEl.value = state.editingTxn.sof;
+        updateConvertVisibility();
+      }
     } catch (err) {
       sofEl.innerHTML = '<option value="">Error loading accounts</option>';
+    }
+  }
+
+  // ── Convert to card payment ─────────────────────────────────────────────
+  // A credit card bill paid from a bank account reaches MNAB first as a
+  // plain Expense on that bank account (EmailImport.gs's OCBC "Successful
+  // Bill Payment" parser, for instance, can't know the biller is one of the
+  // user's own cards). Converting re-tags THAT row as the cash leg of a card
+  // payment and adds the card's Income leg -- the same two-leg, Transfer=TRUE
+  // shape as the Accounts page's Add Payment -- so it stops counting as
+  // spending and the card's balance goes down. See api/reconcile.js's
+  // actionConvertToCardPayment.
+  function creditAccounts() {
+    return (state.accountsCache || []).filter((a) => !isCashAccountType(a.type));
+  }
+
+  // Offered only on an edit of a cash/bank Expense that isn't already one
+  // leg of a payment, and only when there's at least one card to pay.
+  // Re-evaluated whenever Type or Account changes, since either can make
+  // the row (in)eligible.
+  function canConvert() {
+    const txn = state.editingTxn;
+    if (!txn || !state.options.supportEditDelete) return false;
+    if (txn.transfer || txn.paymentId) return false;
+    if (getToggle('txf-type-toggle', 'type') !== 'Expense') return false;
+    if (!state.sofEl.value || !currentSofIsCash()) return false;
+    return creditAccounts().length > 0;
+  }
+
+  function updateConvertVisibility() {
+    if (!state.convertLink) return;
+    const ok = canConvert();
+    if (!ok && state.convertOpen) closeConvertPanel();
+    state.convertLink.style.display = ok && !state.convertOpen ? 'block' : 'none';
+  }
+
+  // Best guess at which card is being paid: one whose name starts with the
+  // paying account's first word (an "ocbc" bank row -> "ocbc 90.N"), since
+  // a card is most often paid from the same bank's account. Otherwise the
+  // first card listed.
+  function guessCardFor(sofName) {
+    const cards = creditAccounts();
+    const bank = String(sofName || '').trim().toLowerCase().split(/\s+/)[0];
+    const sameBank = bank ? cards.find((c) => c.name.trim().toLowerCase().split(/\s+/)[0] === bank) : null;
+    return (sameBank || cards[0] || {}).name || '';
+  }
+
+  // Same default as the Accounts page's Add Payment / api actionPayCard:
+  // the CARD's statement-month guess for the payment date, minus one -- a
+  // payment made now normally pays the prior, already-closed statement.
+  function guessPaidStatementMonth(dateStr) {
+    if (!dateStr) return '';
+    const guess = guessBillingMonth(dateStr, false); // card rule, deliberately
+    const d = new Date(guess + '-01T00:00:00');
+    d.setMonth(d.getMonth() - 1); // day already 1 -- no overflow
+    return monthValue(d);
+  }
+
+  function formatRp(n) {
+    return 'Rp' + formatAmountDisplay(String(Math.round(Math.abs(n))));
+  }
+
+  function updateConvertHint() {
+    const cash = state.sofEl.value;
+    const card = state.convertCardEl.value || 'the card';
+    const lines = [
+      `This entry stays on <b>${escapeHtml(cash)}</b> as the money going out, and a matching income is added to <b>${escapeHtml(card)}</b>.`,
+      'Both are marked as a transfer, so this no longer counts as spending.',
+    ];
+    state.convertHintEl.innerHTML = lines.map((l) => `<div>${l}</div>`).join('');
+  }
+
+  function escapeHtml(str) {
+    return String(str == null ? '' : str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  // Read-only: shows the card's Diary "Billed" amount for the chosen month
+  // next to this row's amount, as a sanity check that the right card/month
+  // is picked. Same endpoint the Add Payment form pre-fills from. Guarded
+  // by a request token so a slow answer for a previous pick is dropped.
+  let billedRequestToken = 0;
+  async function refreshConvertBilled() {
+    const token = ++billedRequestToken;
+    const el = state.convertBilledEl;
+    const card = state.convertCardEl.value;
+    const month = state.convertMonthEl.value;
+    el.className = 'txf-convert-billed';
+    if (!card || !month) { el.textContent = ''; return; }
+    el.textContent = 'Checking statement…';
+    try {
+      const res = await fetch('/api/reconcile?action=billed-amount&cardAccount=' + encodeURIComponent(card) + '&month=' + encodeURIComponent(month));
+      const data = await res.json();
+      if (token !== billedRequestToken) return;
+      if (data.error) throw new Error(data.error);
+      if (!data.found) {
+        el.textContent = 'No unpaid statement found for this card and month.';
+        return;
+      }
+      const paid = Number(digitsOnly(state.amountInput.value)) || 0;
+      const diff = paid - data.amount;
+      if (Math.abs(diff) < 0.5) {
+        el.textContent = `Statement billed ${formatRp(data.amount)} — matches, will be marked Paid.`;
+        el.classList.add('match');
+      } else if (diff > 0) {
+        el.textContent = `Statement billed ${formatRp(data.amount)} — this is ${formatRp(diff)} more; it will be marked Paid.`;
+        el.classList.add('match');
+      } else {
+        el.textContent = `Statement billed ${formatRp(data.amount)} — this is ${formatRp(diff)} short, so it stays Billed.`;
+        el.classList.add('mismatch');
+      }
+    } catch (err) {
+      if (token === billedRequestToken) el.textContent = '';
+    }
+  }
+
+  function openConvertPanel() {
+    if (!canConvert()) return;
+    state.convertOpen = true;
+    const cards = creditAccounts();
+    state.convertCardEl.innerHTML = cards.map((a) => `<option value="${escapeHtml(a.name)}">${escapeHtml(a.name)}</option>`).join('');
+    state.convertCardEl.value = guessCardFor(state.sofEl.value);
+    state.convertMonthEl.value = guessPaidStatementMonth(state.dateInput.value);
+    state.convertMonthTouched = false;
+    state.formError.style.display = 'none';
+    state.convertPanel.style.display = 'block';
+    state.saveBtn.style.display = 'none';
+    state.deleteLink.style.display = 'none';
+    state.convertLink.style.display = 'none';
+    updateConvertHint();
+    refreshConvertBilled();
+    state.convertCardEl.focus();
+    state.convertPanel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }
+
+  function closeConvertPanel() {
+    state.convertOpen = false;
+    billedRequestToken++;
+    state.convertPanel.style.display = 'none';
+    state.saveBtn.style.display = '';
+    state.deleteLink.style.display = state.editingRow !== null ? 'block' : 'none';
+    state.convertLink.style.display = canConvert() ? 'block' : 'none';
+  }
+
+  async function handleConvert() {
+    const payload = {
+      action: 'convert-to-card-payment',
+      rowNumber: state.editingRow,
+      cardAccount: state.convertCardEl.value,
+      month: state.convertMonthEl.value,
+      payee: state.payeeEl.value.trim(),
+      sof: state.sofEl.value,
+      amount: digitsOnly(state.amountInput.value),
+      date: state.dateInput.value,
+      cleared: getToggle('txf-status-toggle', 'status'),
+      notes: state.notesEl.value.trim(),
+    };
+    if (!payload.cardAccount || !payload.month || !payload.payee || !payload.amount || !payload.date) {
+      state.formError.textContent = 'Card, statement month, payee, amount and date are required.';
+      state.formError.style.display = 'block';
+      return;
+    }
+    state.convertConfirmBtn.disabled = true;
+    state.formError.style.display = 'none';
+    try {
+      const res = await fetch('/api/reconcile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Mnab-Token': WRITE_TOKEN },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      close();
+      showToast(data.diaryFlipped ? 'Card payment saved · statement Paid' : 'Converted to card payment');
+      if (typeof state.options.onSaved === 'function') state.options.onSaved(payload, true);
+    } catch (err) {
+      state.formError.textContent = err.message;
+      state.formError.style.display = 'block';
+    } finally {
+      state.convertConfirmBtn.disabled = false;
     }
   }
 
@@ -357,6 +557,10 @@
     const todayStr = todayISO();
     state.monthTouched = false;
     const isEditOpen = !!(txn && state.options.supportEditDelete);
+    state.editingTxn = isEditOpen ? txn : null;
+    state.convertOpen = false;
+    state.convertPanel.style.display = 'none';
+    state.saveBtn.style.display = '';
 
     // Location capture is offered for edit opens too, not just new
     // transactions (see issue #52's original, more conservative edit-mode
@@ -428,6 +632,7 @@
     }
     updateAmountColor();
     resizeAmountInput();
+    updateConvertVisibility();
 
     // Autofocus the amount field for a new transaction so typing the amount
     // can start immediately -- but not when editing an existing one, where
@@ -636,6 +841,16 @@
       matchBanner: rootEl.querySelector('#txf-match-banner'),
       matchConfirmBtn: rootEl.querySelector('#txf-match-confirm-btn'),
       matchDeclineBtn: rootEl.querySelector('#txf-match-decline-btn'),
+      editingTxn: null,
+      convertOpen: false,
+      convertLink: rootEl.querySelector('#txf-convert-link'),
+      convertPanel: rootEl.querySelector('#txf-convert-panel'),
+      convertCardEl: rootEl.querySelector('#txf-convert-card'),
+      convertMonthEl: rootEl.querySelector('#txf-convert-month'),
+      convertBilledEl: rootEl.querySelector('#txf-convert-billed'),
+      convertHintEl: rootEl.querySelector('#txf-convert-hint'),
+      convertCancelBtn: rootEl.querySelector('#txf-convert-cancel-btn'),
+      convertConfirmBtn: rootEl.querySelector('#txf-convert-confirm-btn'),
     };
 
     if (options.showFab === false) {
@@ -651,6 +866,7 @@
       b.addEventListener('click', () => {
         setToggle('txf-type-toggle', 'type', b.dataset.type);
         updateAmountColor();
+        updateConvertVisibility();
       }));
     rootEl.querySelectorAll('#txf-status-toggle .txf-toggle-btn').forEach((b) =>
       b.addEventListener('click', () => setToggle('txf-status-toggle', 'status', b.dataset.status)));
@@ -676,7 +892,24 @@
       if (!state.monthTouched && state.dateInput.value) {
         state.monthInput.value = guessBillingMonth(state.dateInput.value, currentSofIsCash());
       }
+      updateConvertVisibility();
+      if (state.convertOpen) updateConvertHint();
     });
+
+    state.convertLink.addEventListener('click', openConvertPanel);
+    state.convertCancelBtn.addEventListener('click', closeConvertPanel);
+    state.convertConfirmBtn.addEventListener('click', handleConvert);
+    state.convertCardEl.addEventListener('change', () => { updateConvertHint(); refreshConvertBilled(); });
+    state.convertMonthEl.addEventListener('input', () => { state.convertMonthTouched = true; refreshConvertBilled(); });
+    // The statement-month guess follows the payment date until edited by
+    // hand, same "touched" convention as the Billing month field.
+    state.dateInput.addEventListener('change', () => {
+      if (state.convertOpen && !state.convertMonthTouched) {
+        state.convertMonthEl.value = guessPaidStatementMonth(state.dateInput.value);
+        refreshConvertBilled();
+      }
+    });
+    state.amountInput.addEventListener('input', () => { if (state.convertOpen) refreshConvertBilled(); });
 
     state.fab.addEventListener('click', () => open(null));
     state.sheetClose.addEventListener('click', close);

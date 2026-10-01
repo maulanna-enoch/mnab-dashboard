@@ -144,9 +144,16 @@
       // expected to branch on this same flag to call the right endpoint
       // (transactions-delete vs. reconcile's undo-payment).
       const isPayment = !!txn.transfer;
-      const message = isPayment
-        ? 'Undo this card payment? This removes BOTH the charge on the card and the matching entry on the paying account.'
-        : 'Delete this transaction?';
+      // A 'cnv_' Payment ID marks a payment converted from an existing
+      // (usually bank-imported) row -- undo keeps that row as a plain
+      // expense instead of deleting it (api/_lib/reconcile.js
+      // deletePaymentRows).
+      const isConverted = isPayment && String(txn.paymentId || '').startsWith('cnv_');
+      const message = !isPayment
+        ? 'Delete this transaction?'
+        : isConverted
+          ? 'Undo this card payment? This removes the entry on the card and turns the paying account\'s entry back into a normal expense.'
+          : 'Undo this card payment? This removes BOTH the charge on the card and the matching entry on the paying account.';
       if (!confirm(message)) return;
       runBusyAction(entry, wrap, actionEl, entry.options.onDelete, txn, isPayment ? 'Undoing…' : 'Deleting…');
     } else {
