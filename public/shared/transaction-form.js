@@ -277,17 +277,6 @@
     state.convertLink.style.display = ok && !state.convertOpen ? 'block' : 'none';
   }
 
-  // Best guess at which card is being paid: one whose name starts with the
-  // paying account's first word (an "ocbc" bank row -> "ocbc 90.N"), since
-  // a card is most often paid from the same bank's account. Otherwise the
-  // first card listed.
-  function guessCardFor(sofName) {
-    const cards = creditAccounts();
-    const bank = String(sofName || '').trim().toLowerCase().split(/\s+/)[0];
-    const sameBank = bank ? cards.find((c) => c.name.trim().toLowerCase().split(/\s+/)[0] === bank) : null;
-    return (sameBank || cards[0] || {}).name || '';
-  }
-
   // Same default as the Accounts page's Add Payment / api actionPayCard:
   // the CARD's statement-month guess for the payment date, minus one -- a
   // payment made now normally pays the prior, already-closed statement.
@@ -359,9 +348,13 @@
   function openConvertPanel() {
     if (!canConvert()) return;
     state.convertOpen = true;
+    // Any bank account can pay any card, so there's no "matching" card to
+    // guess -- start on a placeholder and make the card an explicit pick
+    // (Convert refuses until one is chosen).
     const cards = creditAccounts();
-    state.convertCardEl.innerHTML = cards.map((a) => `<option value="${escapeHtml(a.name)}">${escapeHtml(a.name)}</option>`).join('');
-    state.convertCardEl.value = guessCardFor(state.sofEl.value);
+    state.convertCardEl.innerHTML = '<option value="">Choose a card…</option>' +
+      cards.map((a) => `<option value="${escapeHtml(a.name)}">${escapeHtml(a.name)}</option>`).join('');
+    state.convertCardEl.value = '';
     state.convertMonthEl.value = guessPaidStatementMonth(state.dateInput.value);
     state.convertMonthTouched = false;
     state.formError.style.display = 'none';
@@ -397,8 +390,14 @@
       cleared: getToggle('txf-status-toggle', 'status'),
       notes: state.notesEl.value.trim(),
     };
-    if (!payload.cardAccount || !payload.month || !payload.payee || !payload.amount || !payload.date) {
-      state.formError.textContent = 'Card, statement month, payee, amount and date are required.';
+    if (!payload.cardAccount) {
+      state.formError.textContent = 'Choose the card being paid.';
+      state.formError.style.display = 'block';
+      state.convertCardEl.focus();
+      return;
+    }
+    if (!payload.month || !payload.payee || !payload.amount || !payload.date) {
+      state.formError.textContent = 'Statement month, payee, amount and date are required.';
       state.formError.style.display = 'block';
       return;
     }
@@ -899,7 +898,7 @@
     state.convertLink.addEventListener('click', openConvertPanel);
     state.convertCancelBtn.addEventListener('click', closeConvertPanel);
     state.convertConfirmBtn.addEventListener('click', handleConvert);
-    state.convertCardEl.addEventListener('change', () => { updateConvertHint(); refreshConvertBilled(); });
+    state.convertCardEl.addEventListener('change', () => { state.formError.style.display = 'none'; updateConvertHint(); refreshConvertBilled(); });
     state.convertMonthEl.addEventListener('input', () => { state.convertMonthTouched = true; refreshConvertBilled(); });
     // The statement-month guess follows the payment date until edited by
     // hand, same "touched" convention as the Billing month field.
