@@ -1,9 +1,9 @@
 /*
  * MNAB service worker.
  *
- * Its job right now is to make the dashboard installable as a Home Screen
- * web app (a prerequisite for Web Push on iOS) and to show a friendly
- * offline page instead of the browser's error screen. It is deliberately
+ * It makes the dashboard installable as a Home Screen web app, shows a
+ * friendly offline page instead of the browser's error screen, and turns
+ * Web Push messages into notifications (bottom of this file). It is deliberately
  * NOT an offline cache of the app:
  *
  *  - Nothing the app normally loads is cached. /api/*, pages, shared JS/CSS
@@ -56,4 +56,46 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(fetch(req).catch(() => caches.match(url.pathname)));
   }
   // Everything else (/api/*, shared JS/CSS, ...) is left to the network.
+});
+
+// ── Web Push ────────────────────────────────────────────────────────────
+// Payloads come from api/_lib/push.js: { title, body, url }. iOS revokes
+// push permission from a web app that receives a push without showing a
+// notification, so a notification is shown for every push, even one whose
+// payload can't be parsed.
+self.addEventListener('push', (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch (err) {
+    data = { body: event.data ? event.data.text() : '' };
+  }
+  event.waitUntil(
+    self.registration.showNotification(data.title || 'MNAB', {
+      body: data.body || '',
+      icon: '/icons/icon-192.png',
+      badge: '/icons/icon-192.png',
+      data: { url: data.url || '/' },
+    })
+  );
+});
+
+// Tapping a notification opens its url (the pending-review list), reusing
+// an open MNAB window when there is one.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  const target = new URL((event.notification.data && event.notification.data.url) || '/', self.location.origin).href;
+  event.waitUntil((async () => {
+    const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const client of windows) {
+      if (new URL(client.url).origin !== self.location.origin) continue;
+      try {
+        const navigated = await client.navigate(target);
+        return (navigated || client).focus();
+      } catch (err) {
+        break; // can't steer this window (e.g. not controlled yet): open a fresh one instead
+      }
+    }
+    return self.clients.openWindow(target);
+  })());
 });

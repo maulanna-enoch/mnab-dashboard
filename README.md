@@ -113,8 +113,9 @@ second account in the same project doesn't shrink your headroom.
 ```
 mnab-dashboard/
   api/_lib/sheets.js                  Shared: read/write clients, row parsing + classification, buildTransactionRow
-  api/cashflow-months.js              Distinct months found in Diary, for the month dropdown
-  api/cashflow-summary.js             Income/Paid/Budgeted/Left-to-spend for a given ?month=YYYY-MM
+  api/cashflow-summary.js             Income/Paid/Budgeted/Left-to-spend for a given ?month=YYYY-MM;
+                                      ?action=months lists the Diary months for the dropdown
+  api/push.js                         Web Push: device subscriptions + the notify call EmailImport.gs makes
   api/installments-summary.js         Sum of active Installment amounts (excludes Bills)
   api/installments-by-end-month.js    Active Installments grouped by ending month, with running remaining total
   api/bills-summary.js                Sum + list of active Bills

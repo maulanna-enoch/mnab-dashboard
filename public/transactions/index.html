@@ -661,7 +661,9 @@
 
     let transactions = [];
     let showUpcoming = false;
-    let showPendingOnly = false; // issue #49
+    // issue #49. ?pending=1 opens the page already filtered to rows awaiting
+    // review -- it's where a new-transaction push notification lands.
+    let showPendingOnly = new URLSearchParams(location.search).get('pending') === '1';
 
     const upcomingToggleEl = document.getElementById('upcoming-toggle');
     const upcomingSwitchEl = document.getElementById('upcoming-switch');

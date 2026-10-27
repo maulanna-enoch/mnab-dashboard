@@ -1,7 +1,31 @@
-const { fetchDiaryRows } = require('./_lib/sheets');
+// Cash Flow endpoint for the home page.
+//
+// GET ?month=YYYY-MM          -> that month's income / outflow / left-to-spend.
+// GET ?action=months          -> distinct months found in Diary, for the
+//                                month dropdown.
+//
+// action=months used to be its own file, api/cashflow-months.js. It was
+// folded in here to free one of Vercel Hobby's 12 Serverless Function
+// slots for api/push.js. vercel.json rewrites the old /api/cashflow-months
+// URL to ?action=months, so anything still calling it keeps working.
+const { fetchDiaryRows, monthLabel } = require('./_lib/sheets');
+
+async function actionMonths(res) {
+  const rows = await fetchDiaryRows();
+  const monthSet = new Set(rows.filter((r) => r.month).map((r) => r.month));
+  const months = Array.from(monthSet)
+    .sort()
+    .reverse() // most recent first
+    .map((value) => ({ value, label: monthLabel(value) }));
+
+  res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
+  res.status(200).json({ months, updatedAt: new Date().toISOString() });
+}
 
 module.exports = async (req, res) => {
   try {
+    if (req.query && req.query.action === 'months') return await actionMonths(res);
+
     const month = (req.query && req.query.month) || '';
     if (!month) {
       res.status(400).json({ error: 'Missing "month" query param, e.g. ?month=2026-08' });

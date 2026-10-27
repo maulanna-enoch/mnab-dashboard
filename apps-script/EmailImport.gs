@@ -69,6 +69,13 @@
  *    parser can't handle land as a flagged manual-review row instead of
  *    being silently dropped — they just skip the AI attempt and wait for
  *    you to fill them in by hand or improve the parser.
+ * 9. (Optional, for push notifications) Two more script properties:
+ *      PUSH_NOTIFY_URL     https://<your-vercel-domain>/api/push
+ *      PUSH_NOTIFY_SECRET  the same value as PUSH_NOTIFY_SECRET in Vercel
+ *    After a run writes new rows, this file sends them to that URL in one
+ *    call and the dashboard pushes a notification to every device that
+ *    turned notifications on (the bell on the home page). Leave either
+ *    property unset and nothing is sent. See "PUSH NOTIFICATIONS" below.
  *
  * ── DRY_RUN IS NOW A SCRIPT PROPERTY, NOT A CODE VARIABLE ───────────────
  * Project Settings (gear icon) > Script Properties > Add script property,
@@ -392,6 +399,11 @@ function markExistingMnabEmailsAsAlreadyImported() {
 // on this one. See "TWO LAYERS OF DUPLICATE PROTECTION" up top.
 var LOCK_WAIT_MS = 30 * 1000;
 
+// Rows written during the current runImportPass_(), collected by writeRow_
+// for the push notification sent at the end of the run. null outside a run
+// (and during dry runs nothing is collected, since nothing is written).
+var importedThisRun_ = null;
+
 // The ONLY function installEmailImportTrigger() ever binds to the 5-minute
 // trigger. Always excludes already-imported threads (includeAlreadyImported:
 // false) — regardless of DRY_RUN — so a trigger-driven run only ever looks
@@ -428,6 +440,7 @@ function runImportPass_(opts) {
     return;
   }
 
+  importedThisRun_ = [];
   try {
     var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TRANSACTIONS_SHEET_NAME);
     if (!sheet) throw new Error('Could not find a sheet tab named "' + TRANSACTIONS_SHEET_NAME + '".');
@@ -485,6 +498,12 @@ function runImportPass_(opts) {
     });
   } finally {
     lock.releaseLock();
+    // In `finally` so rows written before an error mid-run still get their
+    // notification. notifyNewTransactions_ never throws, so it can't mask
+    // that error either.
+    var written = importedThisRun_ || [];
+    importedThisRun_ = null;
+    if (!dryRun && written.length) notifyNewTransactions_(written);
   }
 }
 
@@ -761,7 +780,60 @@ function writeRow_(row, headerMap, dryRun) {
     if (headerMap['Match Status']) sheet.getRange(matchedRow, headerMap['Match Status']).setValue('Proposed');
   }
 
+  // Queue it for this run's push notification. A self-transfer is written
+  // as two legs (writeTransferPair_); only the Expense leg is queued so one
+  // card payment is one line in the notification, not two.
+  if (importedThisRun_ && !(row.transfer && row.type === 'Income')) {
+    importedThisRun_.push({
+      payee: row.payee,
+      type: row.type || 'Expense',
+      sof: row.sof || '',
+      amount: amount,
+      transfer: Boolean(row.transfer)
+    });
+  }
+
   return true;
+}
+
+// ── PUSH NOTIFICATIONS ──────────────────────────────────────────────────
+// One POST per import run, after the lock is released, listing every row
+// the run wrote. api/push.js (action=notify) turns that into one
+// notification ("−Rp150.000 · GoFood" for one row, "3 new transactions"
+// for several) and sends it to every subscribed device. The Web Push
+// signing and encryption need crypto Apps Script doesn't have, which is
+// why the sending happens on Vercel rather than here.
+//
+// Best effort by design: a missing property, a network error or a non-200
+// is logged and ignored. The rows are already in the sheet, and the next
+// run must not be blocked or retried because a notification failed.
+function notifyNewTransactions_(items) {
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var url = props.getProperty('PUSH_NOTIFY_URL');
+    var secret = props.getProperty('PUSH_NOTIFY_SECRET');
+    if (!url || !secret) {
+      Logger.log('Push notifications not configured (PUSH_NOTIFY_URL / PUSH_NOTIFY_SECRET) — skipping notification for ' + items.length + ' new row(s).');
+      return;
+    }
+
+    var response = UrlFetchApp.fetch(url, {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { Authorization: 'Bearer ' + secret },
+      payload: JSON.stringify({ action: 'notify', items: items }),
+      muteHttpExceptions: true
+    });
+    Logger.log('Push notify for ' + items.length + ' new row(s): HTTP ' + response.getResponseCode() + ' ' + response.getContentText().substring(0, 300));
+  } catch (err) {
+    Logger.log('Push notify failed (rows are still imported): ' + err);
+  }
+}
+
+// Run by hand from the function dropdown to check the push setup end to
+// end without waiting for a bank email. Sends one made-up transaction.
+function testPushNotification() {
+  notifyNewTransactions_([{ payee: 'Test from EmailImport.gs', type: 'Expense', sof: 'test', amount: 12345, transfer: false }]);
 }
 
 // Reads the header row into a {headerName: 1-based col index} map, and
