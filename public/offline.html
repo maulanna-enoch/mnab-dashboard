@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<meta name="theme-color" content="#0f1115" />
+<title>Offline · MNAB</title>
+<link rel="icon" type="image/png" href="/favicon.png" />
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 24px;
+    box-sizing: border-box;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0f1115;
+    color: #f4f4f5;
+    text-align: center;
+  }
+  img { width: 72px; height: 72px; border-radius: 16px; }
+  h1 { font-size: 20px; margin: 8px 0 0; }
+  p { margin: 0; color: #9ca3af; max-width: 300px; line-height: 1.4; }
+  button {
+    margin-top: 12px;
+    background: #22c55e;
+    color: #0f1115;
+    border: 0;
+    border-radius: 10px;
+    padding: 12px 22px;
+    font-size: 16px;
+    font-weight: 600;
+  }
+</style>
+</head>
+<body>
+  <img src="/icons/icon-192.png" alt="" />
+  <h1>You're offline</h1>
+  <p>MNAB needs a connection to load your live balances and transactions.</p>
+  <button type="button" onclick="location.reload()">Try again</button>
+</body>
+</html>
