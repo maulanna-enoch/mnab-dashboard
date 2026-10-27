@@ -16,6 +16,7 @@
 <link rel="stylesheet" href="/shared/transaction-form.css" />
 <link rel="stylesheet" href="/shared/responsive.css" />
 <link rel="stylesheet" href="/shared/bottom-nav.css" />
+<link rel="stylesheet" href="/shared/push.css" />
 <style>
   :root {
     color-scheme: light dark;
@@ -54,6 +55,14 @@
     margin: 0 0 16px;
     text-align: center;
   }
+  /* "Cash Flow" heading row; also holds the Notifications bell (shared/push.js),
+     pinned to the content column's right edge so the centered title stays put. */
+  .home-heading {
+    position: relative;
+    width: 100%;
+    max-width: var(--page-max-width);
+  }
+  .home-heading .psh-bell { position: absolute; right: 0; top: -9px; }
   select#month {
     width: 100%;
     max-width: var(--page-max-width);
@@ -208,7 +217,12 @@
 </head>
 <body>
   <div class="app-title">MNAB · Maulanna Needs A Budget</div>
-  <h1>Cash Flow</h1>
+  <div class="home-heading">
+    <h1>Cash Flow</h1>
+    <button type="button" class="psh-bell" id="psh-bell" aria-label="Notifications">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
+    </button>
+  </div>
 
   <select id="month"></select>
 
@@ -262,6 +276,7 @@
   <script src="/shared/transaction-form.js"></script>
   <script src="/shared/bottom-nav.js"></script>
   <script src="/shared/keyboard-nav.js"></script>
+  <script src="/shared/push.js"></script>
   <script>
     function formatIDR(value) {
       return new Intl.NumberFormat('id-ID', {
@@ -358,7 +373,7 @@
     async function loadMonths() {
       const monthEl = document.getElementById('month');
       try {
-        const res = await fetch('/api/cashflow-months');
+        const res = await fetch('/api/cashflow-summary?action=months');
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         if (!data.months.length) {
@@ -457,6 +472,7 @@
 
     BottomNav.mount(document.getElementById('bnv-root'), { active: 'home' });
     KeyboardNav.mount();
+    PushToggle.mount(document.getElementById('psh-bell'));
 
     // Quick-add deep link (see issue #30): a Siri Shortcut can ask for just
     // the amount, then open "/?amount=<digits>" -- this opens the Add form

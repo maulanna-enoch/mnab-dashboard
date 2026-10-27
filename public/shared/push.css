@@ -1,0 +1,60 @@
+/* shared/push.css: the Notifications bell + sheet (shared/push.js). */
+/* Size and look only; the host page positions it (see .home-heading in
+   public/index.html). */
+.psh-bell {
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--card, #1a1d24);
+  color: var(--muted, #9ca3af);
+  border: 1px solid #2a2e37;
+  border-radius: 50%;
+  cursor: pointer;
+  padding: 0;
+}
+.psh-bell svg { width: 20px; height: 20px; }
+.psh-bell.psh-on { color: var(--accent, #22c55e); border-color: var(--accent, #22c55e); }
+.psh-bell:focus-visible { outline: 2px solid var(--accent, #22c55e); outline-offset: 2px; }
+
+.psh-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  z-index: 60;
+  align-items: flex-end;
+  justify-content: center;
+}
+.psh-overlay.open { display: flex; }
+.psh-sheet {
+  width: 100%;
+  max-width: 420px;
+  background: var(--card, #1a1d24);
+  color: var(--text, #f4f4f5);
+  border-radius: 16px 16px 0 0;
+  padding: 18px 16px calc(24px + env(safe-area-inset-bottom));
+}
+.psh-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.psh-title { font-size: 15px; font-weight: 600; }
+.psh-close { color: var(--muted, #9ca3af); font-size: 22px; background: none; border: none; padding: 0; line-height: 1; cursor: pointer; font-family: inherit; }
+.psh-text { margin: 0 0 16px; color: var(--muted, #9ca3af); font-size: 14px; line-height: 1.45; }
+.psh-btn {
+  display: block;
+  width: 100%;
+  margin-bottom: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px solid var(--accent, #22c55e);
+  background: var(--accent, #22c55e);
+  color: #0f1115;
+  font-size: 15px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+.psh-btn.psh-btn-secondary { background: transparent; color: var(--text, #f4f4f5); border-color: #374151; }
+.psh-btn.psh-busy { opacity: 0.5; cursor: default; }
+.psh-btn[hidden] { display: none; }
+.psh-note { margin: 4px 0 0; min-height: 1.2em; font-size: 13px; color: var(--muted, #9ca3af); }

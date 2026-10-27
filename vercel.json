@@ -1,5 +1,8 @@
 {
   "cleanUrls": true,
+  "rewrites": [
+    { "source": "/api/cashflow-months", "destination": "/api/cashflow-summary?action=months" }
+  ],
   "headers": [
     {
       "source": "/sw.js",
