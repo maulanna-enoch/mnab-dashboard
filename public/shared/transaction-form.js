@@ -48,6 +48,7 @@
         <div class="txf-toggle-row" id="txf-type-toggle">
           <button class="txf-toggle-btn" data-type="Expense">Expense</button>
           <button class="txf-toggle-btn" data-type="Income">Income</button>
+          <button class="txf-toggle-btn" data-type="Transfer" id="txf-type-transfer-btn">Transfer</button>
         </div>
 
         <label class="txf-amount-block" for="txf-f-amount">
@@ -59,6 +60,7 @@
           <div class="txf-amount-rule"></div>
         </label>
 
+        <div id="txf-payee-group">
         <label class="txf-field-label">Payee</label>
         <div class="txf-payee-row">
           <input id="txf-f-payee" class="txf-field txf-payee-input" type="text" placeholder="e.g. Sushi Hiro, Plaza Indonesia" list="txf-payee-list" autocomplete="off" />
@@ -71,9 +73,15 @@
         </div>
         <datalist id="txf-payee-list"></datalist>
         <div class="txf-loc-hint" id="txf-loc-hint" style="display:none;"></div>
+        </div>
 
-        <label class="txf-field-label">Account (SOF)</label>
+        <label class="txf-field-label" id="txf-sof-label" for="txf-f-sof">Account (SOF)</label>
         <select id="txf-f-sof" class="txf-field"></select>
+
+        <div id="txf-transfer-to-group" style="display:none;">
+          <label class="txf-field-label" for="txf-f-to">To account</label>
+          <select id="txf-f-to" class="txf-field"></select>
+        </div>
 
         <div class="txf-row-2">
           <div>
@@ -81,10 +89,20 @@
             <input id="txf-f-date" class="txf-field" type="date" />
           </div>
           <div>
-            <label class="txf-field-label">Billing month</label>
+            <label class="txf-field-label" id="txf-month-label" for="txf-f-month">Billing month</label>
             <input id="txf-f-month" class="txf-field" type="month" />
           </div>
         </div>
+
+        <div class="txf-row-2" id="txf-to-month-row" style="display:none;">
+          <div></div>
+          <div>
+            <label class="txf-field-label" for="txf-f-to-month">To billing month</label>
+            <input id="txf-f-to-month" class="txf-field" type="month" />
+          </div>
+        </div>
+
+        <div class="txf-transfer-hint" id="txf-transfer-hint" style="display:none;"></div>
 
         <label class="txf-field-label">Notes (optional)</label>
         <input id="txf-f-notes" class="txf-field" type="text" placeholder="e.g. Aolion Knight Joycon" />
@@ -212,8 +230,10 @@
     state.amountInput.style.width = (state.amountInput.value.length + 1) + 'ch';
   }
   function updateAmountColor() {
-    const isIncome = getToggle('txf-type-toggle', 'type') === 'Income';
-    const color = isIncome ? 'var(--accent)' : 'var(--negative)';
+    const type = getToggle('txf-type-toggle', 'type');
+    // A transfer is neither spending nor income -- money just moves between
+    // two of your own accounts -- so it gets the neutral text colour.
+    const color = type === 'Transfer' ? 'var(--text)' : (type === 'Income' ? 'var(--accent)' : 'var(--negative)');
     state.amountInput.style.color = color;
     state.amountCurrency.style.color = color;
   }
@@ -238,6 +258,7 @@
       if (state.overlay.classList.contains('open')) {
         if (state.editingTxn) state.sofEl.value = state.editingTxn.sof;
         updateConvertVisibility();
+        if (isTransferMode()) applyTypeMode();
       }
     } catch (err) {
       sofEl.innerHTML = '<option value="">Error loading accounts</option>';
@@ -422,6 +443,145 @@
     }
   }
 
+  // ── Transfer between two accounts ───────────────────────────────────────
+  // The third Type option, offered on Add only. Moving money between two of
+  // your own accounts is written as the same two-leg, Transfer=TRUE shape a
+  // card payment uses -- an Expense on the "from" account and an Income on
+  // the "to" account, sharing one Payment ID -- so both balances move while
+  // the Diary's "<>TRUE" Transfer criteria keep it out of spend/income. The
+  // Payment ID gets a 'trf_' prefix so the existing undo-payment path
+  // deletes both legs (and skips the card-statement Diary flip, which only
+  // makes sense for a real card payment). See api/reconcile.js's
+  // actionTransfer.
+  //
+  // In this mode the Account (SOF) select is relabelled "From account" and
+  // is the from-leg; a second select picks the to-leg. Payee is hidden --
+  // each leg's payee is generated ("Transfer to X" / "Transfer from Y"),
+  // same convention as Add Payment's "Payment to/from" -- so these never
+  // land in the Payees registry either. Each leg gets its own billing month,
+  // since the two accounts can follow different heuristics (cash 25th-cycle
+  // vs. card day-13); the existing Billing month field is the from-leg's.
+  function isTransferMode() {
+    return getToggle('txf-type-toggle', 'type') === 'Transfer';
+  }
+
+  function accountByName(name) {
+    return (state.accountsCache || []).find((a) => a.name === name);
+  }
+
+  function toAccountIsCash() {
+    const acct = accountByName(state.transferToEl.value);
+    return isCashAccountType(acct ? acct.type : undefined);
+  }
+
+  // Every account except the one being transferred from. Starts on a
+  // placeholder rather than guessing (same "make it an explicit pick" rule
+  // as Convert's card select), but keeps the current pick across a
+  // re-render if it's still valid.
+  function populateTransferTo() {
+    const from = state.sofEl.value;
+    const prev = state.transferToEl.value;
+    const options = (state.accountsCache || []).filter((a) => a.name !== from);
+    state.transferToEl.innerHTML = '<option value="">Choose an account…</option>' +
+      options.map((a) => `<option value="${escapeHtml(a.name)}">${escapeHtml(a.name)}</option>`).join('');
+    state.transferToEl.value = options.some((a) => a.name === prev) ? prev : '';
+  }
+
+  function refreshToMonthGuess() {
+    if (state.toMonthTouched) return;
+    state.toMonthInput.value = state.transferToEl.value && state.dateInput.value
+      ? guessBillingMonth(state.dateInput.value, toAccountIsCash())
+      : '';
+  }
+
+  function updateTransferHint() {
+    const from = state.sofEl.value;
+    const to = state.transferToEl.value;
+    if (!from || !to) {
+      state.transferHintEl.innerHTML = '';
+      state.transferHintEl.style.display = 'none';
+      return;
+    }
+    const lines = [
+      `Adds money going out of <b>${escapeHtml(from)}</b> and the same amount coming into <b>${escapeHtml(to)}</b>.`,
+      'Both are marked as a transfer, so this doesn’t count as spending or income.',
+    ];
+    const toAcct = accountByName(to);
+    if (toAcct && !isCashAccountType(toAcct.type)) {
+      lines.push(`Paying off a card statement? Use <b>Add Payment</b> on ${escapeHtml(to)}’s account page instead, so the statement gets marked Paid.`);
+    }
+    state.transferHintEl.innerHTML = lines.map((l) => `<div>${l}</div>`).join('');
+    state.transferHintEl.style.display = 'block';
+  }
+
+  // Shows/hides the transfer-only fields for whichever Type is active.
+  // Called on every Type toggle and on open().
+  function applyTypeMode() {
+    const transfer = isTransferMode();
+    state.payeeGroup.style.display = transfer ? 'none' : '';
+    state.transferToGroup.style.display = transfer ? '' : 'none';
+    state.toMonthRow.style.display = transfer ? '' : 'none';
+    state.sofLabel.textContent = transfer ? 'From account' : 'Account (SOF)';
+    state.monthLabel.textContent = transfer ? 'From billing month' : 'Billing month';
+    if (transfer) {
+      populateTransferTo();
+      refreshToMonthGuess();
+      updateTransferHint();
+    } else {
+      state.transferHintEl.style.display = 'none';
+    }
+  }
+
+  async function handleTransferSave() {
+    const payload = {
+      action: 'transfer',
+      fromAccount: state.sofEl.value,
+      toAccount: state.transferToEl.value,
+      amount: digitsOnly(state.amountInput.value),
+      date: state.dateInput.value,
+      fromMonth: state.monthInput.value,
+      toMonth: state.toMonthInput.value,
+      cleared: getToggle('txf-status-toggle', 'status'),
+      notes: state.notesEl.value.trim(),
+    };
+    if (!payload.toAccount) {
+      state.formError.textContent = 'Choose the account to transfer to.';
+      state.formError.style.display = 'block';
+      state.transferToEl.focus();
+      return;
+    }
+    if (payload.fromAccount === payload.toAccount) {
+      state.formError.textContent = 'From and To must be different accounts.';
+      state.formError.style.display = 'block';
+      return;
+    }
+    if (!payload.fromAccount || !payload.amount || Number(payload.amount) <= 0 || !payload.date || !payload.fromMonth || !payload.toMonth) {
+      state.formError.textContent = 'Accounts, amount, date, and both billing months are required.';
+      state.formError.style.display = 'block';
+      return;
+    }
+
+    state.saveBtn.disabled = true;
+    state.formError.style.display = 'none';
+    try {
+      const res = await fetch('/api/reconcile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Mnab-Token': WRITE_TOKEN },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      close();
+      showToast('Transfer saved');
+      if (typeof state.options.onSaved === 'function') state.options.onSaved(payload, false);
+    } catch (err) {
+      state.formError.textContent = err.message;
+      state.formError.style.display = 'block';
+    } finally {
+      state.saveBtn.disabled = false;
+    }
+  }
+
   // Whether the currently-selected SOF is a cash/bank account (vs. a credit
   // card) -- see guessBillingMonth(). Defaults to true (cash) when the
   // accounts list hasn't loaded yet or the selected name isn't found, same
@@ -560,6 +720,11 @@
     state.convertOpen = false;
     state.convertPanel.style.display = 'none';
     state.saveBtn.style.display = '';
+    // Transfer is an Add-only option: an existing row is a single leg, and
+    // re-shaping it into a two-leg pair is a different operation (that's
+    // what Convert to card payment is for).
+    state.transferBtn.style.display = isEditOpen ? 'none' : '';
+    state.toMonthTouched = false;
 
     // Location capture is offered for edit opens too, not just new
     // transactions (see issue #52's original, more conservative edit-mode
@@ -629,6 +794,7 @@
       setToggle('txf-status-toggle', 'status', 'Uncleared');
       state.deleteLink.style.display = 'none';
     }
+    applyTypeMode();
     updateAmountColor();
     resizeAmountInput();
     updateConvertVisibility();
@@ -681,6 +847,7 @@
 
   async function handleSave() {
     const isEdit = state.options.supportEditDelete && state.editingRow !== null;
+    if (!isEdit && isTransferMode()) return handleTransferSave();
 
     const payload = {
       payee: state.payeeEl.value.trim(),
@@ -850,6 +1017,16 @@
       convertHintEl: rootEl.querySelector('#txf-convert-hint'),
       convertCancelBtn: rootEl.querySelector('#txf-convert-cancel-btn'),
       convertConfirmBtn: rootEl.querySelector('#txf-convert-confirm-btn'),
+      transferBtn: rootEl.querySelector('#txf-type-transfer-btn'),
+      payeeGroup: rootEl.querySelector('#txf-payee-group'),
+      sofLabel: rootEl.querySelector('#txf-sof-label'),
+      monthLabel: rootEl.querySelector('#txf-month-label'),
+      transferToGroup: rootEl.querySelector('#txf-transfer-to-group'),
+      transferToEl: rootEl.querySelector('#txf-f-to'),
+      toMonthRow: rootEl.querySelector('#txf-to-month-row'),
+      toMonthInput: rootEl.querySelector('#txf-f-to-month'),
+      transferHintEl: rootEl.querySelector('#txf-transfer-hint'),
+      toMonthTouched: false,
     };
 
     if (options.showFab === false) {
@@ -864,6 +1041,8 @@
     rootEl.querySelectorAll('#txf-type-toggle .txf-toggle-btn').forEach((b) =>
       b.addEventListener('click', () => {
         setToggle('txf-type-toggle', 'type', b.dataset.type);
+        state.formError.style.display = 'none';
+        applyTypeMode();
         updateAmountColor();
         updateConvertVisibility();
       }));
@@ -893,7 +1072,18 @@
       }
       updateConvertVisibility();
       if (state.convertOpen) updateConvertHint();
+      // The To list excludes whatever From now is (and drops the To pick if
+      // it just became the From account).
+      if (isTransferMode()) applyTypeMode();
     });
+
+    state.transferToEl.addEventListener('change', () => {
+      state.formError.style.display = 'none';
+      refreshToMonthGuess();
+      updateTransferHint();
+    });
+    state.toMonthInput.addEventListener('input', () => { state.toMonthTouched = true; });
+    state.dateInput.addEventListener('change', () => { if (isTransferMode()) refreshToMonthGuess(); });
 
     state.convertLink.addEventListener('click', openConvertPanel);
     state.convertCancelBtn.addEventListener('click', closeConvertPanel);

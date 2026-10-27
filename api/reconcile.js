@@ -19,6 +19,8 @@ const {
   appendAdjustmentRow,
   appendPlainTransactionRow,
   appendCardPaymentRows,
+  appendTransferRows,
+  isTransferPaymentId,
   convertRowToCardPayment,
   tryFlipDiaryBilledToPaid,
   tryFlipDiaryPaidToBilled,
@@ -409,6 +411,73 @@ async function actionPayCard(body, res) {
   res.status(200).json({ ok: true, ...result, diaryFlipped: !!diaryFlip.flipped });
 }
 
+// "Transfer" from the Add transaction sheet: moves money between any two of
+// the user's own accounts as a linked, Transfer=TRUE pair (see
+// appendTransferRows). Lives in this dispatcher rather than its own
+// /api file because of the Vercel Hobby 12-function cap. Unlike pay-card it
+// never touches the Diary -- the form points card-statement payments at
+// Add Payment instead.
+async function actionTransfer(body, res) {
+  const {
+    fromAccount, toAccount, amount, date: dateStr,
+    fromMonth: fromMonthStr, toMonth: toMonthStr, cleared, notes,
+  } = body || {};
+
+  if (!fromAccount || !toAccount) {
+    res.status(400).json({ error: 'fromAccount and toAccount are required.' });
+    return;
+  }
+  if (String(fromAccount).trim().toLowerCase() === String(toAccount).trim().toLowerCase()) {
+    res.status(400).json({ error: 'From and To must be different accounts.' });
+    return;
+  }
+  const numAmount = Number(amount);
+  if (!Number.isFinite(numAmount) || numAmount <= 0) {
+    res.status(400).json({ error: 'Amount must be a positive number.' });
+    return;
+  }
+  const date = parseISODate(dateStr);
+  if (!date) {
+    res.status(400).json({ error: 'Invalid transfer date.' });
+    return;
+  }
+
+  const sheets = getWriteSheetsClient();
+  const { accounts } = await fetchAccountsForReconcile(sheets);
+  const from = findAccount(accounts, fromAccount);
+  if (!from) {
+    res.status(404).json({ error: `Account "${fromAccount}" not found.` });
+    return;
+  }
+  const to = findAccount(accounts, toAccount);
+  if (!to) {
+    res.status(404).json({ error: `Account "${toAccount}" not found.` });
+    return;
+  }
+
+  // Each leg's month defaults to ITS OWN account's heuristic -- always pass
+  // the isCash flag explicitly (billingMonthForDate's default is the card rule).
+  const fromMonth = fromMonthStr ? parseISOMonth(fromMonthStr) : billingMonthForDate(date, isCashAccountType(from.type));
+  const toMonth = toMonthStr ? parseISOMonth(toMonthStr) : billingMonthForDate(date, isCashAccountType(to.type));
+  if (!fromMonth || !toMonth) {
+    res.status(400).json({ error: 'Invalid billing month.' });
+    return;
+  }
+
+  const result = await appendTransferRows(sheets, {
+    fromAccount: from.name,
+    toAccount: to.name,
+    amount: numAmount,
+    date,
+    fromMonth,
+    toMonth,
+    cleared,
+    notes,
+  });
+
+  res.status(200).json({ ok: true, ...result });
+}
+
 // "Convert to card payment" from the Edit transaction sheet. For a cash/bank
 // expense that was really a credit card bill payment -- typically an
 // EmailImport.gs row such as OCBC's "Successful Bill Payment" email, which
@@ -530,8 +599,11 @@ async function actionUndoPayment(body, res) {
   // Best-effort only, same contract as actionPayCard's forward flip above --
   // never let a Diary-matching quirk fail an undo that's already happened.
   // See tryFlipDiaryPaidToBilled's own comment (GitHub issue #37).
+  // A plain account-to-account transfer ('trf_') never flipped a Diary
+  // statement to Paid, so undoing one mustn't flip anything back either --
+  // even when its "to" leg happens to be a credit card.
   let diaryFlip = { flipped: false };
-  if (cardAccount && month) {
+  if (cardAccount && month && !isTransferPaymentId(paymentId)) {
     try {
       diaryFlip = await tryFlipDiaryPaidToBilled(sheets, { cardAccount, month });
     } catch (err) {
@@ -810,10 +882,12 @@ module.exports = async (req, res) => {
         return await actionUndoPayment(req.body, res);
       case 'convert-to-card-payment':
         return await actionConvertToCardPayment(req.body, res);
+      case 'transfer':
+        return await actionTransfer(req.body, res);
       case 'undo':
         return await actionUndo(req.body, res);
       default:
-        res.status(400).json({ error: 'Unknown or missing action. Use one of: calculate, confirm, add-adjustment, add-transaction, clear-transactions, pay-card, undo-payment, convert-to-card-payment, undo.' });
+        res.status(400).json({ error: 'Unknown or missing action. Use one of: calculate, confirm, add-adjustment, add-transaction, clear-transactions, pay-card, undo-payment, convert-to-card-payment, transfer, undo.' });
     }
   } catch (err) {
     console.error(err);

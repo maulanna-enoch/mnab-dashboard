@@ -490,6 +490,16 @@ function isConvertedPaymentId(paymentId) {
   return String(paymentId || '').trim().startsWith(CONVERTED_PAYMENT_ID_PREFIX);
 }
 
+// 'trf' = a plain account-to-account transfer from the Add transaction
+// sheet's Transfer mode (appendTransferRows). Both legs are fresh rows, so
+// undo deletes both, same as 'pay' -- but it is NOT a card statement
+// payment, so undo must skip the Diary Paid->Billed flip (actionUndoPayment).
+const TRANSFER_PAYMENT_ID_PREFIX = 'trf_';
+
+function isTransferPaymentId(paymentId) {
+  return String(paymentId || '').trim().startsWith(TRANSFER_PAYMENT_ID_PREFIX);
+}
+
 function shiftMonth(date, deltaMonths) {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + deltaMonths, 1));
 }
@@ -569,6 +579,78 @@ async function appendCardPaymentRows(sheets, { cardAccount, cashAccount, amount,
   const cardRowNumber = parseInt(cardResp.data.updates.updatedRange.match(/(\d+)(?::|$)/)[1], 10);
 
   return { paymentId, cashRowNumber, cardRowNumber };
+}
+
+// Account-to-account transfer: same two-leg, Transfer=TRUE, shared Payment
+// ID shape as appendCardPaymentRows above, but for ANY pair of the user's
+// accounts (cash->cash, cash->card, card->cash, ...), and with the form's
+// own Cleared status, notes and a per-leg billing month (the two accounts
+// may follow different billing-month heuristics). Expense on the "from"
+// account, Income on the "to" account -- with the sheet's Total = Expense -
+// Income convention that moves both balances the right way for every
+// account type. No Diary side effects.
+async function appendTransferRows(sheets, { fromAccount, toAccount, amount, date, fromMonth, toMonth, cleared, notes }) {
+  const spreadsheetId = process.env.SHEET_ID;
+  let map = await getHeaderMap(sheets, spreadsheetId, RECONCILE_SHEETS.transactions);
+  requireColumns(map, 'transactions', ['SOF', 'Date', 'Cleared']);
+  const amountHeader = 'Total' in map ? 'Total' : 'Amount';
+  if (!(amountHeader in map)) throw new Error('transactions tab needs a "Total" or "Amount" column.');
+  const payeeHeader = 'Payee' in map ? 'Payee' : ('Name' in map ? 'Name' : null);
+
+  map = await getOrCreateTransactionsColumn(sheets, map, 'Transfer');
+  map = await getOrCreateTransactionsColumn(sheets, map, 'Payment ID');
+
+  const paymentId = generatePaymentId('trf');
+  const dateSerial = dateToSerial(date);
+  const clearedValue = cleared === 'Cleared' ? 'Cleared' : 'Uncleared';
+  const notesValue = notes ? String(notes).trim() : 'Transfer';
+  const width = Math.max(...Object.values(map)) + 1;
+
+  function buildLeg(sof, type, payeeText, month) {
+    const row = new Array(width).fill('');
+    if (payeeHeader) row[map[payeeHeader]] = payeeText;
+    if ('Income/Expense' in map) row[map['Income/Expense']] = type;
+    row[map['SOF']] = sof;
+    row[map['Date']] = dateSerial;
+    if ('Month' in map) row[map['Month']] = dateToSerial(month);
+    row[map['Cleared']] = clearedValue;
+    const expense = type === 'Expense' ? amount : 0;
+    const income = type === 'Income' ? amount : 0;
+    if ('Amount' in map) row[map['Amount']] = amount;
+    if ('Expense' in map) row[map['Expense']] = expense;
+    if ('Income' in map) row[map['Income']] = income;
+    if (amountHeader === 'Total' && 'Total' in map) row[map['Total']] = expense - income;
+    if ('Notes' in map) row[map['Notes']] = notesValue;
+    row[map['Transfer']] = true;
+    row[map['Payment ID']] = paymentId;
+    return row;
+  }
+
+  const fromLeg = buildLeg(fromAccount, 'Expense', `Transfer to ${toAccount}`, fromMonth);
+  const toLeg = buildLeg(toAccount, 'Income', `Transfer from ${fromAccount}`, toMonth);
+  const range = `${RECONCILE_SHEETS.transactions}!A:${columnLetter(width - 1)}`;
+
+  // Sequential single-row appends, same as appendCardPaymentRows, so each
+  // response's updatedRange yields that leg's own row number.
+  const fromResp = await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range,
+    valueInputOption: 'RAW',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: { values: [fromLeg] },
+  });
+  const fromRowNumber = parseInt(fromResp.data.updates.updatedRange.match(/(\d+)(?::|$)/)[1], 10);
+
+  const toResp = await sheets.spreadsheets.values.append({
+    spreadsheetId,
+    range,
+    valueInputOption: 'RAW',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: { values: [toLeg] },
+  });
+  const toRowNumber = parseInt(toResp.data.updates.updatedRange.match(/(\d+)(?::|$)/)[1], 10);
+
+  return { paymentId, fromRowNumber, toRowNumber };
 }
 
 // Turns an EXISTING transactions row -- normally an auto-imported bank
@@ -1114,8 +1196,10 @@ module.exports = {
   appendAdjustmentRow,
   appendPlainTransactionRow,
   appendCardPaymentRows,
+  appendTransferRows,
   convertRowToCardPayment,
   isConvertedPaymentId,
+  isTransferPaymentId,
   tryFlipDiaryBilledToPaid,
   tryFlipDiaryPaidToBilled,
   getDiaryBilledAmount,

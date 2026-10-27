@@ -114,6 +114,11 @@
 .txf-toggle-btn.active { border-color: var(--accent); color: var(--text); }
 #txf-type-toggle .txf-toggle-btn[data-type="Expense"].active { border-color: var(--negative); color: var(--text); }
 #txf-type-toggle .txf-toggle-btn[data-type="Income"].active { border-color: var(--accent); color: var(--text); }
+/* Transfer: neutral, since it's neither spending nor income. */
+#txf-type-toggle .txf-toggle-btn[data-type="Transfer"].active { border-color: var(--muted); color: var(--text); }
+.txf-transfer-hint { font-size: 11.5px; color: var(--muted); line-height: 1.45; margin: 0 0 12px; }
+.txf-transfer-hint > div + div { margin-top: 4px; }
+.txf-transfer-hint b { color: var(--text); font-weight: 600; }
 
 /* Payee field + its location-pin toggle (issue #52). The toggle is hidden
    by default (transaction-form.js only reveals it once geolocation actually

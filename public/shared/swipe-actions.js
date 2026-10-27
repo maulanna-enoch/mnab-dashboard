@@ -149,8 +149,13 @@
       // expense instead of deleting it (api/_lib/reconcile.js
       // deletePaymentRows).
       const isConverted = isPayment && String(txn.paymentId || '').startsWith('cnv_');
+      // 'trf_' = an account-to-account transfer from Add transaction's
+      // Transfer mode -- undone the same way, but it isn't a card payment.
+      const isPlainTransfer = isPayment && String(txn.paymentId || '').startsWith('trf_');
       const message = !isPayment
         ? 'Delete this transaction?'
+        : isPlainTransfer
+          ? 'Undo this transfer? This removes BOTH this entry and the matching entry on the other account.'
         : isConverted
           ? 'Undo this card payment? This removes the entry on the card and turns the paying account\'s entry back into a normal expense.'
           : 'Undo this card payment? This removes BOTH the charge on the card and the matching entry on the paying account.';
