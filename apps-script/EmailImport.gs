@@ -30,7 +30,9 @@
  *    (Gmail's filter UI only lets you pick one label per rule anyway, so
  *    this is also the only thing that's actually possible):
  *      from:(noreply.livin@bankmandiri.co.id) → apply label "mnab/mandiri"
- *      from:(notifikasi@ocbc.id)              → apply label "mnab/ocbc"
+ *      from:(notifikasi@ocbc.id OR onlinetransaction@ocbc.id) → apply label "mnab/ocbc"
+ *        (incoming "BI-Fast Transfer Dana Masuk" mail comes from
+ *        onlinetransaction@ocbc.id, not notifikasi@ — both are needed)
  *      from:(noreply@jago.com)                → apply label "mnab/jago"
  *    (Gmail > Settings > Filters and Blocked Addresses > Create a new
  *    filter > match the sender > Continue > check "Apply the label" >
@@ -544,6 +546,11 @@ function handleMessage_(message, labelKey, headerMap, dryRun) {
     return writeTransferPair_(parsed, messageId, headerMap, dryRun);
   }
 
+  // Single-leg Transfer (e.g. parseOcbcIncomingTransfer_ for money moved in
+  // from the user's own account at another bank): one row, Transfer = TRUE,
+  // no Payment ID since there's no paired leg written here.
+  if (parsed.transfer && !dryRun) ensureTransferColumns_(headerMap);
+
   return writeRow_({
     payee: parsed.payee,
     type: parsed.type || 'Expense',
@@ -551,7 +558,8 @@ function handleMessage_(message, labelKey, headerMap, dryRun) {
     date: parsed.date,
     amount: parsed.amount,
     notes: (parsed.notes || '') + ' (Auto-imported)',
-    messageId: messageId
+    messageId: messageId,
+    transfer: !!parsed.transfer
   }, headerMap, dryRun);
 }
 
@@ -782,8 +790,9 @@ function writeRow_(row, headerMap, dryRun) {
 
   // Queue it for this run's push notification. A self-transfer is written
   // as two legs (writeTransferPair_); only the Expense leg is queued so one
-  // card payment is one line in the notification, not two.
-  if (importedThisRun_ && !(row.transfer && row.type === 'Income')) {
+  // card payment is one line in the notification, not two. A single-leg
+  // transfer (no Payment ID, e.g. an incoming BI-Fast) is still queued.
+  if (importedThisRun_ && !(row.transfer && row.paymentId && row.type === 'Income')) {
     importedThisRun_.push({
       payee: row.payee,
       type: row.type || 'Expense',
@@ -1226,6 +1235,13 @@ function parseOcbcEmail_(subject, bodyHtml) {
   if (/credit card transaction/i.test(subject)) {
     return parseOcbcCreditCard_(bodyHtml);
   }
+  // Must come BEFORE the outgoing "transfer dana" branch below: the
+  // incoming subject ("BI-Fast Transfer Dana Masuk") also contains
+  // "Transfer Dana", and would otherwise go to parseOcbcTransfer_, fail
+  // (no KE / JUMLAH TRANSFER labels) and drop to the AI fallback.
+  if (/dana masuk/i.test(subject)) {
+    return parseOcbcIncomingTransfer_(bodyHtml);
+  }
   if (/transfer dana/i.test(subject)) {
     return parseOcbcTransfer_(bodyHtml);
   }
@@ -1283,6 +1299,80 @@ function parseOcbcTransfer_(bodyHtml) {
     date: parseIndonesianDate_(dateMatch[1]),
     sof: 'ocbc',
     notes: 'OCBC BI Fast transfer — Ref ' + (refMatch ? refMatch[1] : 'unknown')
+  };
+}
+
+// "BI-Fast Transfer Dana Masuk" — money received into the OCBC cash
+// account from another bank via BI-Fast. Sent from onlinetransaction@ocbc.id
+// (NOT notifikasi@ocbc.id like the other OCBC templates — the Gmail filter
+// for mnab/ocbc has to cover both senders). Validated against two real
+// samples (from BCA and from Superbank). Body is a two-column table, one
+// "<label>" cell then a ": <value>" cell per row:
+//
+//   Bank Pengirim         : BANK CENTRAL ASIA
+//   Nama Pengirim         : MAULANNA MARYUNANI
+//   No Rekening Pengirim  : 5325146157
+//   Nominal               : Rp 60.909.090,00     ← dot=thousands, comma=decimal
+//   Bank Penerima         : OCBC
+//   Nama Penerima         : MAULANNA MARYUNANI
+//   No Rekening Penerima  : 400810038440
+//   Tanggal Transaksi     : 23 Oktober 2026
+//   Waktu Transaksi       : 15:33:47
+//   Berita                : -
+//
+// Booked as Income on 'ocbc'. When the sender's name equals the
+// recipient's (case-insensitive) it's the user moving their own money in
+// from another bank, so the row is flagged Transfer = TRUE — the project's
+// convention for incoming transfers from the user's own other banks. Only
+// this one leg is written: the sending bank (BCA, Superbank, …) isn't
+// resolved to an Accounts.Name here, so its Expense leg comes from that
+// bank's own import or is added by hand.
+// htmlToText_ leaves whitespace-only lines between the label cell and the
+// ": value" cell, hence \s* (not a single \n) before the colon.
+function ocbcTableValue_(text, label) {
+  var re = new RegExp('(?:^|\\n)[ \\t]*' + label + '\\s*:[ \\t]*([^\\n]*)', 'i');
+  var m = text.match(re);
+  if (!m) return null;
+  var v = m[1].trim();
+  return (v && v !== '-') ? v : null;
+}
+
+function parseOcbcIncomingTransfer_(bodyHtml) {
+  var text = htmlToText_(bodyHtml);
+
+  var senderBank = ocbcTableValue_(text, 'Bank Pengirim');
+  var senderName = ocbcTableValue_(text, 'Nama Pengirim');
+  var senderAcct = ocbcTableValue_(text, 'No Rekening Pengirim');
+  var nominal = ocbcTableValue_(text, 'Nominal');
+  var recipientName = ocbcTableValue_(text, 'Nama Penerima');
+  var recipientAcct = ocbcTableValue_(text, 'No Rekening Penerima');
+  var dateStr = ocbcTableValue_(text, 'Tanggal Transaksi');
+  var memo = ocbcTableValue_(text, 'Berita');
+
+  if (!senderName || !nominal || !dateStr) return null; // → AI fallback
+  // Same conservative check as the outgoing parsers: only assume the 'ocbc'
+  // cash account when a real account number is shown as the recipient.
+  if (!recipientAcct || !/\d{9,}/.test(recipientAcct)) return null;
+
+  var date = parseIndonesianDate_(dateStr); // "23 Oktober 2026" — first 3 letters "okt"
+  var amount = parseIndonesianAmount_(nominal);
+  if (!date || !amount) return null;
+
+  var isSelf = !!recipientName &&
+      senderName.replace(/\s+/g, ' ').toUpperCase() === recipientName.replace(/\s+/g, ' ').toUpperCase();
+
+  var notesParts = ['OCBC BI-Fast incoming transfer'];
+  notesParts.push('from ' + (senderBank || 'unknown bank') + (senderAcct ? ' ' + senderAcct : ''));
+  if (memo) notesParts.push('Berita: ' + memo);
+
+  return {
+    payee: isSelf ? 'Transfer from ' + (senderBank || 'other bank') : senderName,
+    type: 'Income',
+    amount: amount,
+    date: date,
+    sof: 'ocbc',
+    transfer: isSelf,
+    notes: notesParts.join(' — ')
   };
 }
 
