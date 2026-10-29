@@ -30,9 +30,7 @@
  *    (Gmail's filter UI only lets you pick one label per rule anyway, so
  *    this is also the only thing that's actually possible):
  *      from:(noreply.livin@bankmandiri.co.id) → apply label "mnab/mandiri"
- *      from:(notifikasi@ocbc.id OR onlinetransaction@ocbc.id) → apply label "mnab/ocbc"
- *        (incoming "BI-Fast Transfer Dana Masuk" mail comes from
- *        onlinetransaction@ocbc.id, not notifikasi@ — both are needed)
+ *      from:(notifikasi@ocbc.id)              → apply label "mnab/ocbc"
  *      from:(noreply@jago.com)                → apply label "mnab/jago"
  *    (Gmail > Settings > Filters and Blocked Addresses > Create a new
  *    filter > match the sender > Continue > check "Apply the label" >
@@ -1303,10 +1301,11 @@ function parseOcbcTransfer_(bodyHtml) {
 }
 
 // "BI-Fast Transfer Dana Masuk" — money received into the OCBC cash
-// account from another bank via BI-Fast. Sent from onlinetransaction@ocbc.id
-// (NOT notifikasi@ocbc.id like the other OCBC templates — the Gmail filter
-// for mnab/ocbc has to cover both senders). Validated against two real
-// samples (from BCA and from Superbank). Body is a two-column table, one
+// account from another bank via BI-Fast. Validated against two real
+// samples (from BCA and from Superbank). Before this parser existed these
+// went to tryAiFallback_, which always books an Expense and can't resolve
+// the 'ocbc' cash account (OCBC_SOF_MAP only holds card last-4s), so they
+// landed as an Expense with a blank SOF. Body is a two-column table, one
 // "<label>" cell then a ": <value>" cell per row:
 //
 //   Bank Pengirim         : BANK CENTRAL ASIA
