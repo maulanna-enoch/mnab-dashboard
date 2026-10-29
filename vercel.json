@@ -18,5 +18,8 @@
         { "key": "Cache-Control", "value": "no-cache" }
       ]
     }
+  ],
+  "crons": [
+    { "path": "/api/push?action=morning", "schedule": "0 23 * * *" }
   ]
 }

@@ -107,8 +107,12 @@ async function fetchInstallmentRows() {
     const hasEndDate = typeof endsSerial === 'number';
     const endDate = hasEndDate ? serialToDate(endsSerial) : null;
     const isBill = hasEndDate && endDate.getUTCFullYear() >= BILL_YEAR_THRESHOLD;
+    const sof = String(row[1] || '').trim();
+    const startsSerial = row[5];
+    const startDate = typeof startsSerial === 'number' ? serialToDate(startsSerial) : null;
+    const dayOfMonth = Number(row[8]) || null;
 
-    return { name, amount, isActive, hasEndDate, endDate, isBill };
+    return { name, sof, amount, isActive, hasEndDate, endDate, startDate, dayOfMonth, isBill };
   });
 }
 

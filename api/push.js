@@ -11,20 +11,32 @@
 // POST action=notify         { items: [...] }         -> push to every device.
 //      Requires "Authorization: Bearer <PUSH_NOTIFY_SECRET>". Called by
 //      apps-script/EmailImport.gs after an import run writes new rows.
+// GET  ?action=morning                                -> the morning money push
+// POST action=morning        { dryRun }               (bills due today + daily
+//      budget left) to every device. GET is what the Vercel cron in
+//      vercel.json calls, with "Authorization: Bearer <CRON_SECRET>"; POST
+//      is for a manual run with PUSH_NOTIFY_SECRET. dryRun: true returns the
+//      message without sending it. See api/_lib/morning.js.
 //
 // Note: like every other /api endpoint, subscribe/unsubscribe/test are not
 // authenticated. Only notify, the one that broadcasts, needs the secret.
 const crypto = require('crypto');
-const { getWriteSheetsClient } = require('./_lib/sheets');
+const { getWriteSheetsClient, fetchInstallmentRows, fetchDiaryRows } = require('./_lib/sheets');
 const push = require('./_lib/push');
+const morning = require('./_lib/morning');
 
-function secretMatches(header) {
-  const secret = process.env.PUSH_NOTIFY_SECRET || '';
+function secretMatches(header, secret = process.env.PUSH_NOTIFY_SECRET || '') {
   const given = String(header || '').replace(/^Bearer\s+/i, '');
   if (!secret || !given) return false;
   const a = Buffer.from(secret);
   const b = Buffer.from(given);
   return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+// Vercel's cron sends CRON_SECRET; a manual call can use PUSH_NOTIFY_SECRET.
+function morningAuthorized(req) {
+  const header = req.headers && req.headers.authorization;
+  return secretMatches(header, process.env.CRON_SECRET || '') || secretMatches(header);
 }
 
 function requireVapid(res) {
@@ -105,12 +117,48 @@ async function actionNotify(req, res) {
   res.status(200).json({ ok: true, devices: rows.length, ...result });
 }
 
+async function actionMorning(req, res, dryRun) {
+  if (!process.env.CRON_SECRET && !process.env.PUSH_NOTIFY_SECRET) {
+    res.status(503).json({ error: 'Set CRON_SECRET (or PUSH_NOTIFY_SECRET) in Vercel.' });
+    return;
+  }
+  if (!morningAuthorized(req)) {
+    res.status(401).json({ error: 'Bad or missing bearer token' });
+    return;
+  }
+
+  const today = morning.jakartaToday();
+  const cycle = morning.cycleFor(today);
+  const [installments, diary] = await Promise.all([fetchInstallmentRows(), fetchDiaryRows()]);
+  const message = morning.composeMorning({
+    bills: morning.billsDueOn(installments, today),
+    leftToSpend: morning.leftToSpendFor(diary, cycle.month),
+    cycle,
+  });
+  const { summary, ...payload } = message;
+
+  res.setHeader('Cache-Control', 'no-store');
+  if (dryRun) {
+    res.status(200).json({ ok: true, dryRun: true, payload, summary });
+    return;
+  }
+  if (!requireVapid(res)) return;
+
+  const sheets = getWriteSheetsClient();
+  await push.ensurePushSheet(sheets);
+  const rows = await push.fetchSubscriptions(sheets);
+  const result = await push.sendToAll(sheets, rows, payload);
+  // The response carries counts only, not the amounts.
+  res.status(200).json({ ok: true, devices: rows.length, ...result });
+}
+
 module.exports = async (req, res) => {
   try {
     if (req.method === 'GET') {
       const action = (req.query && req.query.action) || 'config';
       if (action === 'config') return await actionConfig(res);
-      res.status(400).json({ error: 'Unknown GET action. Use ?action=config.' });
+      if (action === 'morning') return await actionMorning(req, res, false);
+      res.status(400).json({ error: 'Unknown GET action. Use ?action=config or ?action=morning.' });
       return;
     }
     if (req.method !== 'POST') {
@@ -124,8 +172,9 @@ module.exports = async (req, res) => {
       case 'unsubscribe': return await actionUnsubscribe(body, res);
       case 'test': return await actionTest(body, res);
       case 'notify': return await actionNotify(req, res);
+      case 'morning': return await actionMorning(req, res, body.dryRun === true);
       default:
-        res.status(400).json({ error: 'Unknown or missing action. Use one of: subscribe, unsubscribe, test, notify.' });
+        res.status(400).json({ error: 'Unknown or missing action. Use one of: subscribe, unsubscribe, test, notify, morning.' });
     }
   } catch (err) {
     console.error(err);
