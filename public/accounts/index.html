@@ -1606,7 +1606,7 @@
   // (save) or Escape (cancel/discard) resolve the whole session.
   function startDtxKbdEdit(txn) {
     if (dtxKbdEditRowNumber !== null) return; // already editing a row
-    if (txn.transfer) return; // transfer legs aren't editable inline -- see .dtx-transfer-row
+    if (isLinkedLeg(txn)) return; // linked transfer legs aren't editable inline -- see .dtx-transfer-row
     const row = dtxRowEls()[dtxKbdHighlightIndex];
     if (!row) return;
 
@@ -1834,7 +1834,7 @@
   // re-renders both views), same delete path as the mobile list's
   // swipe-left gesture and the full Add/Edit sheet's own Delete link.
   function dtxKbdHandleDelete(txn) {
-    const isPayment = !!txn.transfer;
+    const isPayment = isLinkedLeg(txn);
     const isConverted = isPayment && String(txn.paymentId || '').startsWith('cnv_');
     const isPlainTransfer = isPayment && String(txn.paymentId || '').startsWith('trf_');
     const message = !isPayment
@@ -2061,7 +2061,7 @@
     // entirely -- see the file-level note on renderDetailTxnList's checkbox
     // wiring below for why (double-entry pairing an ordinary bulk
     // delete/duplicate/date-change would silently break).
-    dtxVisibleRowNumbers = rows.filter((t) => !t.transfer).map((t) => t.rowNumber);
+    dtxVisibleRowNumbers = rows.filter((t) => !isLinkedLeg(t)).map((t) => t.rowNumber);
     dtxUpdateSelectAllCheckbox();
 
     if (!rows.length) {
@@ -2077,7 +2077,7 @@
       const payee = t.payee || '';
       const notes = t.notes || '';
       const pendingHtml = t.pending ? '<button type="button" class="txn-confirm-btn" title="Confirm this pending transaction">Confirm</button>' : '';
-      const isTransfer = !!t.transfer;
+      const isTransfer = isLinkedLeg(t);
       // Transfer legs aren't inline-editable (see the .dtx-transfer-row CSS
       // comment above) -- .dtx-editable is simply omitted for those rows so
       // the click-to-edit listeners below have nothing to attach to.
@@ -2107,7 +2107,7 @@
           <td class="dtx-status-col" data-field="cleared">${statusHtml}</td>
           <td class="dtx-pending-col">${pendingHtml}</td>
           <td class="dtx-truncate${editableCls}" data-field="notes" title="${notes.replace(/"/g, '&quot;')}">${notes}</td>
-          <td class="dtx-open-col"><button type="button" class="dtx-open-btn" title="${isTransfer ? 'Card payment options' : 'Open full editor'}">&#9998;</button></td>
+          <td class="dtx-open-col"><button type="button" class="dtx-open-btn" title="${isTransfer ? (isPlainTransferId(t.paymentId) ? 'Transfer options' : 'Card payment options') : 'Open full editor'}">&#9998;</button></td>
         </tr>
       `;
     }).join('');
@@ -2133,7 +2133,7 @@
       const statusTd = row.querySelector('td.dtx-status-col');
       statusTd.addEventListener('click', async (e) => {
         e.stopPropagation();
-        if (txn.transfer) return; // transfer legs: use the pencil button's undo-payment menu instead
+        if (isLinkedLeg(txn)) return; // linked transfer legs: use the pencil button's undo-payment menu instead
         if (statusTd.classList.contains('dtx-cell-saving')) return;
         statusTd.classList.add('dtx-cell-saving');
         try {
@@ -2146,7 +2146,7 @@
 
       row.querySelector('.dtx-open-btn').addEventListener('click', (e) => {
         e.stopPropagation();
-        if (txn.transfer) openUndoPaymentMenu(txn);
+        if (isLinkedLeg(txn)) openUndoPaymentMenu(txn);
         else TransactionForm.open(txn);
       });
 
@@ -2321,7 +2321,7 @@
     // includes transfer legs (see renderDetailTable's comment on why).
     const selectAllRow = document.getElementById('detail-select-all-row');
     const selectAllLink = document.getElementById('detail-select-all-link');
-    const visibleRowNumbers = visible.filter((t) => !t.transfer).map((t) => t.rowNumber);
+    const visibleRowNumbers = visible.filter((t) => !isLinkedLeg(t)).map((t) => t.rowNumber);
     if (visibleRowNumbers.length) {
       selectAllRow.style.display = 'flex';
       const allSelected = BulkSelect.isAllVisibleSelected(visibleRowNumbers);
@@ -2354,7 +2354,7 @@
       if (!t.isCleared) metaBits.push('<span class="uncleared">uncleared</span>');
       if (t.reconciled) metaBits.push('<span class="reconciled-tag">reconciled</span>');
       if (isUpcoming) metaBits.push('<span class="upcoming-tag">upcoming</span>');
-      if (t.transfer) metaBits.push('<span class="transfer-tag">payment</span>');
+      if (t.transfer) metaBits.push(`<span class="transfer-tag">${transferTagLabel(t)}</span>`);
       if (t.pending) metaBits.push('<span class="pending-tag">pending</span>');
       // Issue #49: lightweight Confirm action, same as the Transactions page.
       const confirmHtml = t.pending
@@ -2363,7 +2363,7 @@
       // Row select (issue #78) -- disabled (not omitted) for a transfer leg,
       // same reasoning as the wide-viewport table's own selectCellHtml.
       const checkedAttr = BulkSelect.isSelected(t.rowNumber) ? 'checked' : '';
-      const checkHtml = t.transfer
+      const checkHtml = isLinkedLeg(t)
         ? `<input type="checkbox" class="blk-check" disabled title="Card payment legs can't be bulk-edited -- use this row's own undo option" />`
         : `<input type="checkbox" class="blk-check txn-row-check" data-row="${t.rowNumber}" ${checkedAttr} />`;
       const rowInner = `
@@ -2379,7 +2379,7 @@
             </div>
           </div>
       `;
-      html += SwipeActions.rowHTML(t.rowNumber, `txn-row ${t.reconciled ? 'reconciled' : ''} ${isUpcoming ? 'upcoming' : ''} ${t.pending ? 'pending' : ''}`, rowInner, t.isCleared, t.transfer);
+      html += SwipeActions.rowHTML(t.rowNumber, `txn-row ${t.reconciled ? 'reconciled' : ''} ${isUpcoming ? 'upcoming' : ''} ${t.pending ? 'pending' : ''}`, rowInner, t.isCleared, isLinkedLeg(t));
     });
     listEl.innerHTML = html;
 
@@ -2388,7 +2388,7 @@
         const rowNumber = parseInt(row.closest('.swx-wrap').dataset.row, 10);
         const txn = rows.find((t) => t.rowNumber === rowNumber);
         if (!txn) return;
-        if (txn.transfer) {
+        if (isLinkedLeg(txn)) {
           openUndoPaymentMenu(txn);
         } else {
           TransactionForm.open(txn);
@@ -2455,10 +2455,7 @@
   }
 
   async function deleteDetailTxnViaSwipe(txn) {
-    if (txn.transfer) {
-      if (!txn.paymentId) {
-        throw new Error('This payment predates Payment ID tracking and can\'t be auto-undone -- delete each leg manually instead.');
-      }
+    if (isLinkedLeg(txn)) {
       await apiPost('/api/reconcile', { action: 'undo-payment', paymentId: txn.paymentId });
       await fetchAndRenderAccountDetail(currentAccount);
       return;
@@ -2828,7 +2825,7 @@
         const isIncome = t.type === 'Income';
         const amountText = (isIncome ? '+' : '') + formatIDR(t.amount);
         const metaBits = [t.date];
-        if (t.transfer) metaBits.push('payment');
+        if (t.transfer) metaBits.push(transferTagLabel(t));
         return `
           <label class="rc-clear-item">
             <input type="checkbox" data-row="${t.rowNumber}" onchange="rcOnClearItemToggle(${t.rowNumber}, this.checked)">
@@ -3231,6 +3228,29 @@
     }
   }
 
+  // A row is a *linked* transfer leg only when it's Transfer-flagged AND
+  // carries a Payment ID -- i.e. it was written as one half of a pair by
+  // pay-card ('pay_'/legacy), convert-to-card-payment ('cnv_') or the Add
+  // form's Transfer mode ('trf_'), and undo-payment can find its partner.
+  // A row whose Transfer box was just ticked by hand in the Sheet, by the
+  // inbox import, or by an email import (e.g. an incoming BI Fast from one
+  // of the user's own banks, or a Duitku school payment) has no Payment ID
+  // and no partner row: it's an ordinary single row that only happens to
+  // be excluded from spend/income. Those stay fully editable, deletable
+  // and bulk-selectable -- treating them as payment legs offered an
+  // "Undo Payment" that could only ever fail.
+  function isLinkedLeg(t) {
+    return !!(t && t.transfer && t.paymentId);
+  }
+  function isPlainTransferId(paymentId) {
+    return String(paymentId || '').startsWith('trf_');
+  }
+  // Meta-line tag for a Transfer-flagged row: "payment" only for a real
+  // linked card-payment leg, "transfer" for everything else.
+  function transferTagLabel(t) {
+    return isLinkedLeg(t) && !isPlainTransferId(t.paymentId) ? 'payment' : 'transfer';
+  }
+
   function openUndoPaymentMenu(txn) {
     const isPlainTransfer = String(txn.paymentId || '').startsWith('trf_');
     showConfirm(
@@ -3424,7 +3444,7 @@
   // already branches on txn.transfer to call the right endpoint (a normal
   // delete, or reconcile's undo-payment for one leg of a card payment).
   function handleKeyboardDeleteTxn(txn) {
-    const isPayment = !!txn.transfer;
+    const isPayment = isLinkedLeg(txn);
     const isConverted = isPayment && String(txn.paymentId || '').startsWith('cnv_');
     const isPlainTransfer = isPayment && String(txn.paymentId || '').startsWith('trf_');
     const message = !isPayment
@@ -3531,7 +3551,7 @@
         setDtxHighlight(dtxKbdHighlightIndex - 1);
       } else if (key === 's') {
         const txn = dtxCurrentHighlightedTxn();
-        if (!txn || txn.transfer) return; // transfer legs are excluded from bulk-select entirely (disabled checkbox)
+        if (!txn || isLinkedLeg(txn)) return; // linked transfer legs are excluded from bulk-select entirely (disabled checkbox)
         e.preventDefault();
         const rowNumber = txn.rowNumber;
         BulkSelect.toggle(rowNumber);
@@ -3545,7 +3565,7 @@
         // Transfer legs aren't editable inline (see startDtxKbdEdit) --
         // Enter opens the undo-payment menu instead, same as the pencil
         // button and the mobile card list's own Enter behavior.
-        if (txn.transfer) openUndoPaymentMenu(txn);
+        if (isLinkedLeg(txn)) openUndoPaymentMenu(txn);
         else startDtxKbdEdit(txn);
       } else if (e.key === ' ') {
         // Spacebar always edits in-line, selected or not -- only Enter is
@@ -3553,7 +3573,7 @@
         const txn = dtxCurrentHighlightedTxn();
         if (!txn) return;
         e.preventDefault();
-        if (txn.transfer) openUndoPaymentMenu(txn);
+        if (isLinkedLeg(txn)) openUndoPaymentMenu(txn);
         else startDtxKbdEdit(txn);
       } else if (key === 'c') {
         if (bulkActive) { e.preventDefault(); return; } // handled by bulk-actions.js (Clear)
@@ -3562,7 +3582,7 @@
         e.preventDefault();
         // Transfer legs: use Enter's undo-payment menu (or the pencil
         // button) instead -- same as the status column's own click handler.
-        if (txn.transfer) return;
+        if (isLinkedLeg(txn)) return;
         dtxKbdHandleClear(txn);
       } else if (e.key === 'Backspace') {
         if (bulkActive) { e.preventDefault(); return; } // handled by bulk-actions.js (Delete)
@@ -3579,7 +3599,7 @@
       setTxnHighlight(txnHighlightIndex - 1);
     } else if (key === 's') {
       const txn = currentHighlightedTxn();
-      if (!txn || txn.transfer) return; // transfer legs are excluded from bulk-select entirely (disabled checkbox)
+      if (!txn || isLinkedLeg(txn)) return; // linked transfer legs are excluded from bulk-select entirely (disabled checkbox)
       e.preventDefault();
       const rowNumber = txn.rowNumber;
       BulkSelect.toggle(rowNumber);
@@ -3590,7 +3610,7 @@
       const txn = currentHighlightedTxn();
       if (!txn) return;
       e.preventDefault();
-      if (txn.transfer) openUndoPaymentMenu(txn);
+      if (isLinkedLeg(txn)) openUndoPaymentMenu(txn);
       else TransactionForm.open(txn);
     } else if (e.key === ' ') {
       // Spacebar always edits in-line, selected or not -- only Enter is
@@ -3598,7 +3618,7 @@
       const txn = currentHighlightedTxn();
       if (!txn) return;
       e.preventDefault();
-      if (txn.transfer) openUndoPaymentMenu(txn);
+      if (isLinkedLeg(txn)) openUndoPaymentMenu(txn);
       else TransactionForm.open(txn);
     } else if (key === 'c') {
       if (bulkActive) { e.preventDefault(); return; } // handled by bulk-actions.js (Clear)
