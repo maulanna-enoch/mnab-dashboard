@@ -144,21 +144,7 @@
       // expected to branch on this same flag to call the right endpoint
       // (transactions-delete vs. reconcile's undo-payment).
       const isPayment = !!txn.transfer;
-      // A 'cnv_' Payment ID marks a payment converted from an existing
-      // (usually bank-imported) row -- undo keeps that row as a plain
-      // expense instead of deleting it (api/_lib/reconcile.js
-      // deletePaymentRows).
-      const isConverted = isPayment && String(txn.paymentId || '').startsWith('cnv_');
-      // 'trf_' = an account-to-account transfer from Add transaction's
-      // Transfer mode -- undone the same way, but it isn't a card payment.
-      const isPlainTransfer = isPayment && String(txn.paymentId || '').startsWith('trf_');
-      const message = !isPayment
-        ? 'Delete this transaction?'
-        : isPlainTransfer
-          ? 'Undo this transfer? This removes BOTH this entry and the matching entry on the other account.'
-        : isConverted
-          ? 'Undo this card payment? This removes the entry on the card and turns the paying account\'s entry back into a normal expense.'
-          : 'Undo this card payment? This removes BOTH the charge on the card and the matching entry on the paying account.';
+      const message = isPayment ? paymentUndoMessage(txn) : 'Delete this transaction?';
       if (!confirm(message)) return;
       runBusyAction(entry, wrap, actionEl, entry.options.onDelete, txn, isPayment ? 'Undoing…' : 'Deleting…');
     } else {
@@ -323,5 +309,41 @@
     }, true);
   }
 
-  global.SwipeActions = { init, rowHTML };
+  // What undoing one leg of a linked pair will do, read off its Payment ID
+  // prefix -- mirrors paymentIdKind() in api/_lib/reconcile.js, which is
+  // what the server's undo-payment actually acts on:
+  //   'trf_'          fresh transfer, both legs deleted
+  //   'cnv_'          legacy converted card payment, original expense kept
+  //   'cv'+p|t+e|i|b  Convert to transfer: p = card payment, t = transfer;
+  //                   e/i = the original Expense/Income leg is kept,
+  //                   b = both legs were existing rows and both are kept
+  //   anything else   fresh card payment ('pay_'), both legs deleted
+  // Shared by every page that offers undo on a payment leg, so the wording
+  // stays in one place.
+  function describePayment(txn) {
+    const prefix = String((txn && txn.paymentId) || '').trim().split('_')[0];
+    if (prefix === 'trf') return { cardPayment: false, keep: [] };
+    if (prefix === 'cnv') return { cardPayment: true, keep: ['Expense'] };
+    const m = /^cv([pt])([eib])$/.exec(prefix);
+    if (m) return { cardPayment: m[1] === 'p', keep: m[2] === 'e' ? ['Expense'] : m[2] === 'i' ? ['Income'] : ['Expense', 'Income'] };
+    return { cardPayment: true, keep: [] };
+  }
+
+  function paymentUndoMessage(txn, opts) {
+    const d = describePayment(txn);
+    const what = d.cardPayment ? 'card payment' : 'transfer';
+    const label = opts && opts.withPayee && txn.payee ? ` ("${txn.payee}")` : '';
+    if (d.keep.length === 2) {
+      return `Undo this ${what}${label}? Both entries stay — they just go back to being normal, separate transactions.`;
+    }
+    if (d.keep.length === 1) {
+      const kind = d.keep[0] === 'Income' ? 'income' : 'expense';
+      return `Undo this ${what}${label}? This removes the entry the conversion added and turns the original entry back into a normal ${kind}.`;
+    }
+    return d.cardPayment
+      ? `Undo this card payment${label}? This removes BOTH the charge on the card and the matching entry on the paying account.`
+      : `Undo this transfer${label}? This removes BOTH this entry and the matching entry on the other account.`;
+  }
+
+  global.SwipeActions = { init, rowHTML, describePayment, paymentUndoMessage };
 })(window);
