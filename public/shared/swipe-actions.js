@@ -143,7 +143,9 @@
       // rowHTML's `isPayment` rendering above. The caller's onDelete is
       // expected to branch on this same flag to call the right endpoint
       // (transactions-delete vs. reconcile's undo-payment).
-      const isPayment = !!txn.transfer;
+      // Only a linked leg (Transfer AND a Payment ID) has a partner row to
+      // undo; a hand-ticked Transfer row with no Payment ID is a plain row.
+      const isPayment = !!(txn.transfer && txn.paymentId);
       // A 'cnv_' Payment ID marks a payment converted from an existing
       // (usually bank-imported) row -- undo keeps that row as a plain
       // expense instead of deleting it (api/_lib/reconcile.js
