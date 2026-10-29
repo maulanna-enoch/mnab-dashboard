@@ -23,6 +23,13 @@
  *   Imported At       written by this script
  *   Transactions Row  written by this script: the row it landed on in
  *                     `transactions` (the audit trail back into the ledger)
+ *   Delete After Import
+ *                     checkbox, default ticked. After each run, every ticked
+ *                     row is deleted from the inbox, whether or not it was
+ *                     imported (approved or not, skipped or not). Untick it
+ *                     to keep a row. A blank cell counts as ticked. The
+ *                     column is added (ticked for every existing row) on the
+ *                     first run if it's missing.
  *
  * Safety rules:
  *   - Shows a confirmation with the row count and totals before writing.
@@ -33,6 +40,11 @@
  *     never written twice — it's just marked Imported, pointing at the
  *     existing row. So re-running after a partial failure is safe.
  *   - Only appends to `transactions`; never edits or deletes existing rows.
+ *   - Inbox rows are deleted only after the ledger write and only if the
+ *     confirmation was accepted. One exception to the checkbox: a row whose
+ *     Inbox ID is already used by a *different* transaction (different SOF,
+ *     date or amount — e.g. an ID reused after the original row was deleted)
+ *     is skipped and kept, so it can't vanish without reaching the ledger.
  *
  * Depends on headerIndexMap(), ensureColumn(), getAccountRows(),
  * payeeHeaderName() and billingMonthForDate() from Reconcile.gs
@@ -50,6 +62,7 @@ const INBOX_CONFIG = {
   idColumn: 'Inbox ID',
   stagedStatus: 'Staged',
   importedStatus: 'Imported',
+  deleteColumn: 'Delete After Import',
 };
 
 /** Menu entry point. */
@@ -92,17 +105,24 @@ function inbox_import_(ui) {
   });
   const inLast = inboxSheet.getLastRow();
   if (inLast < 2) return 'The inbox is empty.';
+  const delCol = inbox_ensureDeleteColumn_(inboxSheet, inLast);
   const inRows = inboxSheet.getRange(2, 1, inLast - 1, inboxSheet.getLastColumn()).getValues();
 
   // ---- existing Inbox IDs already in transactions ----
   const idCol = ensureColumn(txnSheet, INBOX_CONFIG.idColumn);
   const txCol = headerIndexMap(txnSheet);
   const txLast = txnSheet.getLastRow();
-  const existing = {};
+  const existing = {};  // Inbox ID -> { row, sof, date, amount }
   if (txLast >= 2) {
-    txnSheet.getRange(2, idCol + 1, txLast - 1, 1).getValues().forEach(function (r, i) {
-      const id = String(r[0] || '').trim();
-      if (id) existing[id] = i + 2;
+    txnSheet.getRange(2, 1, txLast - 1, txnSheet.getLastColumn()).getValues().forEach(function (r, i) {
+      const id = String(r[idCol] || '').trim();
+      if (!id) return;
+      existing[id] = {
+        row: i + 2,
+        sof: 'SOF' in txCol ? String(r[txCol['SOF']]).trim() : '',
+        date: 'Date' in txCol ? r[txCol['Date']] : '',
+        amount: 'Amount' in txCol ? Number(r[txCol['Amount']]) : NaN,
+      };
     });
   }
 
@@ -110,9 +130,13 @@ function inbox_import_(ui) {
   const toWrite = [];    // { inboxRow, id, txn }
   const alreadyIn = [];  // { inboxRow, id, txnRow }
   const skipped = [];    // "INB-… (reason)"
+  const toDelete = {};   // inboxRow -> true
+  const keep = {};       // inboxRow -> true: never deleted this run (ID collision)
   const seenIds = {};
   inRows.forEach(function (r, i) {
     const inboxRow = i + 2;
+    if (inbox_isBlankRow_(r, inCol)) return;
+    if (r[delCol] === true || r[delCol] === '') toDelete[inboxRow] = true;
     if (r[inCol['Approve']] !== true) return;
     if (String(r[inCol['Status']]).trim() !== INBOX_CONFIG.stagedStatus) return;
 
@@ -121,7 +145,17 @@ function inbox_import_(ui) {
     if (reason) { skipped.push((id || 'row ' + inboxRow) + ' (' + reason + ')'); return; }
     seenIds[id] = true;
 
-    if (existing[id]) { alreadyIn.push({ inboxRow: inboxRow, id: id, txnRow: existing[id] }); return; }
+    if (existing[id]) {
+      const ex = existing[id];
+      if (!inbox_sameTxn_(ex, r, inCol)) {
+        skipped.push(id + ' (Inbox ID already used by a different transaction, transactions row ' +
+          ex.row + '; row kept in the inbox)');
+        keep[inboxRow] = true;
+        return;
+      }
+      alreadyIn.push({ inboxRow: inboxRow, id: id, txnRow: ex.row });
+      return;
+    }
 
     const type = String(r[inCol['Income/Expense']]).trim();
     const sof = String(r[inCol['SOF']]).trim();
@@ -146,21 +180,37 @@ function inbox_import_(ui) {
     });
   });
 
-  if (!toWrite.length && !alreadyIn.length) {
+  Object.keys(keep).forEach(function (k) { delete toDelete[k]; });
+  const deleteRows = Object.keys(toDelete).map(Number).sort(function (a, b) { return a - b; });
+  const importedRows = {};
+  toWrite.forEach(function (w) { importedRows[w.inboxRow] = true; });
+  alreadyIn.forEach(function (a) { importedRows[a.inboxRow] = true; });
+  const deleteNotImported = deleteRows.filter(function (n) { return !importedRows[n]; }).length;
+
+  if (!toWrite.length && !alreadyIn.length && !deleteRows.length) {
     return 'Nothing to import: no rows are ticked Approve with Status "Staged".' +
       (skipped.length ? '\n\nSkipped:\n' + skipped.join('\n') : '');
   }
 
-  // ---- confirm ----
-  if (toWrite.length) {
-    let exp = 0, inc = 0;
-    toWrite.forEach(function (w) { if (w.txn.type === 'Expense') exp += w.txn.amount; else inc += w.txn.amount; });
-    const msg = 'Add ' + toWrite.length + ' row(s) to transactions?\n\n' +
-      'Expenses: Rp ' + exp.toLocaleString('id-ID') + '\n' +
-      'Income: Rp ' + inc.toLocaleString('id-ID') +
-      (alreadyIn.length ? '\n\n' + alreadyIn.length + ' approved row(s) are already in transactions and will only be marked Imported.' : '') +
-      (skipped.length ? '\n\n' + skipped.length + ' row(s) will be skipped:\n' + skipped.join('\n') : '');
-    if (ui.alert('Import from inbox', msg, ui.ButtonSet.YES_NO) !== ui.Button.YES) return null;
+  // ---- confirm (only when something will be added or deleted) ----
+  if (toWrite.length || deleteRows.length) {
+    const parts = [];
+    if (toWrite.length) {
+      let exp = 0, inc = 0;
+      toWrite.forEach(function (w) { if (w.txn.type === 'Expense') exp += w.txn.amount; else inc += w.txn.amount; });
+      parts.push('Add ' + toWrite.length + ' row(s) to transactions.\n' +
+        'Expenses: Rp ' + exp.toLocaleString('id-ID') + '\n' +
+        'Income: Rp ' + inc.toLocaleString('id-ID'));
+    } else {
+      parts.push('No new rows to add to transactions.');
+    }
+    if (alreadyIn.length) parts.push(alreadyIn.length + ' approved row(s) are already in transactions and will only be marked Imported.');
+    if (skipped.length) parts.push(skipped.length + ' row(s) will be skipped:\n' + skipped.join('\n'));
+    if (deleteRows.length) {
+      parts.push('Then delete ' + deleteRows.length + ' row(s) ticked "' + INBOX_CONFIG.deleteColumn +
+        '" from the inbox' + (deleteNotImported ? ', including ' + deleteNotImported + ' that were NOT imported' : '') + '.');
+    }
+    if (ui.alert('Import from inbox', parts.join('\n\n') + '\n\nContinue?', ui.ButtonSet.YES_NO) !== ui.Button.YES) return null;
   }
 
   // ---- append to transactions (one contiguous block) ----
@@ -201,8 +251,13 @@ function inbox_import_(ui) {
     inboxSheet.getRange(inboxRow, atCol).setValue(now);
     inboxSheet.getRange(inboxRow, rowCol).setValue(txnRow);
   };
-  toWrite.forEach(function (w, i) { markImported(w.inboxRow, startRow + i); });
-  alreadyIn.forEach(function (a) { markImported(a.inboxRow, a.txnRow); });
+  // Rows about to be deleted don't need their status written.
+  toWrite.forEach(function (w, i) { if (!toDelete[w.inboxRow]) markImported(w.inboxRow, startRow + i); });
+  alreadyIn.forEach(function (a) { if (!toDelete[a.inboxRow]) markImported(a.inboxRow, a.txnRow); });
+  SpreadsheetApp.flush();
+
+  // ---- delete ticked rows from the inbox ----
+  if (deleteRows.length) inbox_deleteRows_(inboxSheet, deleteRows);
 
   const lines = [];
   if (toWrite.length) {
@@ -211,7 +266,64 @@ function inbox_import_(ui) {
   }
   if (alreadyIn.length) lines.push(alreadyIn.length + ' row(s) were already in transactions; marked Imported.');
   if (skipped.length) lines.push('Skipped ' + skipped.length + ':\n' + skipped.join('\n'));
+  if (deleteRows.length) {
+    lines.push('Deleted ' + deleteRows.length + ' row(s) from the inbox' +
+      (deleteNotImported ? ' (' + deleteNotImported + ' not imported)' : '') + '.');
+  }
   return lines.join('\n\n');
+}
+
+/**
+ * Makes sure the inbox has the "Delete After Import" checkbox column.
+ * When it's first added, every existing data row is ticked (the default).
+ * Returns its 0-based column index.
+ */
+function inbox_ensureDeleteColumn_(inboxSheet, inLast) {
+  const before = headerIndexMap(inboxSheet);
+  if (INBOX_CONFIG.deleteColumn in before) return before[INBOX_CONFIG.deleteColumn];
+  const col = ensureColumn(inboxSheet, INBOX_CONFIG.deleteColumn);
+  if (inLast >= 2) {
+    const range = inboxSheet.getRange(2, col + 1, inLast - 1, 1);
+    range.setDataValidation(SpreadsheetApp.newDataValidation().requireCheckbox().build());
+    range.setValues(Array.from({ length: inLast - 1 }, function () { return [true]; }));
+  }
+  SpreadsheetApp.flush();
+  return col;
+}
+
+/** A row with no Inbox ID, Payee or Amount is treated as empty and ignored. */
+function inbox_isBlankRow_(r, inCol) {
+  return ['Inbox ID', 'Payee', 'Amount'].every(function (h) {
+    return String(r[inCol[h]] == null ? '' : r[inCol[h]]).trim() === '';
+  });
+}
+
+/** Does an existing transactions row (by Inbox ID) look like this inbox row? */
+function inbox_sameTxn_(ex, r, inCol) {
+  const sof = String(r[inCol['SOF']]).trim();
+  const date = r[inCol['Date']];
+  const amount = Number(r[inCol['Amount']]);
+  const sameDay = ex.date instanceof Date && date instanceof Date &&
+    ex.date.getFullYear() === date.getFullYear() &&
+    ex.date.getMonth() === date.getMonth() &&
+    ex.date.getDate() === date.getDate();
+  return ex.sof === sof && sameDay && ex.amount === amount;
+}
+
+/** Deletes the given 1-based rows, bottom-up, in contiguous blocks. */
+function inbox_deleteRows_(sheet, rows) {
+  // Sheets refuses to delete every non-frozen row, so keep one spare.
+  const frozen = sheet.getFrozenRows();
+  if (sheet.getMaxRows() - rows.length <= frozen) sheet.insertRowsAfter(sheet.getMaxRows(), 1);
+  const desc = rows.slice().sort(function (a, b) { return b - a; });
+  let i = 0;
+  while (i < desc.length) {
+    let start = desc[i];
+    let count = 1;
+    while (i + count < desc.length && desc[i + count] === start - 1) { start--; count++; }
+    sheet.deleteRows(start, count);
+    i += count;
+  }
 }
 
 /** Returns a reason string if the inbox row can't be imported, else ''. */
