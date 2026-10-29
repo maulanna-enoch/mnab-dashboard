@@ -8,6 +8,8 @@ The Apps Script project bound to the MNAB Google Sheet (`Reconcile.gs`, `Templat
 
 `InstallmentsBills.gs` is the third. Same rules apply: not auto-synced, paste the merged result into the Apps Script editor by hand after merging a change here.
 
+`InboxImport.gs` adds "Import Approved Rows from Inbox…" to the Finances menu. It copies rows you've ticked Approve in the separate **MNAB Import Inbox** spreadsheet into `transactions` and writes each one's destination row back to the inbox, so tools that stage transactions never need access to this spreadsheet. It was written in this repo first. To install it, paste it into the editor as a **new** script file named `InboxImport` (Deployer only replaces files that already exist), then paste the updated `Reconciliations.gs` for the menu item.
+
 The other bound files (`Templates.gs`, `Payments.gs`) are not yet in this folder. Feel free to add them here the same way when they next need a tracked change.
 
 ## Deploying from a phone: `Deployer.gs`
