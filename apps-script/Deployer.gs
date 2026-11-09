@@ -69,7 +69,8 @@ var DEPLOYABLE_FILES = {
   'apps-script/EmailImport.gs': 'EmailImport',
   'apps-script/InboxImport.gs': 'InboxImport',
   'apps-script/InstallmentsBills.gs': 'InstallmentsBills',
-  'apps-script/Reconciliations.gs': 'Reconcile'
+  'apps-script/Reconciliations.gs': 'Reconcile',
+  'apps-script/Steals.gs': 'Steals'
 };
 
 var DEPLOYER_LAST_BACKUP_KEY = 'DEPLOYER_LAST_BACKUP';
