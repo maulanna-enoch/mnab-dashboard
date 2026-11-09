@@ -12,6 +12,13 @@ The Apps Script project bound to the MNAB Google Sheet (`Reconcile.gs`, `Templat
 
 The inbox has a **Delete After Import** checkbox per row, ticked by default (a blank cell counts as ticked). After each confirmed run, every ticked row is deleted from the inbox whether or not it was imported, so untick any row you want to keep, including staged rows you haven't reviewed yet. The confirmation says how many rows will be deleted and how many of those weren't imported. If the column is missing, the first run adds it and ticks every existing row. The one row it won't delete is one whose Inbox ID already belongs to a different transaction (for example, an ID reused after the original row was deleted); that row is skipped and kept.
 
+`Steals.gs` adds "Set Up Steals from the Future…" to the Finances menu. It tracks money borrowed from your future self (credit card cash advances, mutual fund redemptions, paylater, loans, dipping into savings), with the goal that each month's total is lower than the month before. Running it creates two tabs:
+
+- **`Steals`** is a log you fill in by hand, one row per event: Date, Direction (`Steal`, or `Payback` when you put money back, such as topping up the reksadana again), Type, Source, Amount, Fee, Reason, Notes. Month fills in by itself from Date (calendar month).
+- **`Steals Summary`** is formulas only. It shows this month vs last month, a status, a streak of finished months that came in lower, the total still owed to the future, and a sparkline. Below that is one row per month (months with nothing logged show 0 and count as wins): Steals, change vs last month, Trend (✓/✗), Paybacks, Net, Owed to Future, Fees, and Steals by Type.
+
+Running it again repairs the log's columns and validation and rebuilds the summary, after asking first. It never touches your log rows. The log doesn't read or write `transactions`, so the cash advance or redemption still goes into `transactions` as usual. To install it, paste it into the editor as a **new** script file named `Steals`, then paste the updated `Reconciliations.gs` for the menu item. After that, Deployer can update it. The types list is `STEALS_CONFIG.types` at the top of the file. Edit it there and re-run the menu item, so the log's dropdown and the summary's per-type columns stay in sync.
+
 The other bound files (`Templates.gs`, `Payments.gs`) are not yet in this folder. Feel free to add them here the same way when they next need a tracked change.
 
 ## Deploying from a phone: `Deployer.gs`
