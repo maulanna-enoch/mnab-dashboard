@@ -78,6 +78,7 @@ function onOpen() {
     .addItem('Set Up Daily Auto-Copy…', 'setupDailyTrigger')
     .addItem('Remove Daily Auto-Copy…', 'removeDailyTrigger')
     .addItem('Import Approved Rows from Inbox…', 'importFromInbox')
+    .addItem('Set Up Steals from the Future…', 'setupSteals')
     .addToUi();
 }
 

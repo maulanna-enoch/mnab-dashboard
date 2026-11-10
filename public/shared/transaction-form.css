@@ -252,46 +252,42 @@
   color: #0f1115;
 }
 
-/* "Convert to card payment" (edit sheet only) -- a secondary action link
-   under Save, which swaps Save/Delete for an inline panel rather than
-   stacking a second modal on top of this sheet. */
-.txf-convert-link {
-  display: none;
-  width: 100%;
+/* "Convert to transfer" (Edit sheet, Transfer toggle). The pair block
+   offers existing rows on another account that look like the other half
+   of this transfer (same amount, opposite type, within a week), so linking
+   them is one tap instead of writing a duplicate. */
+.txf-pair-block {
+  border: 1px solid #374151;
+  border-radius: 10px;
   padding: 10px;
-  margin-bottom: 8px;
-  border-radius: 10px;
-  border: 1px solid #374151;
-  background: transparent;
-  color: var(--text);
-  font-size: 13.5px;
-  font-weight: 500;
-  font-family: inherit;
-  cursor: pointer;
-}
-.txf-convert-panel {
-  border: 1px solid #374151;
-  border-radius: 10px;
-  padding: 12px;
-  margin-bottom: 12px;
+  margin: 0 0 12px;
   background: rgba(255,255,255,0.02);
 }
-.txf-convert-title { font-size: 13.5px; font-weight: 600; color: var(--text); margin-bottom: 10px; }
-.txf-convert-billed { font-size: 12px; color: var(--muted); min-height: 16px; margin: -4px 0 8px; }
-.txf-convert-billed.match { color: var(--accent); }
-.txf-convert-billed.mismatch { color: #eab308; }
-.txf-convert-hint { font-size: 11.5px; color: var(--muted); line-height: 1.45; margin-bottom: 12px; }
-.txf-convert-hint b { color: var(--text); font-weight: 600; }
-.txf-convert-actions { display: flex; gap: 8px; }
-.txf-convert-actions button {
-  flex: 1;
-  padding: 11px;
-  border-radius: 10px;
-  font-size: 14px;
-  font-weight: 600;
+.txf-pair-title { font-size: 12.5px; font-weight: 600; color: var(--text); margin-bottom: 8px; }
+.txf-pair-opt {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 9px 10px;
+  margin-top: 6px;
+  border-radius: 8px;
+  border: 1px solid #374151;
+  background: var(--bg);
+  color: var(--text);
   font-family: inherit;
+  font-size: 13px;
   cursor: pointer;
 }
-.txf-convert-cancel-btn { border: 1px solid #374151; background: var(--bg); color: var(--muted); }
-.txf-convert-confirm-btn { border: none; background: var(--accent); color: #0f1115; }
-.txf-convert-confirm-btn:disabled { opacity: 0.6; cursor: default; }
+.txf-pair-opt:first-of-type { margin-top: 0; }
+.txf-pair-opt.active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.txf-pair-opt-main { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.txf-pair-opt-meta { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.txf-pair-opt-new { color: var(--muted); font-size: 12.5px; }
+/* Card-payment conversions: Diary statement sanity check under the hint. */
+.txf-billed-check { font-size: 12px; color: var(--muted); min-height: 16px; margin: -6px 0 12px; }
+.txf-billed-check:empty { display: none; }
+.txf-billed-check.match { color: var(--accent); }
+.txf-billed-check.mismatch { color: #eab308; }
+/* Convert to transfer locks the edited row's own account (the server
+   re-checks it against the live row) -- show that it isn't a live pick. */
+.txf-field:disabled { opacity: 0.6; cursor: default; }

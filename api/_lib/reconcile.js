@@ -474,30 +474,58 @@ async function getOrCreateTransactionsColumn(sheets, map, headerName) {
 }
 
 // `prefix` distinguishes HOW a payment's two legs came to exist, which
-// matters only for undo (see deletePaymentRows): 'pay' = both legs were
-// written fresh by appendCardPaymentRows (Add Payment), so undo deletes
-// both; 'cnv' = the cash leg is a pre-existing row (normally an
-// EmailImport.gs bank notification) that convertRowToCardPayment re-tagged
-// in place, so undo must put that row back rather than delete a real,
-// bank-confirmed transaction.
-const CONVERTED_PAYMENT_ID_PREFIX = 'cnv_';
+// matters only for undo (see deletePaymentRows / actionUndoPayment):
+//   'pay'  = both legs written fresh as a card payment (Add Payment,
+//            EmailImport.gs's Mandiri pair) -- undo deletes both and flips
+//            the card's Diary line back to Billed.
+//   'trf'  = both legs written fresh as a plain account-to-account transfer
+//            (Add transaction's Transfer mode) -- undo deletes both, no Diary.
+//   'cnv'  = legacy "Convert to card payment": the cash Expense leg is a
+//            pre-existing row re-tagged in place, so undo reverts it instead
+//            of deleting it; the appended card leg is deleted.
+//   'cv' + kind + keep  = "Convert to transfer" (convertRowToTransfer):
+//            kind 'p' = card payment (cash -> credit card, Diary flip),
+//                 't' = plain transfer (no Diary);
+//            keep 'e' = the pre-existing row was the Expense (outgoing) leg,
+//                 'i' = it was the Income (incoming) leg,
+//                 'b' = both legs were pre-existing rows linked together.
+//            Undo reverts every kept leg to a plain transaction and deletes
+//            whatever the conversion appended.
+// Pre-existing rows are usually real, bank-confirmed imports, so undo must
+// never delete them.
+function paymentIdKind(paymentId) {
+  const prefix = String(paymentId || '').trim().split('_')[0];
+  if (prefix === 'trf') return { cardPayment: false, keepTypes: [] };
+  if (prefix === 'cnv') return { cardPayment: true, keepTypes: ['Expense'] };
+  const m = /^cv([pt])([eib])$/.exec(prefix);
+  if (m) {
+    const keepTypes = m[2] === 'e' ? ['Expense'] : m[2] === 'i' ? ['Income'] : ['Expense', 'Income'];
+    return { cardPayment: m[1] === 'p', keepTypes };
+  }
+  // 'pay' and anything unrecognised (e.g. a desktop Payments.gs ID): treat
+  // as a fresh card payment, which is what undo always assumed before.
+  return { cardPayment: true, keepTypes: [] };
+}
+
+function convertedPaymentPrefix({ cardPayment, keep }) {
+  return 'cv' + (cardPayment ? 'p' : 't') + keep;
+}
 
 function generatePaymentId(prefix) {
   return `${prefix || 'pay'}_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// True when undo keeps at least one leg (i.e. the payment was converted
+// from an existing row rather than written fresh).
 function isConvertedPaymentId(paymentId) {
-  return String(paymentId || '').trim().startsWith(CONVERTED_PAYMENT_ID_PREFIX);
+  return paymentIdKind(paymentId).keepTypes.length > 0;
 }
 
-// 'trf' = a plain account-to-account transfer from the Add transaction
-// sheet's Transfer mode (appendTransferRows). Both legs are fresh rows, so
-// undo deletes both, same as 'pay' -- but it is NOT a card statement
-// payment, so undo must skip the Diary Paid->Billed flip (actionUndoPayment).
-const TRANSFER_PAYMENT_ID_PREFIX = 'trf_';
-
+// True for a plain account-to-account transfer ('trf' or a 'cvt*'
+// conversion) -- NOT a card statement payment, so undo must skip the Diary
+// Paid->Billed flip (actionUndoPayment).
 function isTransferPaymentId(paymentId) {
-  return String(paymentId || '').trim().startsWith(TRANSFER_PAYMENT_ID_PREFIX);
+  return !paymentIdKind(paymentId).cardPayment;
 }
 
 function shiftMonth(date, deltaMonths) {
@@ -653,25 +681,41 @@ async function appendTransferRows(sheets, { fromAccount, toAccount, amount, date
   return { paymentId, fromRowNumber, toRowNumber };
 }
 
-// Turns an EXISTING transactions row -- normally an auto-imported bank
-// notification such as OCBC's "Successful Bill Payment" email, which
-// EmailImport.gs can only ever log as a plain Expense on the cash account --
-// into one leg of a credit card payment, without a duplicate cash-side row.
-// Same end state as appendCardPaymentRows (two Transfer=TRUE legs sharing a
-// Payment ID), except the cash leg is the row the user already has:
-//   - that row is rewritten in place (from the edit form's current field
-//     values, so any edits made before converting aren't lost) and tagged
-//     Transfer=TRUE + Payment ID; its Pending flag is cleared, same as any
-//     other save (issue #89);
-//   - only the card's Income leg is appended.
-// The Payment ID gets the 'cnv_' prefix so undo reverts the cash row
-// instead of deleting it (see deletePaymentRows).
+function isTruthyCell(v) {
+  return v === true || v === 'TRUE' || v === 'true';
+}
+
+// "Convert to transfer" (the Edit sheet's Transfer toggle): turns an
+// EXISTING transactions row -- normally an auto-imported bank notification,
+// which EmailImport.gs can only ever log as a plain Expense or Income -- into
+// one leg of a two-leg, Transfer=TRUE pair, without writing a duplicate of
+// it. Same end state as appendTransferRows / appendCardPaymentRows (two
+// Transfer=TRUE rows sharing a Payment ID):
+//   - the row itself is rewritten in place from the edit form's current
+//     values (so edits made before converting aren't lost), keeps its own
+//     Expense/Income type, and gets Transfer=TRUE + Payment ID; Pending is
+//     cleared like any other save (issue #89);
+//   - the other leg is EITHER appended fresh on `otherAccount`, OR -- when
+//     `linkRowNumber` is given -- an existing row on `otherAccount` (the
+//     other half, imported separately) is tagged into the pair instead.
+//     A linked row keeps its own payee/date/amount/notes/cleared status;
+//     only Transfer, Payment ID, Pending and Month are written.
+// An Expense row is the "from" leg, an Income row the "to" leg.
 //
-// Guards against acting on the wrong row: rowNumber is only a position, and
-// rows shift whenever anything above them is inserted/deleted, so the live
-// row's SOF must still be `cashAccount`, it must still be an Expense, and it
-// must not already be a payment leg. Throws a user-facing Error otherwise.
-async function convertRowToCardPayment(sheets, { rowNumber, cardAccount, cashAccount, payee, amount, date, month, cleared, notes }) {
+// `cardPayment` (cash/bank -> credit card) follows the Add Payment
+// convention: both legs get `month` (the card statement being paid) and
+// payee wording "Payment to/from X"; the caller then does the Diary
+// Billed->Paid flip. Otherwise each leg keeps its own billing month and the
+// appended leg is worded "Transfer to/from X".
+//
+// rowNumbers are only positions -- they shift whenever anything above them
+// is inserted/deleted -- so both live rows are re-read and checked (SOF,
+// type, amount for the linked row, not already a payment leg) before
+// anything is written. Throws a user-facing Error otherwise.
+async function convertRowToTransfer(sheets, {
+  rowNumber, account, type, otherAccount, payee, amount, date, month, otherMonth,
+  cleared, notes, linkRowNumber, cardPayment,
+}) {
   const spreadsheetId = process.env.SHEET_ID;
   let map = await getHeaderMap(sheets, spreadsheetId, RECONCILE_SHEETS.transactions);
   requireColumns(map, 'transactions', ['SOF', 'Date', 'Cleared']);
@@ -683,85 +727,159 @@ async function convertRowToCardPayment(sheets, { rowNumber, cardAccount, cashAcc
   map = await getOrCreateTransactionsColumn(sheets, map, 'Payment ID');
   const width = Math.max(...Object.values(map)) + 1;
   const lastCol = columnLetter(width - 1);
+  const otherType = type === 'Income' ? 'Expense' : 'Income';
 
-  const current = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${RECONCILE_SHEETS.transactions}!A${rowNumber}:${lastCol}${rowNumber}`,
-    valueRenderOption: 'UNFORMATTED_VALUE',
-  });
-  const liveRow = (current.data.values && current.data.values[0]) || [];
+  async function readRow(rn) {
+    const resp = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${RECONCILE_SHEETS.transactions}!A${rn}:${lastCol}${rn}`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    return (resp.data.values && resp.data.values[0]) || [];
+  }
+  function rowType(row) {
+    return 'Income/Expense' in map && row[map['Income/Expense']] === 'Income' ? 'Income' : 'Expense';
+  }
+  function rowAmount(row) {
+    if ('Amount' in map) return Number(row[map['Amount']]) || 0;
+    return Math.abs(Number(row[map[amountHeader]]) || 0);
+  }
+  function isPaymentLeg(row) {
+    return isTruthyCell(row[map['Transfer']]) || !!String(row[map['Payment ID']] || '').trim();
+  }
+
+  const liveRow = await readRow(rowNumber);
   const liveSof = String(liveRow[map['SOF']] || '').trim();
   if (!liveSof) throw new Error('That transaction no longer exists -- refresh and try again.');
-  if (liveSof.toLowerCase() !== String(cashAccount).trim().toLowerCase()) {
+  if (liveSof.toLowerCase() !== String(account).trim().toLowerCase()) {
     throw new Error('That transaction has changed or moved since it was opened -- refresh and try again.');
   }
-  if ('Income/Expense' in map && liveRow[map['Income/Expense']] === 'Income') {
-    throw new Error('Only an expense on a cash/bank account can be converted to a card payment.');
-  }
-  const liveTransfer = liveRow[map['Transfer']];
-  if (liveTransfer === true || liveTransfer === 'TRUE' || liveTransfer === 'true' || String(liveRow[map['Payment ID']] || '').trim()) {
-    throw new Error('This transaction is already part of a card payment.');
+  if (isPaymentLeg(liveRow)) throw new Error('This transaction is already part of a transfer or card payment.');
+
+  let linkRow = null;
+  if (linkRowNumber) {
+    if (linkRowNumber === rowNumber) throw new Error('A transaction can’t be linked with itself.');
+    linkRow = await readRow(linkRowNumber);
+    const linkSof = String(linkRow[map['SOF']] || '').trim();
+    if (!linkSof || linkSof.toLowerCase() !== String(otherAccount).trim().toLowerCase()) {
+      throw new Error(`The ${otherAccount} entry to link has changed or moved -- refresh and try again.`);
+    }
+    if (rowType(linkRow) !== otherType) {
+      throw new Error(`The ${otherAccount} entry to link must be an ${otherType.toLowerCase()}.`);
+    }
+    if (Math.abs(rowAmount(linkRow) - amount) >= 0.5) {
+      throw new Error(`The ${otherAccount} entry to link is for a different amount.`);
+    }
+    if (isPaymentLeg(linkRow)) throw new Error(`The ${otherAccount} entry is already part of a transfer or card payment.`);
   }
 
-  const paymentId = generatePaymentId('cnv');
+  const keep = linkRow ? 'b' : (type === 'Income' ? 'i' : 'e');
+  const paymentId = generatePaymentId(convertedPaymentPrefix({ cardPayment: !!cardPayment, keep }));
   const dateSerial = dateToSerial(date);
-  const monthSerial = dateToSerial(month);
+  const thisMonthSerial = dateToSerial(month);
+  const otherMonthSerial = dateToSerial(cardPayment ? month : otherMonth);
   const clearedValue = cleared === 'Cleared' ? 'Cleared' : 'Uncleared';
+  const expense = type === 'Expense' ? amount : 0;
+  const income = type === 'Income' ? amount : 0;
 
-  // Cell-by-cell writes keyed on header name, so whatever else lives on this
+  // Cell-by-cell writes keyed on header name, so whatever else lives on a
   // row (Reconciled, Match ID/Status, any future self-provisioned column) is
   // left exactly as it was.
   const cellWrites = [];
-  function setCell(header, value) {
+  function setCell(rn, header, value) {
     if (!(header in map)) return;
     cellWrites.push({
-      range: `${RECONCILE_SHEETS.transactions}!${columnLetter(map[header])}${rowNumber}`,
+      range: `${RECONCILE_SHEETS.transactions}!${columnLetter(map[header])}${rn}`,
       values: [[value]],
     });
   }
-  if (payeeHeader) setCell(payeeHeader, payee);
-  setCell('Income/Expense', 'Expense');
-  setCell('Date', dateSerial);
-  setCell('Month', monthSerial);
-  setCell('Cleared', clearedValue);
-  setCell('Amount', amount);
-  setCell('Expense', amount);
-  setCell('Income', 0);
-  if (amountHeader === 'Total') setCell('Total', amount);
-  setCell('Notes', notes || '');
-  setCell('Transfer', true);
-  setCell('Payment ID', paymentId);
-  setCell('Pending', false);
+  if (payeeHeader) setCell(rowNumber, payeeHeader, payee);
+  setCell(rowNumber, 'Income/Expense', type);
+  setCell(rowNumber, 'Date', dateSerial);
+  setCell(rowNumber, 'Month', thisMonthSerial);
+  setCell(rowNumber, 'Cleared', clearedValue);
+  setCell(rowNumber, 'Amount', amount);
+  setCell(rowNumber, 'Expense', expense);
+  setCell(rowNumber, 'Income', income);
+  if (amountHeader === 'Total') setCell(rowNumber, 'Total', expense - income);
+  setCell(rowNumber, 'Notes', notes || '');
+  setCell(rowNumber, 'Transfer', true);
+  setCell(rowNumber, 'Payment ID', paymentId);
+  setCell(rowNumber, 'Pending', false);
+
+  if (linkRow) {
+    setCell(linkRowNumber, 'Month', otherMonthSerial);
+    setCell(linkRowNumber, 'Transfer', true);
+    setCell(linkRowNumber, 'Payment ID', paymentId);
+    setCell(linkRowNumber, 'Pending', false);
+  }
   await sheets.spreadsheets.values.batchUpdate({
     spreadsheetId,
     requestBody: { valueInputOption: 'RAW', data: cellWrites },
   });
 
-  const cardLeg = new Array(width).fill('');
-  if (payeeHeader) cardLeg[map[payeeHeader]] = `Payment from ${cashAccount}`;
-  if ('Income/Expense' in map) cardLeg[map['Income/Expense']] = 'Income';
-  cardLeg[map['SOF']] = cardAccount;
-  cardLeg[map['Date']] = dateSerial;
-  if ('Month' in map) cardLeg[map['Month']] = monthSerial;
-  cardLeg[map['Cleared']] = clearedValue;
-  if ('Amount' in map) cardLeg[map['Amount']] = amount;
-  if ('Expense' in map) cardLeg[map['Expense']] = 0;
-  if ('Income' in map) cardLeg[map['Income']] = amount;
-  if (amountHeader === 'Total' && 'Total' in map) cardLeg[map['Total']] = -amount;
-  if ('Notes' in map) cardLeg[map['Notes']] = 'Card payment';
-  cardLeg[map['Transfer']] = true;
-  cardLeg[map['Payment ID']] = paymentId;
+  if (linkRow) {
+    return { paymentId, rowNumber, otherRowNumber: linkRowNumber, linked: true };
+  }
 
-  const cardResp = await sheets.spreadsheets.values.append({
+  const word = cardPayment ? 'Payment' : 'Transfer';
+  const otherPayee = otherType === 'Income' ? `${word} from ${account}` : `${word} to ${account}`;
+  const oExpense = otherType === 'Expense' ? amount : 0;
+  const oIncome = otherType === 'Income' ? amount : 0;
+  const leg = new Array(width).fill('');
+  if (payeeHeader) leg[map[payeeHeader]] = otherPayee;
+  if ('Income/Expense' in map) leg[map['Income/Expense']] = otherType;
+  leg[map['SOF']] = otherAccount;
+  leg[map['Date']] = dateSerial;
+  if ('Month' in map) leg[map['Month']] = otherMonthSerial;
+  leg[map['Cleared']] = clearedValue;
+  if ('Amount' in map) leg[map['Amount']] = amount;
+  if ('Expense' in map) leg[map['Expense']] = oExpense;
+  if ('Income' in map) leg[map['Income']] = oIncome;
+  if (amountHeader === 'Total' && 'Total' in map) leg[map['Total']] = oExpense - oIncome;
+  if ('Notes' in map) leg[map['Notes']] = cardPayment ? 'Card payment' : 'Transfer';
+  leg[map['Transfer']] = true;
+  leg[map['Payment ID']] = paymentId;
+
+  const resp = await sheets.spreadsheets.values.append({
     spreadsheetId,
     range: `${RECONCILE_SHEETS.transactions}!A:${lastCol}`,
     valueInputOption: 'RAW',
     insertDataOption: 'INSERT_ROWS',
-    requestBody: { values: [cardLeg] },
+    requestBody: { values: [leg] },
   });
-  const cardRowNumber = parseInt(cardResp.data.updates.updatedRange.match(/(\d+)(?::|$)/)[1], 10);
+  const otherRowNumber = parseInt(resp.data.updates.updatedRange.match(/(\d+)(?::|$)/)[1], 10);
+  return { paymentId, rowNumber, otherRowNumber, linked: false };
+}
 
-  return { paymentId, cashRowNumber: rowNumber, cardRowNumber };
+// Read-only: rows that could be the OTHER half of a transfer the user is
+// converting -- i.e. the counterpart that was imported separately (say the
+// card's own "payment received" email next to the bank's "transfer out"
+// one). A candidate is on a different account than `account` (or exactly
+// `otherAccount` when given), has the opposite type, the same amount
+// (within Rp0.5), isn't already a payment leg, and is dated within
+// `windowDays` of `date`. Closest date first.
+function findTransferCandidates(txnRows, { rowNumber, account, otherAccount, type, amount, date, windowDays }) {
+  const wantType = type === 'Income' ? 'Expense' : 'Income';
+  const acct = String(account || '').trim().toLowerCase();
+  const other = otherAccount ? String(otherAccount).trim().toLowerCase() : null;
+  const dayMs = 24 * 60 * 60 * 1000;
+  const win = (windowDays || 7) * dayMs;
+  return txnRows
+    .filter((r) => {
+      if (r.rowNumber === rowNumber) return false;
+      const sof = (r.sof || '').toLowerCase();
+      if (!sof || sof === acct) return false;
+      if (other && sof !== other) return false;
+      if (r.type !== wantType) return false;
+      if (r.isTransfer || r.paymentId) return false;
+      if (Math.abs((r.displayAmount || 0) - amount) >= 0.5) return false;
+      if (!r.date || !date) return false;
+      return Math.abs(r.date - date) <= win;
+    })
+    .map((r) => ({ row: r, distance: Math.abs(r.date - date) }))
+    .sort((a, b) => a.distance - b.distance || b.row.rowNumber - a.row.rowNumber)
+    .map(({ row }) => row);
 }
 
 // Shared read of the Diary tab, used by both tryFlipDiaryBilledToPaid (a
@@ -917,7 +1035,7 @@ async function deletePaymentRows(sheets, paymentId) {
   });
   const values = response.data.values || [];
   const paymentIdCol = map['Payment ID'];
-  const converted = isConvertedPaymentId(paymentId);
+  const keepTypes = paymentIdKind(paymentId).keepTypes;
   const rowNumbers = [];
   const revertRowNumbers = [];
   let cardAccount = null;
@@ -925,10 +1043,11 @@ async function deletePaymentRows(sheets, paymentId) {
   values.forEach((row, i) => {
     if (String(row[paymentIdCol] || '').trim() !== String(paymentId).trim()) return;
     const isCardLeg = 'Income/Expense' in map && row[map['Income/Expense']] === 'Income';
-    // A converted payment's cash leg is the user's original (usually
-    // bank-email-imported) row -- put it back to a plain expense instead
-    // of deleting it. See convertRowToCardPayment.
-    if (converted && !isCardLeg) revertRowNumbers.push(i + 2);
+    // A converted payment's pre-existing leg(s) are the user's original
+    // (usually bank-email-imported) rows -- put them back to plain
+    // transactions instead of deleting them. See convertRowToTransfer.
+    const legType = isCardLeg ? 'Income' : 'Expense';
+    if (keepTypes.includes(legType)) revertRowNumbers.push(i + 2);
     else rowNumbers.push(i + 2);
     if (isCardLeg && !cardAccount) {
       if ('SOF' in map && row[map['SOF']]) cardAccount = String(row[map['SOF']]);
@@ -1197,7 +1316,9 @@ module.exports = {
   appendPlainTransactionRow,
   appendCardPaymentRows,
   appendTransferRows,
-  convertRowToCardPayment,
+  convertRowToTransfer,
+  findTransferCandidates,
+  paymentIdKind,
   isConvertedPaymentId,
   isTransferPaymentId,
   tryFlipDiaryBilledToPaid,

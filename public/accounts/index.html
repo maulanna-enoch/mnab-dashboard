@@ -1835,15 +1835,9 @@
   // swipe-left gesture and the full Add/Edit sheet's own Delete link.
   function dtxKbdHandleDelete(txn) {
     const isPayment = isLinkedLeg(txn);
-    const isConverted = isPayment && String(txn.paymentId || '').startsWith('cnv_');
-    const isPlainTransfer = isPayment && String(txn.paymentId || '').startsWith('trf_');
-    const message = !isPayment
-      ? `Delete "${txn.payee}"?`
-      : isPlainTransfer
-        ? `Undo this transfer ("${txn.payee}")? This removes BOTH this entry and the matching entry on the other account.`
-      : isConverted
-        ? `Undo this card payment ("${txn.payee}")? This removes the entry on the card and turns the paying account's entry back into a normal expense.`
-        : `Undo this card payment ("${txn.payee}")? This removes BOTH the charge on the card and the matching entry on the paying account.`;
+    const message = isPayment
+      ? SwipeActions.paymentUndoMessage(txn, { withPayee: true })
+      : `Delete "${txn.payee}"?`;
     showConfirm(
       message,
       async () => {
@@ -2107,7 +2101,7 @@
           <td class="dtx-status-col" data-field="cleared">${statusHtml}</td>
           <td class="dtx-pending-col">${pendingHtml}</td>
           <td class="dtx-truncate${editableCls}" data-field="notes" title="${notes.replace(/"/g, '&quot;')}">${notes}</td>
-          <td class="dtx-open-col"><button type="button" class="dtx-open-btn" title="${isTransfer ? (isPlainTransferId(t.paymentId) ? 'Transfer options' : 'Card payment options') : 'Open full editor'}">&#9998;</button></td>
+          <td class="dtx-open-col"><button type="button" class="dtx-open-btn" title="${isTransfer ? (SwipeActions.describePayment(t).cardPayment ? 'Card payment options' : 'Transfer options') : 'Open full editor'}">&#9998;</button></td>
         </tr>
       `;
     }).join('');
@@ -3231,7 +3225,8 @@
   // A row is a *linked* transfer leg only when it's Transfer-flagged AND
   // carries a Payment ID -- i.e. it was written as one half of a pair by
   // pay-card ('pay_'/legacy), convert-to-card-payment ('cnv_') or the Add
-  // form's Transfer mode ('trf_'), and undo-payment can find its partner.
+  // form's Transfer mode ('trf_') or Edit's Transfer toggle ('cv*'), and
+  // undo-payment can find its partner.
   // A row whose Transfer box was just ticked by hand in the Sheet, by the
   // inbox import, or by an email import (e.g. an incoming BI Fast from one
   // of the user's own banks, or a Duitku school payment) has no Payment ID
@@ -3242,27 +3237,30 @@
   function isLinkedLeg(t) {
     return !!(t && t.transfer && t.paymentId);
   }
-  function isPlainTransferId(paymentId) {
-    return String(paymentId || '').startsWith('trf_');
-  }
   // Meta-line tag for a Transfer-flagged row: "payment" only for a real
-  // linked card-payment leg, "transfer" for everything else.
+  // linked card-payment leg (per SwipeActions.describePayment, which knows
+  // every Payment ID prefix), "transfer" for everything else.
   function transferTagLabel(t) {
-    return isLinkedLeg(t) && !isPlainTransferId(t.paymentId) ? 'payment' : 'transfer';
+    return isLinkedLeg(t) && SwipeActions.describePayment(t).cardPayment ? 'payment' : 'transfer';
   }
 
   function openUndoPaymentMenu(txn) {
-    const isPlainTransfer = String(txn.paymentId || '').startsWith('trf_');
+    // Wording comes from the Payment ID prefix (SwipeActions.describePayment
+    // -- mirrors the server's paymentIdKind), so converted / linked pairs
+    // say they KEEP the original entries rather than delete them.
+    const d = SwipeActions.describePayment(txn);
+    const what = d.cardPayment ? 'card payment' : 'transfer between two accounts';
+    const outcome = d.keep.length === 2
+      ? 'Undoing it unpairs the two entries -- both stay, as normal, separate transactions.'
+      : d.keep.length === 1
+        ? `Undoing it removes the entry the conversion added and turns the original entry back into a normal ${d.keep[0] === 'Income' ? 'income' : 'expense'}.`
+        : 'Undoing it removes BOTH this entry and its matching entry on the other account.';
     showConfirm(
-      isPlainTransfer
-        ? `"${txn.payee}" is one leg of a transfer between two accounts. Undoing it removes BOTH this entry and its matching entry on the other account.`
-        : String(txn.paymentId || '').startsWith('cnv_')
-        ? `"${txn.payee}" is one leg of a card payment converted from an existing transaction. Undoing it removes the card's entry and turns the paying account's entry back into a normal expense.`
-        : `"${txn.payee}" is one leg of a card payment. Undoing it removes BOTH this entry and its matching entry on the other account.`,
+      `"${txn.payee}" is one leg of a ${what}. ${outcome}`,
       () => doUndoPayment(txn),
-      isPlainTransfer
-        ? { title: 'Transfer', confirmLabel: 'Undo Transfer', cancelLabel: 'Close', danger: true }
-        : { title: 'Card payment', confirmLabel: 'Undo Payment', cancelLabel: 'Close', danger: true }
+      d.cardPayment
+        ? { title: 'Card payment', confirmLabel: 'Undo Payment', cancelLabel: 'Close', danger: true }
+        : { title: 'Transfer', confirmLabel: 'Undo Transfer', cancelLabel: 'Close', danger: true }
     );
   }
   async function doUndoPayment(txn) {
@@ -3273,7 +3271,11 @@
     try {
       const r = await apiPost('/api/reconcile', { action: 'undo-payment', paymentId: txn.paymentId });
       const flipNote = r.diaryFlipped ? ' Its Diary bill was marked Billed again.' : '';
-      showAlert(`Removed ${r.deletedCount} transaction(s).${flipNote}`, String(txn.paymentId).startsWith('trf_') ? 'Transfer undone' : 'Payment undone');
+      const parts = [];
+      if (r.deletedCount) parts.push(`Removed ${r.deletedCount} transaction(s).`);
+      if (r.revertedCount) parts.push(`Turned ${r.revertedCount} original transaction(s) back into normal entries.`);
+      const title = SwipeActions.describePayment(txn).cardPayment ? 'Payment undone' : 'Transfer undone';
+      showAlert(`${parts.join(' ')}${flipNote}`, title);
       await fetchAndRenderAccountDetail(currentAccount);
     } catch (err) {
       showAlert(err.message, 'Undo failed');
@@ -3445,15 +3447,9 @@
   // delete, or reconcile's undo-payment for one leg of a card payment).
   function handleKeyboardDeleteTxn(txn) {
     const isPayment = isLinkedLeg(txn);
-    const isConverted = isPayment && String(txn.paymentId || '').startsWith('cnv_');
-    const isPlainTransfer = isPayment && String(txn.paymentId || '').startsWith('trf_');
-    const message = !isPayment
-      ? `Delete "${txn.payee}"?`
-      : isPlainTransfer
-        ? `Undo this transfer ("${txn.payee}")? This removes BOTH this entry and the matching entry on the other account.`
-      : isConverted
-        ? `Undo this card payment ("${txn.payee}")? This removes the entry on the card and turns the paying account's entry back into a normal expense.`
-        : `Undo this card payment ("${txn.payee}")? This removes BOTH the charge on the card and the matching entry on the paying account.`;
+    const message = isPayment
+      ? SwipeActions.paymentUndoMessage(txn, { withPayee: true })
+      : `Delete "${txn.payee}"?`;
     showConfirm(
       message,
       async () => {
