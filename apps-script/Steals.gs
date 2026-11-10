@@ -26,7 +26,7 @@
  *
  * `Steals Summary` (formulas only, rebuilt by this menu item)
  *   Top: this month vs last month, status, streak of months that came in
- *   lower, total still owed to the future, and a sparkline.
+ *   lower, reserves still owed to the future, and a sparkline.
  *   Table, one row per month from the first logged month to now (months
  *   with no steals show 0 — those count as wins):
  *     Month, Steals, vs Last Month, Trend, Paybacks, Net, Owed to Future,
@@ -34,6 +34,11 @@
  *   Trend: "✓ Zero", "✓ Lower", "✗ Not lower", "— First month"; the current
  *   (unfinished) month says "✓ On track" or "✗ Already ≥ last month".
  *   The streak counts finished months only.
+ *   Owed to Future counts reserve types only (STEALS_CONFIG.reserveTypes:
+ *   reksadana, savings, loans): what was taken out of a reserve and not put
+ *   back yet. A credit card cash advance or paylater is left out. Paying
+ *   that bill next month isn't a Payback (next month's income is paying
+ *   for it), so it would never come off the total.
  *
  * This log stands on its own: it doesn't read or write `transactions`. The
  * cash advance or redemption itself still goes into `transactions` as
@@ -55,6 +60,13 @@ const STEALS_CONFIG = {
     'Pinjaman',
     'Tabungan / Dana Darurat',
     'Lainnya',
+  ],
+  // Types counted in Owed to Future: reserves you draw down and can refill
+  // with a Payback. Must be names from `types`.
+  reserveTypes: [
+    'Penarikan Reksadana',
+    'Pinjaman',
+    'Tabungan / Dana Darurat',
   ],
   // Log columns in the order a new tab gets them. An existing tab is matched
   // by header name, so reordering columns later is fine.
@@ -164,7 +176,7 @@ function steals_setupSummary_(ss, log) {
   sheet.getRange('C1').setValue('Goal: every month lower than the one before.')
     .setFontColor('#666666').setFontStyle('italic');
   sheet.getRange('A2:F2').setValues([[
-    'This month', 'Last month', 'Status', 'Streak (months lower)', 'Owed to future', 'Steals by month',
+    'This month', 'Last month', 'Status', 'Streak (months lower)', 'Owed to future (reserves)', 'Steals by month',
   ]]).setFontColor('#666666').setFontSize(9);
   sheet.getRange('A3:F3').setFormulas([[f.kpiThis, f.kpiLast, f.kpiStatus, f.kpiStreak, f.kpiOwed, f.kpiSpark]])
     .setFontSize(13).setFontWeight('bold');
@@ -177,6 +189,10 @@ function steals_setupSummary_(ss, log) {
     .concat(C.types);
   sheet.getRange(R - 1, 1, 1, headers.length).setValues([headers])
     .setFontWeight('bold').setBackground('#f1f3f4').setWrap(true);
+
+  sheet.getRange(R - 1, 7).setNote(
+    'Reserves taken and not put back yet, up to this month. Counts only: ' +
+      C.reserveTypes.join(', ') + '. Credit card cash advances and paylater are left out.');
 
   const row = [f.month, f.steals, f.delta, f.trend, f.paybacks, f.net, f.owed, f.fees];
   for (let i = 0; i < typeCount; i++) row.push(f.byType(steals_colLetter_(9 + i)));
@@ -227,6 +243,14 @@ function steals_summaryFormulas_(L, R) {
   const thisMonth = 'DATE(YEAR(TODAY()), MONTH(TODAY()), 1)';
   const col = function (c) { return c + R + ':' + c; };
   const A = col('A'), B = col('B'), C = col('C'), D = col('D'), E = col('E');
+  const reserves = '{' + STEALS_CONFIG.reserveTypes.map(function (t) {
+    return '"' + t.replace(/"/g, '""') + '"';
+  }).join(', ') + '}';
+  // Reserve-type total for a direction, optionally only up to month m.
+  const reserveSum = function (direction, m) {
+    return 'SUM(SUMIFS(' + amt + (m ? ', ' + mon + ', "<=" & ' + m : '') + ', ' +
+      dir + ', "' + direction + '", ' + typ + ', ' + reserves + '))';
+  };
   const stealsIn = function (m) { return 'SUMIFS(' + amt + ', ' + mon + ', ' + m + ', ' + dir + ', "Steal")'; };
 
   return {
@@ -250,8 +274,7 @@ function steals_summaryFormulas_(L, R) {
     net: '=MAP(' + A + ', ' + B + ', ' + E + ', LAMBDA(m, b, p, IF(m = "", "", b - p)))',
     owed:
       '=MAP(' + A + ', LAMBDA(m, IF(m = "", "", ' +
-      'SUMIFS(' + amt + ', ' + mon + ', "<=" & m, ' + dir + ', "Steal") - ' +
-      'SUMIFS(' + amt + ', ' + mon + ', "<=" & m, ' + dir + ', "Payback"))))',
+      reserveSum('Steal', 'm') + ' - ' + reserveSum('Payback', 'm') + ')))',
     fees: '=MAP(' + A + ', LAMBDA(m, IF(m = "", "", SUMIFS(' + fee + ', ' + mon + ', m))))',
     byType: function (c) {
       return '=MAP(' + A + ', LAMBDA(m, IF(m = "", "", SUMIFS(' + amt + ', ' + mon + ', m, ' +
@@ -265,7 +288,7 @@ function steals_summaryFormulas_(L, R) {
     kpiStreak:
       '=IFERROR(LET(t, FILTER(' + D + ', ISNUMBER(' + A + '), ' + A + ' < ' + thisMonth + '), ' +
       'n, ROWS(t), IFERROR(n - MAX(FILTER(SEQUENCE(n), LEFT(t, 1) <> "✓")), n)), 0)',
-    kpiOwed: '=SUMIFS(' + amt + ', ' + dir + ', "Steal") - SUMIFS(' + amt + ', ' + dir + ', "Payback")',
+    kpiOwed: '=' + reserveSum('Steal') + ' - ' + reserveSum('Payback'),
     kpiSpark:
       '=IFERROR(SPARKLINE(FILTER(' + B + ', ISNUMBER(' + A + ')), ' +
       '{"charttype", "column"; "color", "#c5221f"}), "")',
