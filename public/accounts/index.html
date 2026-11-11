@@ -700,7 +700,7 @@
 
 <div class="wrap" id="screen-detail" style="display:none;">
   <div class="detail-sticky">
-    <button type="button" class="back-link" onclick="goto('accounts')">← Accounts</button>
+    <button type="button" class="back-link" onclick="backToAccounts()">← Accounts</button>
     <h1 id="detail-title">Account</h1>
 
     <div id="detail-loading" class="loading" style="display:none;">Loading…</div>
@@ -1095,27 +1095,59 @@
     };
   }
 
-  async function loadAccountsList() {
+  // Bumped on every loadAccountsList() call so a slower, older request
+  // can't land after a newer one and paint stale data over it (e.g. two
+  // quick detail -> back round trips).
+  let accountsListLoadSeq = 0;
+
+  // opts.silent: refresh in place -- keep the current list on screen (no
+  // "Loading..." flash) and swap in the new data when it arrives. Used when
+  // returning from an account's detail screen, where the list is already
+  // rendered but may be stale (balances, "Last reconciled" after a
+  // reconcile/undo/edit). A silent refresh that fails leaves the old list
+  // up rather than replacing it with an error. Falls back to a normal load
+  // if the list never rendered in the first place.
+  async function loadAccountsList(opts) {
     const loadingEl = document.getElementById('accounts-loading');
     const errorEl = document.getElementById('accounts-error');
     const contentEl = document.getElementById('accounts-content');
-    loadingEl.style.display = 'block';
-    errorEl.style.display = 'none';
-    contentEl.style.display = 'none';
+    const silent = !!(opts && opts.silent) && contentEl.style.display === 'block';
+    const seq = ++accountsListLoadSeq;
+    if (!silent) {
+      loadingEl.style.display = 'block';
+      errorEl.style.display = 'none';
+      contentEl.style.display = 'none';
+    }
 
     try {
       const [accountsRes, transactionsRes] = await Promise.all([
         apiGet('/api/accounts-list'),
         apiGet('/api/transactions-list'),
       ]);
+      if (seq !== accountsListLoadSeq) return;
+      // renderAccountsList() resets the keyboard highlight; on a silent
+      // refresh put it back where it was so a keyboard user returning from
+      // detail doesn't lose their place.
+      const keepHighlight = silent ? acctHighlightIndex : -1;
       renderAccountsList(accountsRes.accounts, transactionsRes.transactions);
+      if (keepHighlight >= 0) setAcctHighlight(keepHighlight);
       loadingEl.style.display = 'none';
       contentEl.style.display = 'block';
     } catch (err) {
+      if (seq !== accountsListLoadSeq) return;
+      if (silent) return;
       loadingEl.style.display = 'none';
       errorEl.textContent = 'Couldn\'t load accounts: ' + err.message;
       errorEl.style.display = 'block';
     }
+  }
+
+  // "← Accounts" from the detail screen. goto() alone only swaps screens,
+  // so the list kept showing whatever it loaded on page open -- a
+  // reconcile done in between didn't show up until a full page reload.
+  function backToAccounts() {
+    goto('accounts');
+    loadAccountsList({ silent: true });
   }
 
   // Accounts not reconciled within this many days get their "Last
