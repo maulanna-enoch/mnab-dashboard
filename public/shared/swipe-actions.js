@@ -143,7 +143,9 @@
       // rowHTML's `isPayment` rendering above. The caller's onDelete is
       // expected to branch on this same flag to call the right endpoint
       // (transactions-delete vs. reconcile's undo-payment).
-      const isPayment = !!txn.transfer;
+      // Only a linked leg (Transfer AND a Payment ID) has a partner row to
+      // undo; a hand-ticked Transfer row with no Payment ID is a plain row.
+      const isPayment = !!(txn.transfer && txn.paymentId);
       const message = isPayment ? paymentUndoMessage(txn) : 'Delete this transaction?';
       if (!confirm(message)) return;
       runBusyAction(entry, wrap, actionEl, entry.options.onDelete, txn, isPayment ? 'Undoing…' : 'Deleting…');
