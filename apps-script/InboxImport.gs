@@ -54,6 +54,23 @@
  * One-time setup: the account that runs this must be able to open the inbox
  * spreadsheet (it's shared with it as Editor). The first run asks for
  * permission to open other spreadsheets.
+ *
+ * Automatic import (Finances > Set Up Inbox Auto-Import…):
+ *   Installs a time-driven trigger that runs every
+ *   INBOX_CONFIG.autoEveryMinutes minutes, but only does anything between
+ *   autoStartHour and autoEndHour Jakarta time (12:00–20:59 by default);
+ *   outside that window each run returns immediately. Apps Script can't
+ *   schedule "only these hours" directly, so the window is checked in code.
+ *   An automatic run differs from the menu item in two ways:
+ *     - No confirmation (there's nobody to click Yes).
+ *     - It only deletes inbox rows that were actually imported (or were
+ *       already in transactions) and are ticked "Delete After Import".
+ *       Unapproved, skipped and unticked rows are left for you to review —
+ *       an unattended run never throws away a row that didn't reach the
+ *       ledger.
+ *   Runs that change something, new skip reasons and errors are written to
+ *   the "Inbox Import Log" tab; quiet runs write nothing.
+ *   Finances > Remove Inbox Auto-Import… undoes it.
  */
 
 const INBOX_CONFIG = {
@@ -63,6 +80,15 @@ const INBOX_CONFIG = {
   stagedStatus: 'Staged',
   importedStatus: 'Imported',
   deleteColumn: 'Delete After Import',
+
+  // Automatic import (see file header).
+  autoHandler: 'automaticInboxImport',
+  autoEveryMinutes: 10,   // Apps Script allows 1, 5, 10, 15 or 30
+  autoStartHour: 12,      // first hour that runs (Asia/Jakarta)
+  autoEndHour: 21,        // first hour that does NOT run: last run ~20:5x
+  autoTimeZone: 'Asia/Jakarta',
+  logSheet: 'Inbox Import Log',
+  lastSkippedProp: 'INBOX_AUTO_LAST_SKIPPED',
 };
 
 /** Menu entry point. */
@@ -75,7 +101,7 @@ function importFromInbox() {
   }
   try {
     const result = inbox_import_(ui);
-    if (result) ui.alert('Inbox import', result, ui.ButtonSet.OK);
+    if (result) ui.alert('Inbox import', result.text, ui.ButtonSet.OK);
   } catch (err) {
     ui.alert('Inbox import failed', String(err && err.message || err), ui.ButtonSet.OK);
   } finally {
@@ -83,8 +109,37 @@ function importFromInbox() {
   }
 }
 
-/** Returns the summary text to show, or null if the user cancelled. */
+/**
+ * Trigger entry point, bound by setupInboxAutoImport(). Never touches
+ * SpreadsheetApp.getUi() (that throws under a time-driven trigger).
+ */
+function automaticInboxImport() {
+  const hour = Number(Utilities.formatDate(new Date(), INBOX_CONFIG.autoTimeZone, 'H'));
+  if (hour < INBOX_CONFIG.autoStartHour || hour >= INBOX_CONFIG.autoEndHour) return;
+
+  const lock = LockService.getDocumentLock();
+  if (!lock.tryLock(10000)) return;  // something else is running; next run picks it up
+  try {
+    const result = inbox_import_(null);
+    const props = PropertiesService.getScriptProperties();
+    const skippedSig = result.skipped.join('\n');
+    const newSkips = skippedSig !== (props.getProperty(INBOX_CONFIG.lastSkippedProp) || '');
+    props.setProperty(INBOX_CONFIG.lastSkippedProp, skippedSig);
+    if (result.changed || (newSkips && skippedSig)) inbox_log_('Automatic', result.text);
+  } catch (err) {
+    inbox_log_('Automatic', 'FAILED: ' + String(err && err.message || err));
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Does the import. ui = SpreadsheetApp UI for the menu item, null for an
+ * automatic run (no confirmation; only imported rows are deleted).
+ * Returns { text, changed, skipped }, or null if the user cancelled.
+ */
 function inbox_import_(ui) {
+  const auto = !ui;
   const inboxSheet = SpreadsheetApp.openById(INBOX_CONFIG.spreadsheetId)
     .getSheetByName(INBOX_CONFIG.sheetName);
   if (!inboxSheet) throw new Error('Inbox tab "' + INBOX_CONFIG.sheetName + '" not found.');
@@ -104,7 +159,7 @@ function inbox_import_(ui) {
     if (!(h in inCol)) throw new Error('Inbox is missing the "' + h + '" column.');
   });
   const inLast = inboxSheet.getLastRow();
-  if (inLast < 2) return 'The inbox is empty.';
+  if (inLast < 2) return { text: 'The inbox is empty.', changed: false, skipped: [] };
   const delCol = inbox_ensureDeleteColumn_(inboxSheet, inLast);
   const inRows = inboxSheet.getRange(2, 1, inLast - 1, inboxSheet.getLastColumn()).getValues();
 
@@ -181,19 +236,25 @@ function inbox_import_(ui) {
   });
 
   Object.keys(keep).forEach(function (k) { delete toDelete[k]; });
-  const deleteRows = Object.keys(toDelete).map(Number).sort(function (a, b) { return a - b; });
   const importedRows = {};
   toWrite.forEach(function (w) { importedRows[w.inboxRow] = true; });
   alreadyIn.forEach(function (a) { importedRows[a.inboxRow] = true; });
+  // Unattended: never delete a row that didn't reach the ledger.
+  if (auto) Object.keys(toDelete).forEach(function (k) { if (!importedRows[k]) delete toDelete[k]; });
+  const deleteRows = Object.keys(toDelete).map(Number).sort(function (a, b) { return a - b; });
   const deleteNotImported = deleteRows.filter(function (n) { return !importedRows[n]; }).length;
 
   if (!toWrite.length && !alreadyIn.length && !deleteRows.length) {
-    return 'Nothing to import: no rows are ticked Approve with Status "Staged".' +
-      (skipped.length ? '\n\nSkipped:\n' + skipped.join('\n') : '');
+    return {
+      text: 'Nothing to import: no rows are ticked Approve with Status "Staged".' +
+        (skipped.length ? '\n\nSkipped:\n' + skipped.join('\n') : ''),
+      changed: false,
+      skipped: skipped,
+    };
   }
 
   // ---- confirm (only when something will be added or deleted) ----
-  if (toWrite.length || deleteRows.length) {
+  if (!auto && (toWrite.length || deleteRows.length)) {
     const parts = [];
     if (toWrite.length) {
       let exp = 0, inc = 0;
@@ -270,7 +331,56 @@ function inbox_import_(ui) {
     lines.push('Deleted ' + deleteRows.length + ' row(s) from the inbox' +
       (deleteNotImported ? ' (' + deleteNotImported + ' not imported)' : '') + '.');
   }
-  return lines.join('\n\n');
+  return { text: lines.join('\n\n'), changed: true, skipped: skipped };
+}
+
+/** Appends one row to the "Inbox Import Log" tab (created on first use). */
+function inbox_log_(trigger, text) {
+  const ss = SpreadsheetApp.getActive();
+  let sheet = ss.getSheetByName(INBOX_CONFIG.logSheet);
+  if (!sheet) {
+    sheet = ss.insertSheet(INBOX_CONFIG.logSheet);
+    sheet.getRange(1, 1, 1, 3).setValues([['Timestamp', 'Trigger', 'Result']]);
+    sheet.setFrozenRows(1);
+  }
+  sheet.appendRow([new Date(), trigger, text]);
+}
+
+/** Menu entry point: install the automatic import trigger. */
+function setupInboxAutoImport() {
+  const ui = SpreadsheetApp.getUi();
+  const hours = INBOX_CONFIG.autoStartHour + ':00–' + (INBOX_CONFIG.autoEndHour - 1) + ':59';
+  const already = ScriptApp.getProjectTriggers().some(function (t) {
+    return t.getHandlerFunction() === INBOX_CONFIG.autoHandler;
+  });
+  if (already) {
+    ui.alert('Inbox Auto-Import is already set up (every ' + INBOX_CONFIG.autoEveryMinutes +
+      ' minutes, ' + hours + '). Nothing changed.');
+    return;
+  }
+  ScriptApp.newTrigger(INBOX_CONFIG.autoHandler)
+    .timeBased()
+    .everyMinutes(INBOX_CONFIG.autoEveryMinutes)
+    .create();
+  ui.alert('Inbox Auto-Import is set up. Every ' + INBOX_CONFIG.autoEveryMinutes +
+    ' minutes between ' + hours + ' (Jakarta) it imports rows ticked Approve with Status ' +
+    '"Staged", without asking, and deletes the imported ones from the inbox. Rows that ' +
+    'aren\'t approved or fail a check stay in the inbox. Results go to the "' +
+    INBOX_CONFIG.logSheet + '" tab.');
+}
+
+/** Menu entry point: undo setupInboxAutoImport(). */
+function removeInboxAutoImport() {
+  const ui = SpreadsheetApp.getUi();
+  const triggers = ScriptApp.getProjectTriggers().filter(function (t) {
+    return t.getHandlerFunction() === INBOX_CONFIG.autoHandler;
+  });
+  if (!triggers.length) {
+    ui.alert('No Inbox Auto-Import trigger is set up.');
+    return;
+  }
+  triggers.forEach(function (t) { ScriptApp.deleteTrigger(t); });
+  ui.alert('Inbox Auto-Import removed. Importing from the inbox is back to the Finances menu only.');
 }
 
 /**
