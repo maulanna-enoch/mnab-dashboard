@@ -105,35 +105,7 @@ In the Apps Script editor, pick `processMnabEmails` from the function
 dropdown and click **Run** once. Approve the Gmail + Sheets access it
 asks for.
 
-### 5. Skip the backlog, if you have one
-
-**Only needed if a label already has old email under it** — e.g. you
-reused a label you'd already been using for a while, so it's got hundreds
-of pre-existing messages. If your labels are freshly created with nothing
-under them yet, skip straight to step 6.
-
-The script has no concept of "old" vs "new" mail — it imports anything
-carrying a known label that isn't already tagged `mnab/imported`. Pointed
-at a label with an existing backlog, it would try to import every single
-one of those old messages as a transaction the first time it runs.
-
-Run `markExistingMnabEmailsAsAlreadyImported` (same function dropdown,
-**Run** once) to fix this. It applies the `mnab/imported` label to every
-thread the normal import would currently match — same search, same label
-— but never reads a message or writes a row to the sheet. After it runs,
-only mail arriving under the label from that point on gets imported.
-
-It's capped at 100 threads per run (a Gmail limit). Check the execution
-log — if it says it hit that cap, just run it again until it logs 0
-remaining. It's also safe to run more than once regardless: once a thread
-is labeled `mnab/imported`, it stops matching and won't be touched again.
-
-This step deliberately ignores `DRY_RUN` — it never writes rows or reads
-message content either way, only applies a Gmail label, so it does real
-(if easily-reversible-by-hand) label changes even while `DRY_RUN` is
-still `true`.
-
-### 6. Dry-run it first
+### 5. Dry-run it first
 
 `DRY_RUN` is a **Script Property**, not a line in the code — **Project
 Settings (gear icon) → Script Properties → Add script property**, key
@@ -149,8 +121,7 @@ without touching the sheet or re-labeling anything.
 
 Testing against **old** mail (a backlog) instead of waiting for new mail
 to arrive? Run `previewMnabBacklog` instead (same function dropdown) — it
-picks up threads already tagged `mnab/imported`, including any you marked
-in step 5, so you can test the parser against your whole backlog. It's
+picks up threads already tagged `mnab/imported`, so you can test the parser against your whole backlog. It's
 always safe to run repeatedly, no matter what `DRY_RUN` is set to: this
 function can never write a row or re-label a thread, full stop — see
 "Avoiding a Gmail quota blowout" below.
@@ -158,13 +129,13 @@ function can never write a row or re-label a thread, full stop — see
 Once you're happy with the logged output, set the `DRY_RUN` script
 property to `false`.
 
-### 7. Install the trigger
+### 6. Install the trigger
 
 Once `DRY_RUN` is `false`, run `installEmailImportTrigger` once. From then
 on, `processMnabEmails` runs automatically every 5 minutes — no more
 manual runs needed.
 
-### 8. (Optional) Enable the AI fallback
+### 7. (Optional) Enable the AI fallback
 
 **Project Settings (gear icon) → Script Properties → Add script
 property**, key `ANTHROPIC_API_KEY`, value = an Anthropic API key.
@@ -231,7 +202,7 @@ the quota reset roughly 24 hours after the first call that day.
 
 **The fix, two parts:**
 
-1. `DRY_RUN` moved from a code `var` to a **Script Property** (step 6
+1. `DRY_RUN` moved from a code `var` to a **Script Property** (step 5
    above). Script Properties live outside the code text, so pasting an
    updated `EmailImport.gs` from here on never resets it.
 2. The backlog-widened search is no longer tied to `DRY_RUN` at all.
@@ -264,11 +235,6 @@ your daily Gmail quota.
   something was attempted), but with `Amount`/`Expense`/`Income`/`Total`
   all `0` and the payee prefixed `[FAILED TRANSFER]` — it can't affect
   your balance.
-- `markExistingMnabEmailsAsAlreadyImported` (step 5 above) is a separate
-  exception: it ignores `DRY_RUN` and does make a real change (applying
-  the `mnab/imported` label) even before you've set `DRY_RUN` to `false`,
-  since that's the entire point of it. It never touches the sheet or
-  reads message content, though — only Gmail labels.
 
 ## What's next
 
