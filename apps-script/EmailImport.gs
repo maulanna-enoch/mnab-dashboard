@@ -443,6 +443,7 @@ function runImportPass_(opts) {
   }
 
   importedThisRun_ = [];
+  resetPayeeRulesCache_(); // PayeeRules.gs: re-read the PayeeRules tab once per run
   var grabThreads = []; // mnab/grab receipts — handled after the bank threads, see GRAB RECEIPTS
   try {
     var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TRANSACTIONS_SHEET_NAME);
@@ -568,20 +569,30 @@ function handleMessage_(message, labelKey, headerMap, dryRun) {
     return writeTransferPair_(parsed, messageId, headerMap, dryRun);
   }
 
+  // Payee rules (PayeeRules.gs): may rename the payee, replace the notes
+  // or set Transfer, from the PayeeRules tab. With no matching rule this
+  // returns exactly the payee / notes / transfer written before rules
+  // existed. Failed transfers, card-payment pairs and manual-review rows
+  // above never get here, so rules can't touch them.
+  var ruled = applyPayeeRulesForImport_(parsed, labelKey);
+
   // Single-leg Transfer (e.g. parseOcbcIncomingTransfer_ for money moved in
-  // from the user's own account at another bank): one row, Transfer = TRUE,
-  // no Payment ID since there's no paired leg written here.
-  if (parsed.transfer && !dryRun) ensureTransferColumns_(headerMap);
+  // from the user's own account at another bank, or a payee rule that sets
+  // Transfer): one row, Transfer = TRUE, no Payment ID since there's no
+  // paired leg written here.
+  if (ruled.transfer && !dryRun) ensureTransferColumns_(headerMap);
 
   return writeRow_({
-    payee: parsed.payee,
+    payee: ruled.payee,
     type: parsed.type || 'Expense',
     sof: parsed.sof,
     date: parsed.date,
     amount: parsed.amount,
-    notes: (parsed.notes || '') + ' (Auto-imported)',
+    notes: ruled.notes,
     messageId: messageId,
-    transfer: !!parsed.transfer
+    transfer: ruled.transfer,
+    raw: ruled.raw,
+    payeeRule: ruled.payeeRule
   }, headerMap, dryRun);
 }
 
@@ -778,7 +789,11 @@ function writeRow_(row, headerMap, dryRun) {
     'Reconciled': false,
     'Email Message ID': row.messageId || '',
     'Match ID': matchId,
-    'Match Status': matchedRow ? 'Proposed' : ''
+    'Match Status': matchedRow ? 'Proposed' : '',
+    // PayeeRules.gs: the parser's own text, and which rule (if any) fired.
+    // Blank on rows that don't come through handleMessage_'s normal path.
+    'Raw Import': row.raw || '',
+    'Payee Rule': row.payeeRule || ''
   };
   // Only set on transfer legs (writeTransferPair_) — every other import
   // leaves these cells blank exactly as before, rather than writing FALSE.
@@ -875,7 +890,8 @@ function testPushNotification() {
 // duplicate guard (see "TWO LAYERS OF DUPLICATE PROTECTION" up top);
 // 'Match ID'/'Match Status' were added for the imported-vs-manual matching
 // feature (see "THIRD KIND OF DUPLICATE" up top).
-var IMPORT_COLUMNS = ['Pending', 'Email Message ID', 'Match ID', 'Match Status'];
+// 'Raw Import'/'Payee Rule' belong to the payee rules (PayeeRules.gs).
+var IMPORT_COLUMNS = ['Pending', 'Email Message ID', 'Match ID', 'Match Status', 'Raw Import', 'Payee Rule'];
 
 function ensureImportColumns_(sheet) {
   var lastCol = sheet.getLastColumn();
@@ -1877,9 +1893,8 @@ function tryAiFallback_(labelKey, subject, bodyHtml) {
 // Grab's own receipt email arrives only for a completed trip/order, and it
 // carries the final total. So this section reads receipts (Gmail label
 // mnab/grab) and, for the charge each one belongs to:
-//   - sets Payee to the product, plus the restaurant for food or "Tip" for a
-//     tip ("GrabBike XL", "GrabFood - Fore Coffee, Cinere",
-//     "GrabExpress Instant - Tip"),
+//   - sets Payee to the product (GrabBike XL, GrabExpress Instant, the
+//     restaurant for GrabFood, "Grab tip (…)" for a tip),
 //   - prepends route / distance / times / items to Notes,
 //   - corrects Amount (and Expense/Income/Total) to the receipt total when
 //     the row isn't Cleared or Reconciled yet,
@@ -2080,20 +2095,19 @@ function parseGrabReceipt_(subject, bodyHtml, messageDate) {
   };
 }
 
-// Always "<product>" or "<product> - <detail>", so the Grab product leads
-// the Payee: "GrabBike XL", "GrabExpress Instant", "GrabExpress Instant - Tip",
-// "GrabFood - Fore Coffee, Cinere" (the restaurant's own " - " becomes ", ").
 function grabPayeeFor_(r) {
-  if (r.kind === 'tip') return r.service + ' - Tip';
-  if (r.kind === 'food' && r.merchant) return r.service + ' - ' + r.merchant.replace(/\s+-\s+/g, ', ');
+  if (r.kind === 'tip') return 'Grab tip (' + r.service + ')';
+  if (r.kind === 'food' && r.merchant) return r.merchant;
   return r.service;
 }
 
 function grabNotesFor_(r) {
   var parts = [];
   if (r.kind === 'food') {
+    parts.push(r.service);
     if (r.items.length) parts.push(r.items.join(', '));
   } else {
+    if (r.kind === 'tip') parts.push('Tip');
     if (r.pickup || r.dropoff) parts.push((r.pickup || '?') + ' → ' + (r.dropoff || '?'));
     if (r.distance) parts.push(r.distance);
     if (r.startTime && r.endTime) parts.push(r.startTime + '–' + r.endTime);
@@ -2431,108 +2445,6 @@ function runGrabBackfillPass_(dryRun) {
         counts.none + ' no charge found, ' + counts.ambiguous + ' ambiguous. ' +
         (dryRun ? '(Preview covers the newest ' + GRAB_BACKFILL_PAGE + ' threads only.)'
             : done ? 'Done.' : 'More to go — run runGrabBackfill again.'));
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-// ── ONE-OFF: re-apply the current Payee format to already-matched rows ──
-//
-// Rows matched by the first version of this section got the old Payee
-// format ("Fore Coffee - Cinere", "Grab tip (GrabExpress Instant)").
-// Matching never revisits a matched row, so this rewrites them once:
-//
-//   previewReapplyGrabPayees() — dry run; logs each rename it would make.
-//   reapplyGrabPayees()        — writes (unless the DRY_RUN property is true).
-//
-// Only a Payee that is EXACTLY the old auto-written value is changed, so
-// any Payee you've edited by hand is left alone. The old "GrabFood · " /
-// "Tip · " prefix is also dropped from Notes. Rides and GrabExpress didn't
-// change format and are skipped. Safe to run more than once; it reads up to
-// GRAB_REAPPLY_MAX_THREADS receipt threads per run — run it again if the
-// log says there's more.
-
-var GRAB_REAPPLY_MAX_THREADS = 500;
-
-function previewReapplyGrabPayees() { reapplyGrabPayeesPass_(true); }
-function reapplyGrabPayees() { reapplyGrabPayeesPass_(isDryRun_()); }
-
-// The Payee the first version of this section wrote.
-function grabOldPayeeFor_(r) {
-  if (r.kind === 'tip') return 'Grab tip (' + r.service + ')';
-  if (r.kind === 'food' && r.merchant) return r.merchant;
-  return r.service;
-}
-
-// Pure: what to change on one matched row, or null.
-function grabReapplyChange_(receipt, row) {
-  var oldPayee = grabOldPayeeFor_(receipt);
-  var newPayee = grabPayeeFor_(receipt);
-  if (oldPayee === newPayee || String(row.payee) !== oldPayee) return null;
-  var notes = String(row.notes || '');
-  if (receipt.kind === 'food') notes = notes.replace(new RegExp('^' + receipt.service.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ' · '), '');
-  if (receipt.kind === 'tip') notes = notes.replace(/^Tip · /, '');
-  return { payee: newPayee, notes: notes };
-}
-
-function reapplyGrabPayeesPass_(dryRun) {
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(LOCK_WAIT_MS)) {
-    Logger.log('An import run is in progress — try again in a minute.');
-    return;
-  }
-  try {
-    var props = PropertiesService.getScriptProperties();
-    var offsetKey = 'GRAB_REAPPLY_OFFSET';
-    var start = dryRun ? 0 : (Number(props.getProperty(offsetKey)) || 0);
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TRANSACTIONS_SHEET_NAME);
-    var lastCol = sheet.getLastColumn();
-    var headerMap = {};
-    sheet.getRange(1, 1, 1, lastCol).getValues()[0].forEach(function (h, i) { if (h) headerMap[h] = i + 1; });
-    if (!headerMap[GRAB_RECEIPT_COLUMN]) {
-      Logger.log('No "' + GRAB_RECEIPT_COLUMN + '" column yet — nothing has been matched, nothing to re-apply.');
-      return;
-    }
-    var byReceipt = {};
-    loadGrabRows_(sheet, headerMap).forEach(function (r) {
-      var id = String(r.receiptId || '').toUpperCase();
-      if (id && id !== GRAB_NO_RECEIPT_MARK) byReceipt[id] = r;
-    });
-
-    var renamed = 0, read = 0, threadsSeen = 0, more = false;
-    for (var offset = start; ; offset += GRAB_BACKFILL_PAGE) {
-      if (threadsSeen >= GRAB_REAPPLY_MAX_THREADS) { more = true; break; }
-      var threads = GmailApp.search(GRAB_BACKFILL_QUERY + ' after:' + GRAB_BACKFILL_SINCE, offset, GRAB_BACKFILL_PAGE);
-      threadsSeen += threads.length;
-      threads.forEach(function (thread) {
-        thread.getMessages().forEach(function (m) {
-          var receipt = parseGrabReceipt_(m.getSubject(), m.getBody(), m.getDate());
-          if (!receipt) return;
-          read++;
-          var row = byReceipt[receipt.bookingId];
-          if (!row) return;
-          var change = grabReapplyChange_(receipt, row);
-          if (!change) return;
-          renamed++;
-          if (dryRun) {
-            Logger.log('[DRY RUN] Row ' + row.rowNum + ': "' + row.payee + '" → "' + change.payee + '"');
-          } else {
-            sheet.getRange(row.rowNum, headerMap['Payee']).setValue(change.payee);
-            if (headerMap['Notes'] && change.notes !== String(row.notes || '')) sheet.getRange(row.rowNum, headerMap['Notes']).setValue(change.notes);
-            Logger.log('Row ' + row.rowNum + ': "' + row.payee + '" → "' + change.payee + '"');
-          }
-          row.payee = change.payee;
-          row.notes = change.notes;
-        });
-      });
-      if (threads.length < GRAB_BACKFILL_PAGE) break;
-    }
-    if (!dryRun) {
-      if (more) props.setProperty(offsetKey, String(start + threadsSeen));
-      else props.deleteProperty(offsetKey);
-    }
-    Logger.log((dryRun ? '[DRY RUN] ' : '') + 'Re-apply Grab payees: ' + read + ' receipt(s) read, ' + renamed + ' row(s) ' +
-        (dryRun ? 'would be renamed.' : 'renamed.') + (more ? (dryRun ? ' (Preview stopped early — more receipts not read.)' : ' More to go — run reapplyGrabPayees again.') : ' Done.'));
   } finally {
     lock.releaseLock();
   }
