@@ -443,6 +443,7 @@ function runImportPass_(opts) {
   }
 
   importedThisRun_ = [];
+  resetPayeeRulesCache_(); // PayeeRules.gs: re-read the PayeeRules tab once per run
   var grabThreads = []; // mnab/grab receipts — handled after the bank threads, see GRAB RECEIPTS
   try {
     var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TRANSACTIONS_SHEET_NAME);
@@ -568,20 +569,30 @@ function handleMessage_(message, labelKey, headerMap, dryRun) {
     return writeTransferPair_(parsed, messageId, headerMap, dryRun);
   }
 
+  // Payee rules (PayeeRules.gs): may rename the payee, replace the notes
+  // or set Transfer, from the PayeeRules tab. With no matching rule this
+  // returns exactly the payee / notes / transfer written before rules
+  // existed. Failed transfers, card-payment pairs and manual-review rows
+  // above never get here, so rules can't touch them.
+  var ruled = applyPayeeRulesForImport_(parsed, labelKey);
+
   // Single-leg Transfer (e.g. parseOcbcIncomingTransfer_ for money moved in
-  // from the user's own account at another bank): one row, Transfer = TRUE,
-  // no Payment ID since there's no paired leg written here.
-  if (parsed.transfer && !dryRun) ensureTransferColumns_(headerMap);
+  // from the user's own account at another bank, or a payee rule that sets
+  // Transfer): one row, Transfer = TRUE, no Payment ID since there's no
+  // paired leg written here.
+  if (ruled.transfer && !dryRun) ensureTransferColumns_(headerMap);
 
   return writeRow_({
-    payee: parsed.payee,
+    payee: ruled.payee,
     type: parsed.type || 'Expense',
     sof: parsed.sof,
     date: parsed.date,
     amount: parsed.amount,
-    notes: (parsed.notes || '') + ' (Auto-imported)',
+    notes: ruled.notes,
     messageId: messageId,
-    transfer: !!parsed.transfer
+    transfer: ruled.transfer,
+    raw: ruled.raw,
+    payeeRule: ruled.payeeRule
   }, headerMap, dryRun);
 }
 
@@ -778,7 +789,11 @@ function writeRow_(row, headerMap, dryRun) {
     'Reconciled': false,
     'Email Message ID': row.messageId || '',
     'Match ID': matchId,
-    'Match Status': matchedRow ? 'Proposed' : ''
+    'Match Status': matchedRow ? 'Proposed' : '',
+    // PayeeRules.gs: the parser's own text, and which rule (if any) fired.
+    // Blank on rows that don't come through handleMessage_'s normal path.
+    'Raw Import': row.raw || '',
+    'Payee Rule': row.payeeRule || ''
   };
   // Only set on transfer legs (writeTransferPair_) — every other import
   // leaves these cells blank exactly as before, rather than writing FALSE.
@@ -875,7 +890,8 @@ function testPushNotification() {
 // duplicate guard (see "TWO LAYERS OF DUPLICATE PROTECTION" up top);
 // 'Match ID'/'Match Status' were added for the imported-vs-manual matching
 // feature (see "THIRD KIND OF DUPLICATE" up top).
-var IMPORT_COLUMNS = ['Pending', 'Email Message ID', 'Match ID', 'Match Status'];
+// 'Raw Import'/'Payee Rule' belong to the payee rules (PayeeRules.gs).
+var IMPORT_COLUMNS = ['Pending', 'Email Message ID', 'Match ID', 'Match Status', 'Raw Import', 'Payee Rule'];
 
 function ensureImportColumns_(sheet) {
   var lastCol = sheet.getLastColumn();

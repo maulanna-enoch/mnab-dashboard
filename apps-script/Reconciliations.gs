@@ -81,6 +81,8 @@ function onOpen() {
     .addItem('Set Up Inbox Auto-Import…', 'setupInboxAutoImport')
     .addItem('Remove Inbox Auto-Import…', 'removeInboxAutoImport')
     .addItem('Set Up Steals from the Future…', 'setupSteals')
+    .addItem('Set Up Payee Rules…', 'setupPayeeRules')
+    .addItem('Apply Payee Rules to Pending Rows…', 'applyPayeeRulesToPendingRows')
     .addToUi();
 }
 
