@@ -26,12 +26,14 @@
  *      mnab/mandiri
  *      mnab/ocbc
  *      mnab/jago
+ *      mnab/grab   (optional — Grab receipts; see "GRAB RECEIPTS" near the end)
  * 2. Create ONE Gmail filter per bank sender applying its single label
  *    (Gmail's filter UI only lets you pick one label per rule anyway, so
  *    this is also the only thing that's actually possible):
  *      from:(noreply.livin@bankmandiri.co.id) → apply label "mnab/mandiri"
  *      from:(notifikasi@ocbc.id)              → apply label "mnab/ocbc"
  *      from:(noreply@jago.com)                → apply label "mnab/jago"
+ *      from:(no-reply@grab.com) subject:(receipt OR struk) → "mnab/grab"
  *    (Gmail > Settings > Filters and Blocked Addresses > Create a new
  *    filter > match the sender > Continue > check "Apply the label" >
  *    pick the one label.)
@@ -336,7 +338,7 @@ var LABEL_PARSERS = {
 // threads stay excluded from every trigger-driven run, in either DRY_RUN
 // state — see "TESTING AGAINST A BACKLOG" up top for why that matters.
 function buildPollQuery_(includeAlreadyImported) {
-  var clauses = Object.keys(LABEL_PARSERS).map(function (l) { return 'label:' + l; });
+  var clauses = Object.keys(LABEL_PARSERS).concat([GRAB_RECEIPT_LABEL]).map(function (l) { return 'label:' + l; });
   var query = '(' + clauses.join(' OR ') + ')';
   if (!includeAlreadyImported) {
     query += ' -label:' + PROCESSED_LABEL;
@@ -441,6 +443,7 @@ function runImportPass_(opts) {
   }
 
   importedThisRun_ = [];
+  var grabThreads = []; // mnab/grab receipts — handled after the bank threads, see GRAB RECEIPTS
   try {
     var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TRANSACTIONS_SHEET_NAME);
     if (!sheet) throw new Error('Could not find a sheet tab named "' + TRANSACTIONS_SHEET_NAME + '".');
@@ -455,8 +458,16 @@ function runImportPass_(opts) {
       var labelNames = thread.getLabels().map(function (l) { return l.getName(); });
       var alreadyImported = labelNames.indexOf(PROCESSED_LABEL) !== -1;
       var labelKey = labelNames.filter(function (n) {
-        return n.indexOf('mnab/') === 0 && n !== PROCESSED_LABEL;
+        return n.indexOf('mnab/') === 0 && n !== PROCESSED_LABEL && n !== GRAB_UNMATCHED_LABEL;
       })[0];
+
+      // Grab receipts never create rows — they enrich the bank's charge row.
+      // Collected here and processed after every bank thread in this run,
+      // so a charge and its receipt arriving together still match.
+      if (labelKey === GRAB_RECEIPT_LABEL) {
+        grabThreads.push(thread);
+        return;
+      }
 
       if (!labelKey || !LABEL_PARSERS[labelKey]) {
         Logger.log('Thread "' + thread.getFirstMessageSubject() + '" has no recognized mnab/* child label — skipping.');
@@ -496,6 +507,19 @@ function runImportPass_(opts) {
         thread.addLabel(label);
       }
     });
+
+    // Kept apart from the bank import above: a failure here is logged and
+    // never stops new bank transactions from landing.
+    try {
+      processGrabReceiptThreads_(grabThreads, sheet, headerMap, dryRun, new Date());
+    } catch (err) {
+      Logger.log('ERROR processing Grab receipts (bank rows are unaffected): ' + err);
+    }
+    try {
+      flagGrabChargesWithoutReceipt_(sheet, headerMap, dryRun, new Date());
+    } catch (err) {
+      Logger.log('ERROR in the Grab no-receipt sweep: ' + err);
+    }
   } finally {
     lock.releaseLock();
     // In `finally` so rows written before an error mid-run still get their
@@ -1837,5 +1861,575 @@ function tryAiFallback_(labelKey, subject, bodyHtml) {
   } catch (err) {
     Logger.log('AI fallback: could not parse a usable response for "' + subject + '": ' + err);
     return null;
+  }
+}
+
+// ── GRAB RECEIPTS: enrich, correct and flag Grab card charges ────────────
+//
+// WHY: a Grab card charge reaches MNAB through the bank's email (mnab/ocbc,
+// mnab/mandiri) as a bare "Grab* A-A42STUDWWC7N" row, written when Grab
+// places a HOLD on the card at booking. Two things go wrong with that row:
+//   1. A ride the driver cancels still leaves the row behind — the bank
+//      voids the hold without sending any email.
+//   2. The held amount isn't always what was finally charged. Real case:
+//      a GrabExpress held Rp 16.500 (the email) but settled Rp 15.000 (the
+//      statement).
+// Grab's own receipt email arrives only for a completed trip/order, and it
+// carries the final total. So this section reads receipts (Gmail label
+// mnab/grab) and, for the charge each one belongs to:
+//   - sets Payee to the product (GrabBike XL, GrabExpress Instant, the
+//     restaurant for GrabFood, "Grab tip (…)" for a tip),
+//   - prepends route / distance / times / items to Notes,
+//   - corrects Amount (and Expense/Income/Total) to the receipt total when
+//     the row isn't Cleared or Reconciled yet,
+//   - stamps the receipt's booking ID into a self-provisioned "Receipt ID"
+//     column.
+// And a sweep (flagGrabChargesWithoutReceipt_) marks any Grab charge that
+// still has no receipt two days later as "[NO RECEIPT] …", Pending again,
+// so likely-cancelled rides surface in the normal pending review. It never
+// deletes anything — you do, after a look.
+//
+// RECEIPTS NEVER CREATE ROWS. A receipt paid by OVO/GrabPay/SuperBank has no
+// card charge to enrich, and simply does nothing. That's also why mnab/grab
+// is NOT in LABEL_PARSERS.
+//
+// MATCHING (findGrabChargeForReceipt_):
+//   - By ID (rides, food, tips): the bank email's merchant text carries the
+//     booking ID cut to 14 characters — "Grab* A-A42STUDWWC7N" for receipt
+//     "A-A42STUDWWC7NAV" — so the receipt ID must START WITH the charge ID.
+//   - Without ID (GrabExpress only — its receipt shows "IN-3-…", which
+//     never appears on the card): an un-receipted Grab charge within a day
+//     of the receipt whose held amount is between the receipt total and
+//     125% of it (holds run high, never low), on the receipt's card if the
+//     receipt names one. Used only when EXACTLY one charge fits; ID-bearing
+//     receipts in the same run are matched first, so they can't be stolen.
+//   - Tips are their own card charge with their own ID and receipt, so they
+//     match by ID and stay their own row (they line up 1:1 with the
+//     statement that way).
+//
+// "Receipt ID" column values: blank = waiting for a receipt; a booking ID =
+// matched; NONE = flagged as having no receipt (a receipt that turns up
+// later still matches it, and removes the flag). If you un-flag a row by
+// hand, leave NONE in place so the sweep doesn't flag it again.
+//
+// RETRIES: a receipt with no matching charge yet (the bank email can lag)
+// stays unlabeled and is retried on each run for GRAB_RETRY_DAYS days, then
+// its thread gets mnab/imported + mnab/grab-unmatched for a manual look.
+//
+// SETUP: Gmail label "mnab/grab" and a filter
+//     from:(no-reply@grab.com) subject:(receipt OR struk) → label mnab/grab
+// Nothing else — the existing 5-minute trigger picks it up.
+//
+// BACKFILL (rows already in MNAB): previewGrabBackfill() / runGrabBackfill()
+// — see the BACKFILL section at the end of this file.
+
+var GRAB_RECEIPT_LABEL = 'mnab/grab';
+var GRAB_UNMATCHED_LABEL = 'mnab/grab-unmatched';
+var GRAB_RECEIPT_COLUMN = 'Receipt ID';
+var GRAB_NO_RECEIPT_MARK = 'NONE';
+var GRAB_NO_RECEIPT_PREFIX = '[NO RECEIPT] ';
+var GRAB_RETRY_DAYS = 3;
+var GRAB_FALLBACK_MAX_RATIO = 1.25; // held amount may be up to 25% above the receipt total
+var GRAB_FALLBACK_DAY_WINDOW = 1;
+var GRAB_FLAG_AFTER_DAYS = 2;       // dated 2+ days ago (so always 24h+) with no receipt → flag
+var GRAB_FLAG_LOOKBACK_DAYS = 7;    // never flag older rows — they predate this feature
+var GRAB_FLAG_INTERVAL_MS = 60 * 60 * 1000;
+var GRAB_FLAG_LAST_RUN_KEY = 'GRAB_FLAG_LAST_RUN';
+
+// ── Parsing ──
+
+function grabReceiptLines_(html) {
+  var text = String(html || '')
+      .replace(/<!--[\s\S]*?-->/g, ' ')
+      .replace(/<(style|script|head|title)\b[\s\S]*?<\/\1>/gi, ' ')
+      .replace(/<[^>]+>/g, '\n')
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/gi, '&')
+      .replace(/&bull;/gi, '•')
+      .replace(/&copy;/gi, '©')
+      .replace(/&#(\d+);/g, function (m, n) { return String.fromCharCode(Number(n)); })
+      .replace(/&[a-z]+;/gi, ' ')
+      .replace(/[ 　]/g, ' ');
+  return text.split('\n')
+      .map(function (l) { return l.replace(/\s+/g, ' ').trim(); })
+      .filter(function (l) { return l && !/^[⋮•·|.\-\s]+$/.test(l); }); // drop route-dot / divider-only lines
+}
+
+// Integer rupiah from "Rp16.300", "Rp 15000", "RP 10000", "16.300".
+function grabAmount_(str) {
+  var s = String(str).replace(/[^\d.,]/g, '');
+  if (!s) return 0;
+  if (/[.,]\d{1,2}$/.test(s)) s = s.replace(/[.,]\d{1,2}$/, ''); // drop a decimal part
+  return Number(s.replace(/[.,]/g, '')) || 0;
+}
+
+// Value for a label: the rest of the label's line ("Kode Booking: A-…") or,
+// if the label stands alone, the next line.
+function grabValueAfter_(lines, labelRe) {
+  for (var i = 0; i < lines.length; i++) {
+    var m = lines[i].match(labelRe);
+    if (!m) continue;
+    var rest = lines[i].slice(m[0].length).replace(/^[\s:]+/, '').trim();
+    if (rest) return rest;
+    return lines[i + 1] || '';
+  }
+  return '';
+}
+
+function grabShortPlace_(s) {
+  s = String(s || '').trim();
+  if (s.length <= 45) return s;
+  return s.split(',')[0].trim();
+}
+
+function grab24h_(s) {
+  var m = String(s || '').match(/^(\d{1,2}):(\d{2})\s*([AP]M)$/i);
+  if (!m) return '';
+  var h = Number(m[1]) % 12 + (m[3].toUpperCase() === 'PM' ? 12 : 0);
+  return (h < 10 ? '0' : '') + h + ':' + m[2];
+}
+
+// Returns null for anything that isn't a usable receipt (promos, surveys).
+function parseGrabReceipt_(subject, bodyHtml, messageDate) {
+  var lines = grabReceiptLines_(bodyHtml);
+  var joined = lines.join('\n');
+
+  var bookingId = (grabValueAfter_(lines, /^(Booking ID|Kode Booking|Pesanan ID|Order ID)\b/i).match(/^(A-[A-Z0-9]{8,}|IN-\d+-[A-Z0-9]{8,})/) || [])[1] ||
+      (joined.match(/\b(A-[A-Z0-9]{10,}|IN-\d+-[A-Z0-9]{10,})\b/) || [])[1] || '';
+
+  var total = 0;
+  for (var i = 0; i < lines.length && !total; i++) {
+    var tm = lines[i].match(/^total(\s+paid)?(\s*\(incl\. tax\))?\b\s*(.*)$/i);
+    if (!tm) continue;
+    if (/\d/.test(tm[3])) total = grabAmount_(tm[3]);
+    else if (/^(rp\.?\s*)?[\d.,]+$/i.test(lines[i + 1] || '')) total = grabAmount_(lines[i + 1]);
+  }
+
+  if (!bookingId || !total) return null;
+
+  var service = '';
+  for (var j = 0; j < lines.length; j++) {
+    if (/^Grab(Bike|Car|Express|Food|Mart|Taxi|Hemat|Car\w+)\b/.test(lines[j]) && lines[j].length < 40 && lines[j].indexOf('.') === -1) {
+      service = lines[j];
+      break;
+    }
+  }
+
+  var isTip = /Grab Tips E-Receipt|Tip darimu/i.test(joined);
+  var merchant = grabValueAfter_(lines, /^(Pesanan Dari|Order(ed)? from)\b/i);
+  var kind = isTip ? 'tip'
+      : (/^Grab(Food|Mart)/.test(service) || merchant) ? 'food'
+      : /^GrabExpress/.test(service) ? 'express'
+      : 'ride';
+
+  var dm = joined.match(/\b(\d{1,2})\s+(Jan|Feb|Mar|Apr|Mei|May|Jun|Jul|Agu|Aug|Sep|Okt|Oct|Nov|Des|Dec)[a-z]*\s+(\d{4}|\d{2})\b/i);
+  var date = null;
+  if (dm) {
+    var year = Number(dm[3]);
+    if (year < 100) year += 2000;
+    var month = INDONESIAN_MONTHS[dm[2].toLowerCase().substring(0, 3)];
+    if (month !== undefined) date = new Date(year, month, Number(dm[1]));
+  }
+  if (!date && messageDate instanceof Date) {
+    date = new Date(messageDate.getFullYear(), messageDate.getMonth(), messageDate.getDate());
+  }
+
+  var cardMatch = joined.match(/(?:Paid by|Dibayar dengan)\s*\n(?:\s*(?:Visa|Mastercard|JCB|Amex)\s*\n)?\s*(\d{4})\b/i);
+  var last4 = cardMatch ? cardMatch[1] : '';
+  var isCard = !!last4 || /(?:Paid by|Dibayar dengan|Detail Pembayaran:?)\s*\n\s*(Visa|Mastercard|Master Card|JCB|Amex|American Express)\b/i.test(joined);
+
+  var pickup = grabValueAfter_(lines, /^Lokasi Penjemputan\b/i);
+  var dropoff = grabValueAfter_(lines, /^Lokasi (Pengantaran|Tujuan)\b/i);
+  var startTime = '', endTime = '', distance = '';
+  for (var k = 0; k < lines.length; k++) {
+    var km = lines[k].match(/^([\d.,]+\s*km)\s*•\s*(\d+\s*mins?)$/i);
+    if (!km) continue;
+    distance = km[1] + ' · ' + km[2];
+    if (!pickup) {
+      pickup = lines[k + 1] || '';
+      startTime = grab24h_(lines[k + 2]);
+      dropoff = lines[k + (startTime ? 3 : 2)] || '';
+      endTime = grab24h_(lines[k + (startTime ? 4 : 3)]);
+    }
+    break;
+  }
+
+  var items = [];
+  for (var n = 0; n < lines.length; n++) {
+    var im = lines[n].match(/^(\d+)x(?:\s+(.+))?$/);
+    if (im && kind === 'food') items.push(im[1] + 'x ' + (im[2] || lines[n + 1] || '').trim());
+  }
+
+  return {
+    bookingId: bookingId.toUpperCase(),
+    kind: kind,
+    service: service || (kind === 'food' ? 'GrabFood' : 'Grab'),
+    merchant: merchant,
+    total: total,
+    date: date,
+    last4: last4,
+    isCard: isCard,
+    pickup: grabShortPlace_(pickup),
+    dropoff: grabShortPlace_(dropoff),
+    startTime: startTime,
+    endTime: endTime,
+    distance: distance,
+    items: items,
+    subject: subject
+  };
+}
+
+function grabPayeeFor_(r) {
+  if (r.kind === 'tip') return 'Grab tip (' + r.service + ')';
+  if (r.kind === 'food' && r.merchant) return r.merchant;
+  return r.service;
+}
+
+function grabNotesFor_(r) {
+  var parts = [];
+  if (r.kind === 'food') {
+    parts.push(r.service);
+    if (r.items.length) parts.push(r.items.join(', '));
+  } else {
+    if (r.kind === 'tip') parts.push('Tip');
+    if (r.pickup || r.dropoff) parts.push((r.pickup || '?') + ' → ' + (r.dropoff || '?'));
+    if (r.distance) parts.push(r.distance);
+    if (r.startTime && r.endTime) parts.push(r.startTime + '–' + r.endTime);
+  }
+  parts.push('Grab ' + r.bookingId);
+  return parts.join(' · ');
+}
+
+// ── Matching (pure — no Sheet/Gmail calls, so it's testable on its own) ──
+
+// "Grab* A-A42STUDWWC7N" → "A-A42STUDWWC7N". Tolerates the [NO RECEIPT]
+// prefix and "GRAB *" spacing variants.
+function grabChargeId_(payee) {
+  var p = String(payee || '').replace(/^\[NO RECEIPT\]\s*/i, '');
+  var m = p.match(/^grab\s*\*\s*([A-Z0-9][A-Z0-9-]{7,})/i);
+  return m ? m[1].toUpperCase() : '';
+}
+
+function grabSofForLast4_(last4) {
+  if (!last4) return '';
+  return OCBC_SOF_MAP[last4] || MANDIRI_SOF_MAP[last4] || '';
+}
+
+function grabDayDiff_(a, b) {
+  var da = new Date(a.getFullYear(), a.getMonth(), a.getDate()).getTime();
+  var db = new Date(b.getFullYear(), b.getMonth(), b.getDate()).getTime();
+  return Math.round((da - db) / 86400000);
+}
+
+// rows: [{rowNum, payee, sof, date, amount, type, transfer, receiptId, cleared, reconciled}]
+// Returns {status: 'already'|'matched'|'ambiguous'|'none', row, method}.
+function findGrabChargeForReceipt_(receipt, rows) {
+  for (var a = 0; a < rows.length; a++) {
+    if (String(rows[a].receiptId || '').toUpperCase() === receipt.bookingId) return { status: 'already', row: rows[a] };
+  }
+
+  var cardSof = grabSofForLast4_(receipt.last4);
+  var open = rows.filter(function (r) {
+    var rid = String(r.receiptId || '').toUpperCase();
+    if (rid && rid !== GRAB_NO_RECEIPT_MARK) return false;
+    if ((r.type || 'Expense') !== 'Expense' || r.transfer) return false;
+    if (cardSof && r.sof !== cardSof) return false;
+    return !!grabChargeId_(r.payee);
+  });
+
+  var byId = open.filter(function (r) {
+    var cid = grabChargeId_(r.payee);
+    return cid.length >= 10 && receipt.bookingId.indexOf(cid) === 0;
+  });
+  if (byId.length === 1) return { status: 'matched', row: byId[0], method: 'id' };
+  if (byId.length > 1) return { status: 'ambiguous' };
+
+  // An ID-bearing receipt (A-…) that matched nothing doesn't fall back:
+  // its charge is either not imported yet (retry) or not a card charge.
+  if (receipt.bookingId.indexOf('A-') === 0) return { status: 'none' };
+
+  if (!(receipt.date instanceof Date)) return { status: 'none' };
+  var fits = open.filter(function (r) {
+    if (!(r.date instanceof Date) || isNaN(r.date.getTime())) return false;
+    if (Math.abs(grabDayDiff_(r.date, receipt.date)) > GRAB_FALLBACK_DAY_WINDOW) return false;
+    var amt = Number(r.amount) || 0;
+    return amt >= receipt.total && amt <= receipt.total * GRAB_FALLBACK_MAX_RATIO;
+  });
+  if (fits.length === 1) return { status: 'matched', row: fits[0], method: 'amount' };
+  return { status: fits.length > 1 ? 'ambiguous' : 'none' };
+}
+
+// What to write to a matched row. Pure; returns {payee, notes, amount|undefined, receiptId}.
+function grabEnrichmentFor_(receipt, row) {
+  var oldAmount = Number(row.amount) || 0;
+  var notes = grabNotesFor_(receipt);
+  var out = { payee: grabPayeeFor_(receipt), receiptId: receipt.bookingId };
+  if (oldAmount !== receipt.total) {
+    if (row.cleared || row.reconciled) {
+      notes += ' · receipt total ' + formatIdr_(receipt.total) + ' ≠ ' + formatIdr_(oldAmount) + ' charged — not changed, row already cleared';
+    } else {
+      notes += ' · held ' + formatIdr_(oldAmount) + ' → final ' + formatIdr_(receipt.total);
+      out.amount = receipt.total;
+    }
+  }
+  var oldNotes = String(row.notes || '').replace(/^No Grab receipt[^|]*\|\s*/, '');
+  out.notes = notes + (oldNotes ? ' | ' + oldNotes : '');
+  return out;
+}
+
+// ── Sheet plumbing ──
+
+function grabTruthy_(v) {
+  return v === true || String(v).toUpperCase() === 'TRUE';
+}
+
+function loadGrabRows_(sheet, headerMap) {
+  var lastRow = sheet.getLastRow();
+  var lastCol = sheet.getLastColumn();
+  if (lastRow < 2) return [];
+  var data = sheet.getRange(2, 1, lastRow - 1, lastCol).getValues();
+  function col(r, name) { return headerMap[name] ? r[headerMap[name] - 1] : ''; }
+  var rows = [];
+  data.forEach(function (r, i) {
+    var payee = col(r, 'Payee');
+    if (!grabChargeId_(payee) && !col(r, GRAB_RECEIPT_COLUMN)) return; // only Grab-ish rows matter
+    rows.push({
+      rowNum: i + 2,
+      payee: payee,
+      sof: col(r, 'SOF'),
+      date: col(r, 'Date'),
+      amount: col(r, 'Amount'),
+      type: col(r, 'Income/Expense') || 'Expense',
+      transfer: grabTruthy_(col(r, 'Transfer')),
+      receiptId: col(r, GRAB_RECEIPT_COLUMN),
+      cleared: grabTruthy_(col(r, 'Cleared')),
+      reconciled: grabTruthy_(col(r, 'Reconciled')),
+      notes: col(r, 'Notes')
+    });
+  });
+  return rows;
+}
+
+function ensureGrabColumn_(sheet, headerMap) {
+  if (headerMap[GRAB_RECEIPT_COLUMN]) return;
+  var newCol = sheet.getLastColumn() + 1;
+  sheet.getRange(1, newCol).setValue(GRAB_RECEIPT_COLUMN);
+  headerMap[GRAB_RECEIPT_COLUMN] = newCol;
+  Logger.log('Auto-provisioned a new "' + GRAB_RECEIPT_COLUMN + '" column on transactions at position ' + newCol + '.');
+}
+
+function applyGrabEnrichment_(sheet, headerMap, row, change, dryRun) {
+  var values = { 'Payee': change.payee, 'Notes': change.notes };
+  values[GRAB_RECEIPT_COLUMN] = change.receiptId;
+  if (change.amount !== undefined) {
+    values['Amount'] = change.amount;
+    values['Expense'] = change.amount;
+    values['Income'] = 0;
+    values['Total'] = change.amount;
+  }
+  if (dryRun) {
+    Logger.log('[DRY RUN] Would update transactions row ' + row.rowNum + ' (' + row.payee + '): ' + JSON.stringify(values));
+  } else {
+    ensureGrabColumn_(sheet, headerMap);
+    Object.keys(values).forEach(function (h) {
+      if (headerMap[h]) sheet.getRange(row.rowNum, headerMap[h]).setValue(values[h]);
+    });
+    Logger.log('Grab receipt ' + change.receiptId + ' → transactions row ' + row.rowNum + ' (' + change.payee + ').');
+  }
+  // Keep the in-memory copy current for later receipts in this same run.
+  row.payee = change.payee;
+  row.notes = change.notes;
+  row.receiptId = change.receiptId;
+  if (change.amount !== undefined) row.amount = change.amount;
+}
+
+// Matches one parsed receipt against rows and writes it. Returns
+// 'matched' | 'already' | 'ambiguous' | 'none' | 'not-card'.
+function handleGrabReceipt_(receipt, rows, sheet, headerMap, dryRun) {
+  if (!receipt.isCard) return 'not-card';
+  var res = findGrabChargeForReceipt_(receipt, rows);
+  if (res.status === 'matched') {
+    applyGrabEnrichment_(sheet, headerMap, res.row, grabEnrichmentFor_(receipt, res.row), dryRun);
+  }
+  return res.status;
+}
+
+// Called by runImportPass_ with every thread that carries mnab/grab.
+// Receipts with an A- ID go first so the amount-based Express fallback
+// can't take a charge that has its own receipt in the same batch.
+function processGrabReceiptThreads_(threads, sheet, headerMap, dryRun, now) {
+  if (!threads.length) return;
+  var rows = loadGrabRows_(sheet, headerMap);
+  var items = [];
+  threads.forEach(function (thread, t) {
+    thread.getMessages().forEach(function (message) {
+      items.push({
+        t: t,
+        message: message,
+        receipt: parseGrabReceipt_(message.getSubject(), message.getBody(), message.getDate())
+      });
+    });
+  });
+  items.sort(function (x, y) {
+    var xa = x.receipt && x.receipt.bookingId.indexOf('A-') === 0 ? 0 : 1;
+    var ya = y.receipt && y.receipt.bookingId.indexOf('A-') === 0 ? 0 : 1;
+    return xa - ya || x.message.getDate() - y.message.getDate();
+  });
+
+  var pending = {}; // thread index → true if something should be retried
+  var unmatched = {};
+  items.forEach(function (it) {
+    if (!it.receipt) {
+      Logger.log('mnab/grab: "' + it.message.getSubject() + '" is not a receipt this parser understands — ignoring.');
+      return;
+    }
+    var status;
+    try {
+      status = handleGrabReceipt_(it.receipt, rows, sheet, headerMap, dryRun);
+    } catch (err) {
+      Logger.log('ERROR on Grab receipt ' + it.receipt.bookingId + ': ' + err);
+      status = 'none';
+    }
+    if (status === 'none' || status === 'ambiguous') {
+      var ageDays = (now - it.message.getDate()) / 86400000;
+      if (ageDays < GRAB_RETRY_DAYS) {
+        pending[it.t] = true;
+        Logger.log('Grab receipt ' + it.receipt.bookingId + ' (' + formatIdr_(it.receipt.total) + '): ' + status + ' — will retry.');
+      } else {
+        unmatched[it.t] = true;
+        Logger.log('Grab receipt ' + it.receipt.bookingId + ' (' + formatIdr_(it.receipt.total) + '): ' + status + ' after ' + GRAB_RETRY_DAYS + ' days — labeling ' + GRAB_UNMATCHED_LABEL + '.');
+      }
+    }
+  });
+
+  threads.forEach(function (thread, t) {
+    if (pending[t]) return; // leave unlabeled → retried next run
+    if (dryRun) {
+      Logger.log('[DRY RUN] Would label Grab thread "' + thread.getFirstMessageSubject() + '" as ' + PROCESSED_LABEL + (unmatched[t] ? ' + ' + GRAB_UNMATCHED_LABEL : '') + '.');
+      return;
+    }
+    thread.addLabel(GmailApp.getUserLabelByName(PROCESSED_LABEL) || GmailApp.createLabel(PROCESSED_LABEL));
+    if (unmatched[t]) thread.addLabel(GmailApp.getUserLabelByName(GRAB_UNMATCHED_LABEL) || GmailApp.createLabel(GRAB_UNMATCHED_LABEL));
+  });
+}
+
+// ── No-receipt sweep ──
+
+// Pure: which rows to flag, given today's date.
+function grabRowsToFlag_(rows, today) {
+  return rows.filter(function (r) {
+    if (r.receiptId) return false; // matched, or already flagged (NONE)
+    if (!grabChargeId_(r.payee) || (r.type || 'Expense') !== 'Expense' || r.transfer) return false;
+    if (r.cleared || r.reconciled) return false; // it's on the statement — it happened
+    if (!(r.date instanceof Date) || isNaN(r.date.getTime())) return false;
+    var age = grabDayDiff_(today, r.date);
+    return age >= GRAB_FLAG_AFTER_DAYS && age <= GRAB_FLAG_LOOKBACK_DAYS;
+  });
+}
+
+function flagGrabChargesWithoutReceipt_(sheet, headerMap, dryRun, now) {
+  var props = PropertiesService.getScriptProperties();
+  var last = Number(props.getProperty(GRAB_FLAG_LAST_RUN_KEY)) || 0;
+  if (!dryRun && now.getTime() - last < GRAB_FLAG_INTERVAL_MS) return;
+
+  var rows = loadGrabRows_(sheet, headerMap);
+  var toFlag = grabRowsToFlag_(rows, now);
+  toFlag.forEach(function (r) {
+    var values = {
+      'Payee': GRAB_NO_RECEIPT_PREFIX + String(r.payee).replace(/^\[NO RECEIPT\]\s*/i, ''),
+      'Notes': 'No Grab receipt within 24h — likely cancelled; delete if so. | ' + (r.notes || ''),
+      'Pending': true
+    };
+    values[GRAB_RECEIPT_COLUMN] = GRAB_NO_RECEIPT_MARK;
+    if (dryRun) {
+      Logger.log('[DRY RUN] Would flag transactions row ' + r.rowNum + ' (' + r.payee + ', ' + formatIdr_(r.amount) + ') as no-receipt.');
+      return;
+    }
+    ensureGrabColumn_(sheet, headerMap);
+    Object.keys(values).forEach(function (h) {
+      if (headerMap[h]) sheet.getRange(r.rowNum, headerMap[h]).setValue(values[h]);
+    });
+    Logger.log('Flagged transactions row ' + r.rowNum + ' (' + r.payee + ', ' + formatIdr_(r.amount) + '): no Grab receipt.');
+  });
+  if (!dryRun) props.setProperty(GRAB_FLAG_LAST_RUN_KEY, String(now.getTime()));
+}
+
+// ── BACKFILL (rows already in MNAB) ──
+//
+// Reads Grab receipts straight from Gmail by sender — label or not, already
+// imported or not — and runs each through the same matcher, so existing
+// "Grab* A-…" rows get their payee, notes and Receipt ID. It never flags
+// anything as cancelled (the sweep's 7-day window stays as is), never
+// labels threads, and never creates rows.
+//
+// Old rows you've already reconciled keep their amount: a different receipt
+// total is only written into Notes. Rows whose payee you already renamed by
+// hand (no "Grab* A-…" left) can't be matched by ID and are skipped.
+//
+//   previewGrabBackfill() — always a dry run; logs every update it would make.
+//   runGrabBackfill()     — writes (unless the DRY_RUN property is true).
+// Both page through Gmail GRAB_BACKFILL_PAGE threads at a time and remember
+// where they stopped (GRAB_BACKFILL_OFFSET property); run again until the
+// log says it's done. resetGrabBackfill() starts over. Re-running is safe:
+// a receipt already stamped on a row is skipped.
+
+var GRAB_BACKFILL_QUERY = 'from:(no-reply@grab.com) subject:(receipt OR struk)';
+var GRAB_BACKFILL_SINCE = '2026/01/01';
+var GRAB_BACKFILL_PAGE = 100;
+var GRAB_BACKFILL_OFFSET_KEY = 'GRAB_BACKFILL_OFFSET';
+
+function previewGrabBackfill() { runGrabBackfillPass_(true); }
+function runGrabBackfill() { runGrabBackfillPass_(isDryRun_()); }
+function resetGrabBackfill() {
+  PropertiesService.getScriptProperties().deleteProperty(GRAB_BACKFILL_OFFSET_KEY);
+  Logger.log('Grab backfill will start from the newest receipt next time.');
+}
+
+function runGrabBackfillPass_(dryRun) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(LOCK_WAIT_MS)) {
+    Logger.log('An import run is in progress — try the backfill again in a minute.');
+    return;
+  }
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var offset = dryRun ? 0 : (Number(props.getProperty(GRAB_BACKFILL_OFFSET_KEY)) || 0);
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TRANSACTIONS_SHEET_NAME);
+    // Read the header without provisioning anything — the only column the
+    // backfill can add is Receipt ID, and only when it actually writes.
+    var lastCol = sheet.getLastColumn();
+    var headerMap = {};
+    sheet.getRange(1, 1, 1, lastCol).getValues()[0].forEach(function (h, i) { if (h) headerMap[h] = i + 1; });
+    var rows = loadGrabRows_(sheet, headerMap);
+    var threads = GmailApp.search(GRAB_BACKFILL_QUERY + ' after:' + GRAB_BACKFILL_SINCE, offset, GRAB_BACKFILL_PAGE);
+
+    var receipts = [];
+    threads.forEach(function (thread) {
+      thread.getMessages().forEach(function (m) {
+        var r = parseGrabReceipt_(m.getSubject(), m.getBody(), m.getDate());
+        if (r) receipts.push(r);
+      });
+    });
+    receipts.sort(function (x, y) {
+      return (x.bookingId.indexOf('A-') === 0 ? 0 : 1) - (y.bookingId.indexOf('A-') === 0 ? 0 : 1);
+    });
+
+    var counts = { matched: 0, already: 0, ambiguous: 0, none: 0, 'not-card': 0 };
+    receipts.forEach(function (r) {
+      counts[handleGrabReceipt_(r, rows, sheet, headerMap, dryRun)]++;
+    });
+
+    var done = threads.length < GRAB_BACKFILL_PAGE;
+    if (!dryRun) {
+      if (done) props.deleteProperty(GRAB_BACKFILL_OFFSET_KEY);
+      else props.setProperty(GRAB_BACKFILL_OFFSET_KEY, String(offset + threads.length));
+    }
+    Logger.log((dryRun ? '[DRY RUN] ' : '') + 'Grab backfill: ' + threads.length + ' thread(s), ' + receipts.length + ' receipt(s) — ' +
+        counts.matched + ' matched, ' + counts.already + ' already done, ' + counts['not-card'] + ' not paid by card, ' +
+        counts.none + ' no charge found, ' + counts.ambiguous + ' ambiguous. ' +
+        (dryRun ? '(Preview covers the newest ' + GRAB_BACKFILL_PAGE + ' threads only.)'
+            : done ? 'Done.' : 'More to go — run runGrabBackfill again.'));
+  } finally {
+    lock.releaseLock();
   }
 }
