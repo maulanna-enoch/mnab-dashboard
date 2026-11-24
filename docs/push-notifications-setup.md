@@ -54,9 +54,9 @@ Project Settings (gear) → Script Properties:
 | `PUSH_NOTIFY_URL` | `https://mnab-dashboard.vercel.app/api/push` |
 | `PUSH_NOTIFY_SECRET` | the same value as in Vercel |
 
-Then deploy the updated `EmailImport.gs`, either with Deployer from your phone
-or by pasting it into the editor. To check it end to end, run
-`testPushNotification` from the function dropdown and look at the log.
+Then paste the updated `EmailImport.gs` into the editor. The next run that
+imports a new bank email sends the notification; check the execution log for
+the `Push notify` line if one doesn't arrive.
 
 ### 3. Turn it on, on each device
 

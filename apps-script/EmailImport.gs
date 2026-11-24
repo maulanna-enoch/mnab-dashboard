@@ -44,16 +44,7 @@
  * 4. In the Apps Script editor, pick `processMnabEmails` from the function
  *    dropdown and click Run once. It'll ask you to authorize Gmail +
  *    Sheets access the first time — approve it.
- * 5. If either label already has a backlog of OLD email under it — e.g.
- *    you reused a label you'd already been using for a while, so it's got
- *    hundreds of pre-existing messages — run `markExistingMnabEmailsAsAlreadyImported`
- *    once now, BEFORE doing anything else below. It marks every
- *    currently-matching thread as already-handled WITHOUT writing any
- *    rows, so none of that backlog gets imported as a transaction; only
- *    mail that arrives after this point will. See "Skipping a pre-existing
- *    backlog" further down for details. If your labels are freshly
- *    created with nothing under them yet, skip this step entirely.
- * 6. DRY_RUN defaults to `true` (see "DRY_RUN IS NOW A SCRIPT PROPERTY"
+ * 5. DRY_RUN defaults to `true` (see "DRY_RUN IS NOW A SCRIPT PROPERTY"
  *    below) — nothing gets written until you say otherwise. With it true,
  *    run `processMnabEmails` a few times as real mail arrives under your
  *    labels and check the execution log (View > Logs, or Ctrl+Enter) — it
@@ -62,16 +53,16 @@
  *    of waiting for new mail to arrive? Use `previewMnabBacklog` — see
  *    "TESTING AGAINST A BACKLOG" below. Once the logged output looks right,
  *    set the DRY_RUN script property to `false` (see below).
- * 7. Once you're happy with dry-run output, run `installEmailImportTrigger`
+ * 6. Once you're happy with dry-run output, run `installEmailImportTrigger`
  *    once to install the 5-minute polling trigger. From then on this runs
  *    automatically — no need to run either function by hand again.
- * 8. (Optional, for the AI fallback) Project Settings (gear icon) > Script
+ * 7. (Optional, for the AI fallback) Project Settings (gear icon) > Script
  *    Properties > Add script property, key `ANTHROPIC_API_KEY`, value =
  *    your Anthropic API key. Without this, emails that the deterministic
  *    parser can't handle land as a flagged manual-review row instead of
  *    being silently dropped — they just skip the AI attempt and wait for
  *    you to fill them in by hand or improve the parser.
- * 9. (Optional, for push notifications) Two more script properties:
+ * 8. (Optional, for push notifications) Two more script properties:
  *      PUSH_NOTIFY_URL     https://<your-vercel-domain>/api/push
  *      PUSH_NOTIFY_SECRET  the same value as PUSH_NOTIFY_SECRET in Vercel
  *    After a run writes new rows, this file sends them to that URL in one
@@ -124,28 +115,6 @@
  * decoupling is what makes it safe to leave `processMnabEmails` trigger-
  * bound indefinitely in either DRY_RUN state.
  *
- * ── SKIPPING A PRE-EXISTING BACKLOG ─────────────────────────────────────
- * `processMnabEmails` has no concept of "old" vs "new" mail — it just
- * searches for anything carrying a known label that ISN'T already tagged
- * `mnab/imported`. If you point it at a label that already has hundreds of
- * old messages sitting under it, it will treat every single one as a new
- * transaction to import the first time it runs.
- *
- * `markExistingMnabEmailsAsAlreadyImported()` (below) exists for exactly
- * this: it applies the `mnab/imported` label to every thread the normal
- * poll query would currently match — same search, same label — but never
- * reads a message or writes a row. Run it once, before your first LIVE
- * `processMnabEmails` run (DRY_RUN property = false), and the backlog is
- * permanently excluded from real imports; only mail landing under the
- * label from then on will ever get written to the sheet. It's capped at
- * `BOOTSTRAP_BATCH_SIZE` threads per run (Gmail per-call limits) — if the
- * log says it hit the cap, just run it again until it logs 0 remaining.
- * Safe to run more than once either way: already-labeled threads simply
- * stop matching the search.
- *
- * Marking a thread `mnab/imported` this way does NOT stop it from being
- * previewed via `previewMnabBacklog()`, though — see above.
- *
  * ── SAFETY NOTES ────────────────────────────────────────────────────────
  * - Every row this script writes lands as Pending = TRUE. Nothing here
  *   marks anything Cleared or Reconciled — that's still entirely your
@@ -158,10 +127,6 @@
  * - `previewMnabBacklog()` ALWAYS behaves like DRY_RUN, even if the
  *   DRY_RUN script property is `false` — it never writes or re-labels no
  *   matter what, precisely so it's safe to run against a live setup too.
- * - `markExistingMnabEmailsAsAlreadyImported()` intentionally IGNORES
- *   DRY_RUN — that's the whole point of it (it never writes rows or reads
- *   message content at all, only applies a Gmail label), so it does real,
- *   non-reversible-by-this-script label changes regardless of DRY_RUN.
  *
  * ── TWO LAYERS OF DUPLICATE PROTECTION ──────────────────────────────────
  * The `mnab/imported` label (above) is a THREAD-level guard — it stops an
@@ -193,11 +158,7 @@
  *    whether its thread ever got labeled. This check runs during
  *    `previewMnabBacklog()` too, since "this would be skipped as an
  *    already-imported duplicate" is exactly what a live run would actually
- *    do — an accurate preview, not a behavior change. It has no effect on
- *    backlog threads that were only ever LABELED via
- *    `markExistingMnabEmailsAsAlreadyImported()` (never written), since
- *    those never got a message ID recorded — they stay fully previewable
- *    exactly as before.
+ *    do — an accurate preview, not a behavior change.
  *
  * Note this doesn't (and can't) catch duplicates that already happened
  * with an OLDER version of this script, before the `Email Message ID`
@@ -329,7 +290,7 @@ var LABEL_PARSERS = {
 //
 // includeAlreadyImported (default false): when true, drops the
 // "-label:mnab/imported" exclusion, so threads already marked as processed
-// (e.g. via markExistingMnabEmailsAsAlreadyImported(), or normal live runs)
+// by normal live runs
 // show up too. Only previewMnabBacklog() ever passes true here — a manual-
 // only function, never trigger-bound — specifically so you can dry-run-test
 // the parser against your old marked-as-imported backlog without that
@@ -363,38 +324,6 @@ function uninstallEmailImportTrigger() {
       ScriptApp.deleteTrigger(t);
     }
   });
-}
-
-// Gmail per-call cap for this kind of batch operation. A backlog bigger
-// than this just needs markExistingMnabEmailsAsAlreadyImported() run a
-// couple more times — it logs whether it hit the cap so you know.
-var BOOTSTRAP_BATCH_SIZE = 100;
-
-// ── ONE-TIME BOOTSTRAP for a pre-existing backlog ─────────────────────
-// See "SKIPPING A PRE-EXISTING BACKLOG" up top. Run this ONCE (or a few
-// times back-to-back if it hits the batch cap) before your first real
-// processMnabEmails run, ONLY if mnab/mandiri / mnab/ocbc / mnab/jago
-// already have old mail under them that you don't want imported as
-// transactions.
-//
-// Deliberately does NOT call handleMessage_/writeRow_ — it only ever
-// touches Gmail labels, never the Sheet, and never reads message bodies.
-// That's what makes it safe to run even while DRY_RUN is still true.
-function markExistingMnabEmailsAsAlreadyImported() {
-  var label = GmailApp.getUserLabelByName(PROCESSED_LABEL) || GmailApp.createLabel(PROCESSED_LABEL);
-  var threads = GmailApp.search(buildPollQuery_(), 0, BOOTSTRAP_BATCH_SIZE);
-
-  threads.forEach(function (thread) {
-    thread.addLabel(label);
-  });
-
-  if (threads.length === 0) {
-    Logger.log('No matching threads found — backlog is already fully marked (or there never was one). Safe to proceed.');
-  } else if (threads.length === BOOTSTRAP_BATCH_SIZE) {
-    Logger.log('Marked ' + threads.length + ' thread(s) as already-imported — that\'s a full batch, so there may be more. Run this again.');
-  } else {
-    Logger.log('Marked ' + threads.length + ' thread(s) as already-imported. Backlog cleared — safe to dry-run test / install the trigger now.');
-  }
 }
 
 // How long to wait for another in-progress run to finish before giving up
@@ -859,12 +788,6 @@ function notifyNewTransactions_(items) {
   } catch (err) {
     Logger.log('Push notify failed (rows are still imported): ' + err);
   }
-}
-
-// Run by hand from the function dropdown to check the push setup end to
-// end without waiting for a bank email. Sends one made-up transaction.
-function testPushNotification() {
-  notifyNewTransactions_([{ payee: 'Test from EmailImport.gs', type: 'Expense', sof: 'test', amount: 12345, transfer: false }]);
 }
 
 // Reads the header row into a {headerName: 1-based col index} map, and
@@ -1797,7 +1720,7 @@ function parseJagoCashWithdrawal_(table, amount, date) {
 
 // ── AI FALLBACK (Claude) ────────────────────────────────────────────────
 // Only runs if ANTHROPIC_API_KEY is set in Script Properties (see setup
-// step 8 above). Without it, unparseable emails land as a flagged
+// step 7 above). Without it, unparseable emails land as a flagged
 // manual-review row instead — never silently dropped either way.
 
 function tryAiFallback_(labelKey, subject, bodyHtml) {
@@ -1920,9 +1843,6 @@ function tryAiFallback_(labelKey, subject, bodyHtml) {
 // SETUP: Gmail label "mnab/grab" and a filter
 //     from:(no-reply@grab.com) subject:(receipt OR struk) → label mnab/grab
 // Nothing else — the existing 5-minute trigger picks it up.
-//
-// BACKFILL (rows already in MNAB): previewGrabBackfill() / runGrabBackfill()
-// — see the BACKFILL section at the end of this file.
 
 var GRAB_RECEIPT_LABEL = 'mnab/grab';
 var GRAB_UNMATCHED_LABEL = 'mnab/grab-unmatched';
@@ -2354,186 +2274,4 @@ function flagGrabChargesWithoutReceipt_(sheet, headerMap, dryRun, now) {
     Logger.log('Flagged transactions row ' + r.rowNum + ' (' + r.payee + ', ' + formatIdr_(r.amount) + '): no Grab receipt.');
   });
   if (!dryRun) props.setProperty(GRAB_FLAG_LAST_RUN_KEY, String(now.getTime()));
-}
-
-// ── BACKFILL (rows already in MNAB) ──
-//
-// Reads Grab receipts straight from Gmail by sender — label or not, already
-// imported or not — and runs each through the same matcher, so existing
-// "Grab* A-…" rows get their payee, notes and Receipt ID. It never flags
-// anything as cancelled (the sweep's 7-day window stays as is), never
-// labels threads, and never creates rows.
-//
-// Old rows you've already reconciled keep their amount: a different receipt
-// total is only written into Notes. Rows whose payee you already renamed by
-// hand (no "Grab* A-…" left) can't be matched by ID and are skipped.
-//
-//   previewGrabBackfill() — always a dry run; logs every update it would make.
-//   runGrabBackfill()     — writes (unless the DRY_RUN property is true).
-// Both page through Gmail GRAB_BACKFILL_PAGE threads at a time and remember
-// where they stopped (GRAB_BACKFILL_OFFSET property); run again until the
-// log says it's done. resetGrabBackfill() starts over. Re-running is safe:
-// a receipt already stamped on a row is skipped.
-
-var GRAB_BACKFILL_QUERY = 'from:(no-reply@grab.com) subject:(receipt OR struk)';
-var GRAB_BACKFILL_SINCE = '2026/01/01';
-var GRAB_BACKFILL_PAGE = 100;
-var GRAB_BACKFILL_OFFSET_KEY = 'GRAB_BACKFILL_OFFSET';
-
-function previewGrabBackfill() { runGrabBackfillPass_(true); }
-function runGrabBackfill() { runGrabBackfillPass_(isDryRun_()); }
-function resetGrabBackfill() {
-  PropertiesService.getScriptProperties().deleteProperty(GRAB_BACKFILL_OFFSET_KEY);
-  Logger.log('Grab backfill will start from the newest receipt next time.');
-}
-
-function runGrabBackfillPass_(dryRun) {
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(LOCK_WAIT_MS)) {
-    Logger.log('An import run is in progress — try the backfill again in a minute.');
-    return;
-  }
-  try {
-    var props = PropertiesService.getScriptProperties();
-    var offset = dryRun ? 0 : (Number(props.getProperty(GRAB_BACKFILL_OFFSET_KEY)) || 0);
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TRANSACTIONS_SHEET_NAME);
-    // Read the header without provisioning anything — the only column the
-    // backfill can add is Receipt ID, and only when it actually writes.
-    var lastCol = sheet.getLastColumn();
-    var headerMap = {};
-    sheet.getRange(1, 1, 1, lastCol).getValues()[0].forEach(function (h, i) { if (h) headerMap[h] = i + 1; });
-    var rows = loadGrabRows_(sheet, headerMap);
-    var threads = GmailApp.search(GRAB_BACKFILL_QUERY + ' after:' + GRAB_BACKFILL_SINCE, offset, GRAB_BACKFILL_PAGE);
-
-    var receipts = [];
-    threads.forEach(function (thread) {
-      thread.getMessages().forEach(function (m) {
-        var r = parseGrabReceipt_(m.getSubject(), m.getBody(), m.getDate());
-        if (r) receipts.push(r);
-      });
-    });
-    receipts.sort(function (x, y) {
-      return (x.bookingId.indexOf('A-') === 0 ? 0 : 1) - (y.bookingId.indexOf('A-') === 0 ? 0 : 1);
-    });
-
-    var counts = { matched: 0, already: 0, ambiguous: 0, none: 0, 'not-card': 0 };
-    receipts.forEach(function (r) {
-      counts[handleGrabReceipt_(r, rows, sheet, headerMap, dryRun)]++;
-    });
-
-    var done = threads.length < GRAB_BACKFILL_PAGE;
-    if (!dryRun) {
-      if (done) props.deleteProperty(GRAB_BACKFILL_OFFSET_KEY);
-      else props.setProperty(GRAB_BACKFILL_OFFSET_KEY, String(offset + threads.length));
-    }
-    Logger.log((dryRun ? '[DRY RUN] ' : '') + 'Grab backfill: ' + threads.length + ' thread(s), ' + receipts.length + ' receipt(s) — ' +
-        counts.matched + ' matched, ' + counts.already + ' already done, ' + counts['not-card'] + ' not paid by card, ' +
-        counts.none + ' no charge found, ' + counts.ambiguous + ' ambiguous. ' +
-        (dryRun ? '(Preview covers the newest ' + GRAB_BACKFILL_PAGE + ' threads only.)'
-            : done ? 'Done.' : 'More to go — run runGrabBackfill again.'));
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-// ── ONE-OFF: re-apply the current Payee format to already-matched rows ──
-//
-// Rows matched by the first version of this section got the old Payee
-// format ("Fore Coffee - Cinere", "Grab tip (GrabExpress Instant)").
-// Matching never revisits a matched row, so this rewrites them once:
-//
-//   previewReapplyGrabPayees() — dry run; logs each rename it would make.
-//   reapplyGrabPayees()        — writes (unless the DRY_RUN property is true).
-//
-// Only a Payee that is EXACTLY the old auto-written value is changed, so
-// any Payee you've edited by hand is left alone. The old "GrabFood · " /
-// "Tip · " prefix is also dropped from Notes. Rides and GrabExpress didn't
-// change format and are skipped. Safe to run more than once; it reads up to
-// GRAB_REAPPLY_MAX_THREADS receipt threads per run — run it again if the
-// log says there's more.
-
-var GRAB_REAPPLY_MAX_THREADS = 500;
-
-function previewReapplyGrabPayees() { reapplyGrabPayeesPass_(true); }
-function reapplyGrabPayees() { reapplyGrabPayeesPass_(isDryRun_()); }
-
-// The Payee the first version of this section wrote.
-function grabOldPayeeFor_(r) {
-  if (r.kind === 'tip') return 'Grab tip (' + r.service + ')';
-  if (r.kind === 'food' && r.merchant) return r.merchant;
-  return r.service;
-}
-
-// Pure: what to change on one matched row, or null.
-function grabReapplyChange_(receipt, row) {
-  var oldPayee = grabOldPayeeFor_(receipt);
-  var newPayee = grabPayeeFor_(receipt);
-  if (oldPayee === newPayee || String(row.payee) !== oldPayee) return null;
-  var notes = String(row.notes || '');
-  if (receipt.kind === 'food') notes = notes.replace(new RegExp('^' + receipt.service.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ' · '), '');
-  if (receipt.kind === 'tip') notes = notes.replace(/^Tip · /, '');
-  return { payee: newPayee, notes: notes };
-}
-
-function reapplyGrabPayeesPass_(dryRun) {
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(LOCK_WAIT_MS)) {
-    Logger.log('An import run is in progress — try again in a minute.');
-    return;
-  }
-  try {
-    var props = PropertiesService.getScriptProperties();
-    var offsetKey = 'GRAB_REAPPLY_OFFSET';
-    var start = dryRun ? 0 : (Number(props.getProperty(offsetKey)) || 0);
-    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TRANSACTIONS_SHEET_NAME);
-    var lastCol = sheet.getLastColumn();
-    var headerMap = {};
-    sheet.getRange(1, 1, 1, lastCol).getValues()[0].forEach(function (h, i) { if (h) headerMap[h] = i + 1; });
-    if (!headerMap[GRAB_RECEIPT_COLUMN]) {
-      Logger.log('No "' + GRAB_RECEIPT_COLUMN + '" column yet — nothing has been matched, nothing to re-apply.');
-      return;
-    }
-    var byReceipt = {};
-    loadGrabRows_(sheet, headerMap).forEach(function (r) {
-      var id = String(r.receiptId || '').toUpperCase();
-      if (id && id !== GRAB_NO_RECEIPT_MARK) byReceipt[id] = r;
-    });
-
-    var renamed = 0, read = 0, threadsSeen = 0, more = false;
-    for (var offset = start; ; offset += GRAB_BACKFILL_PAGE) {
-      if (threadsSeen >= GRAB_REAPPLY_MAX_THREADS) { more = true; break; }
-      var threads = GmailApp.search(GRAB_BACKFILL_QUERY + ' after:' + GRAB_BACKFILL_SINCE, offset, GRAB_BACKFILL_PAGE);
-      threadsSeen += threads.length;
-      threads.forEach(function (thread) {
-        thread.getMessages().forEach(function (m) {
-          var receipt = parseGrabReceipt_(m.getSubject(), m.getBody(), m.getDate());
-          if (!receipt) return;
-          read++;
-          var row = byReceipt[receipt.bookingId];
-          if (!row) return;
-          var change = grabReapplyChange_(receipt, row);
-          if (!change) return;
-          renamed++;
-          if (dryRun) {
-            Logger.log('[DRY RUN] Row ' + row.rowNum + ': "' + row.payee + '" → "' + change.payee + '"');
-          } else {
-            sheet.getRange(row.rowNum, headerMap['Payee']).setValue(change.payee);
-            if (headerMap['Notes'] && change.notes !== String(row.notes || '')) sheet.getRange(row.rowNum, headerMap['Notes']).setValue(change.notes);
-            Logger.log('Row ' + row.rowNum + ': "' + row.payee + '" → "' + change.payee + '"');
-          }
-          row.payee = change.payee;
-          row.notes = change.notes;
-        });
-      });
-      if (threads.length < GRAB_BACKFILL_PAGE) break;
-    }
-    if (!dryRun) {
-      if (more) props.setProperty(offsetKey, String(start + threadsSeen));
-      else props.deleteProperty(offsetKey);
-    }
-    Logger.log((dryRun ? '[DRY RUN] ' : '') + 'Re-apply Grab payees: ' + read + ' receipt(s) read, ' + renamed + ' row(s) ' +
-        (dryRun ? 'would be renamed.' : 'renamed.') + (more ? (dryRun ? ' (Preview stopped early — more receipts not read.)' : ' More to go — run reapplyGrabPayees again.') : ' Done.'));
-  } finally {
-    lock.releaseLock();
-  }
 }
