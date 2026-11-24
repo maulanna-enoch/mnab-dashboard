@@ -8,7 +8,18 @@
 // folded in here to free one of Vercel Hobby's 12 Serverless Function
 // slots for api/push.js. vercel.json rewrites the old /api/cashflow-months
 // URL to ?action=months, so anything still calling it keeps working.
+//
+// GET ?action=float           -> the Float Plan tab (apps-script/FloatPlan.gs),
+//                                for the home page's Float card. Lives here
+//                                for the same function-cap reason.
 const { fetchDiaryRows, monthLabel } = require('./_lib/sheets');
+const { fetchFloatPlan } = require('./_lib/float-plan');
+
+async function actionFloat(res) {
+  const plan = await fetchFloatPlan();
+  res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
+  res.status(200).json({ ...plan, updatedAt: new Date().toISOString() });
+}
 
 async function actionMonths(res) {
   const rows = await fetchDiaryRows();
@@ -25,6 +36,7 @@ async function actionMonths(res) {
 module.exports = async (req, res) => {
   try {
     if (req.query && req.query.action === 'months') return await actionMonths(res);
+    if (req.query && req.query.action === 'float') return await actionFloat(res);
 
     const month = (req.query && req.query.month) || '';
     if (!month) {

@@ -71,7 +71,8 @@ var DEPLOYABLE_FILES = {
   'apps-script/InstallmentsBills.gs': 'InstallmentsBills',
   'apps-script/PayeeRules.gs': 'PayeeRules',
   'apps-script/Reconciliations.gs': 'Reconcile',
-  'apps-script/Steals.gs': 'Steals'
+  'apps-script/Steals.gs': 'Steals',
+  'apps-script/FloatPlan.gs': 'FloatPlan'
 };
 
 var DEPLOYER_LAST_BACKUP_KEY = 'DEPLOYER_LAST_BACKUP';

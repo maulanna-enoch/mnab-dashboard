@@ -213,6 +213,29 @@
     border-top: none;
     padding-top: 0;
   }
+  /* Float card (apps-script/FloatPlan.gs via /api/cashflow-summary?action=float) */
+  .flt-bar {
+    position: relative;
+    height: 10px;
+    border-radius: 5px;
+    overflow: hidden;
+    background: var(--bg);
+    margin: 12px 0 8px;
+  }
+  .flt-bar-fill { height: 100%; background: var(--accent); width: 0; }
+  .flt-bar-fill.over { background: var(--negative); }
+  .flt-figures {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-bottom: 12px;
+  }
+  .flt-goal { font-size: 0.9rem; color: var(--text); margin-bottom: 4px; }
+  .item-list li .flt-status { font-size: 0.75rem; color: var(--muted); }
+  .item-list li.flt-under .flt-status { color: var(--accent); }
+  .item-list li.flt-over .flt-status { color: var(--negative); }
+  .item-list li.flt-current span:first-child { font-weight: 600; }
 </style>
 </head>
 <body>
@@ -237,6 +260,25 @@
     </div>
 
     <div class="sub" id="left-meta"></div>
+  </div>
+
+  <div class="card" id="flt-card">
+    <div class="label">Credit card float</div>
+    <div class="section-total" id="flt-hero">Loading…</div>
+    <div class="sub" id="flt-hero-sub"></div>
+    <div id="flt-body" hidden>
+      <div class="flt-bar"><div class="flt-bar-fill" id="flt-bar-fill"></div></div>
+      <div class="flt-figures">
+        <span id="flt-spent"></span>
+        <span id="flt-cap"></span>
+      </div>
+      <div class="flt-goal" id="flt-goal"></div>
+      <div class="sub" id="flt-plan"></div>
+      <details>
+        <summary>Month by month</summary>
+        <ul class="item-list" id="flt-months"></ul>
+      </details>
+    </div>
   </div>
 
   <div class="card">
@@ -267,7 +309,7 @@
     </details>
   </div>
 
-  <button class="refresh" onclick="loadSummary(true)">Refresh</button>
+  <button class="refresh" onclick="loadSummary(true); loadFloat(true)">Refresh</button>
 
   <div id="txf-root"></div>
   <div id="bnv-root"></div>
@@ -462,6 +504,94 @@
 
     document.getElementById('month').addEventListener('change', () => loadSummary());
     loadMonths();
+
+    // ---- Credit card float (Float Plan tab) ----
+    // Not tied to the month dropdown: it always shows the current card
+    // billing month, which the sheet works out itself.
+    const FLT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    function fltMonth(key) {
+      if (!key) return '';
+      const [y, m] = key.split('-');
+      return `${FLT_MONTHS[Number(m) - 1]} ${y}`;
+    }
+    function fltEscape(s) {
+      return String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+    }
+
+    function renderFloat(plan) {
+      const hero = document.getElementById('flt-hero');
+      const heroSub = document.getElementById('flt-hero-sub');
+      const body = document.getElementById('flt-body');
+
+      if (!plan.exists) {
+        hero.textContent = 'Not set up yet';
+        hero.style.color = 'var(--muted)';
+        heroSub.innerHTML = 'In the sheet, run <b>Finances › Set Up Float Plan…</b>';
+        body.hidden = true;
+        return;
+      }
+
+      const { now, settings, months } = plan;
+      const s = settings;
+      const hasCap = typeof now.cap === 'number';
+
+      if (hasCap) {
+        const left = typeof now.left === 'number' ? now.left : now.cap - (now.spend || 0);
+        hero.textContent = left >= 0 ? `${formatIDR(left)} left` : formatIDR(-left);
+        hero.style.color = left >= 0 ? 'var(--accent)' : 'var(--negative)';
+        heroSub.textContent = left >= 0 ? "under this month's card cap" : "over this month's card cap";
+      } else {
+        hero.textContent = now.status || '—';
+        hero.style.color = 'var(--muted)';
+        heroSub.textContent = s.start ? `Plan starts with the ${fltMonth(s.start)} card month` : '';
+      }
+
+      body.hidden = false;
+      const spend = now.spend || 0;
+      const fill = document.getElementById('flt-bar-fill');
+      const pct = hasCap ? (now.cap > 0 ? Math.min(100, (spend / now.cap) * 100) : (spend > 0 ? 100 : 0)) : 0;
+      fill.style.width = pct + '%';
+      fill.classList.toggle('over', hasCap && spend > now.cap);
+      document.getElementById('flt-spent').textContent = `Spent on cards ${formatIDR(spend)}`;
+      document.getElementById('flt-cap').textContent = hasCap ? `Cap ${formatIDR(now.cap)}` : '';
+
+      document.getElementById('flt-goal').textContent = s.freeBy
+        ? `Float-free by ${fltMonth(s.freeBy)}` + (typeof now.monthsLeft === 'number' ? ` · ${now.monthsLeft} month(s) to go` : '')
+        : 'Set a monthly cut in the Float Plan tab (B9)';
+      document.getElementById('flt-plan').textContent = (typeof s.baseline === 'number' && typeof s.cut === 'number')
+        ? `Baseline ${formatIDR(s.baseline)}/month, cap drops ${formatIDR(s.cut)} each month` +
+          (typeof s.customCut === 'number' ? ' (your cut)' : ' (suggested)')
+        : '';
+
+      const current = months.find((m) => m.status.startsWith('⏳') || m.status.startsWith('✗ Over cap already'));
+      document.getElementById('flt-months').innerHTML = months.length
+        ? months.map((m) => {
+            const cls = [
+              m.status.startsWith('✓') || m.status.startsWith('⏳') ? 'flt-under' : '',
+              m.status.startsWith('✗') ? 'flt-over' : '',
+              current && m.month === current.month ? 'flt-current' : '',
+            ].join(' ');
+            const right = typeof m.spend === 'number'
+              ? `${formatIDR(m.spend)} / ${formatIDR(m.cap)}`
+              : `cap ${formatIDR(m.cap)}`;
+            return `<li class="${cls}"><span>${fltMonth(m.month)} <span class="flt-status">${fltEscape(m.status)}</span></span><span>${right}</span></li>`;
+          }).join('')
+        : '<li><span class="sub">No months yet.</span></li>';
+    }
+
+    async function loadFloat(forceFresh) {
+      try {
+        const cacheBust = forceFresh ? `&fresh=${Date.now()}` : '';
+        const res = await fetch(`/api/cashflow-summary?action=float${cacheBust}`);
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        renderFloat(data);
+      } catch (err) {
+        document.getElementById('flt-hero').textContent = '—';
+        document.getElementById('flt-hero-sub').innerHTML = `<span class="error">${fltEscape(err.message)}</span>`;
+      }
+    }
+    loadFloat();
 
     // Add-only here (no edit/delete) -- once a transaction is actually
     // saved, hand off to the Transactions page so it's visible in the feed.
