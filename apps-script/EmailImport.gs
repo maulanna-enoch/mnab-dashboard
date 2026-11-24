@@ -1877,8 +1877,9 @@ function tryAiFallback_(labelKey, subject, bodyHtml) {
 // Grab's own receipt email arrives only for a completed trip/order, and it
 // carries the final total. So this section reads receipts (Gmail label
 // mnab/grab) and, for the charge each one belongs to:
-//   - sets Payee to the product (GrabBike XL, GrabExpress Instant, the
-//     restaurant for GrabFood, "Grab tip (…)" for a tip),
+//   - sets Payee to the product, plus the restaurant for food or "Tip" for a
+//     tip ("GrabBike XL", "GrabFood - Fore Coffee, Cinere",
+//     "GrabExpress Instant - Tip"),
 //   - prepends route / distance / times / items to Notes,
 //   - corrects Amount (and Expense/Income/Total) to the receipt total when
 //     the row isn't Cleared or Reconciled yet,
@@ -2079,19 +2080,20 @@ function parseGrabReceipt_(subject, bodyHtml, messageDate) {
   };
 }
 
+// Always "<product>" or "<product> - <detail>", so the Grab product leads
+// the Payee: "GrabBike XL", "GrabExpress Instant", "GrabExpress Instant - Tip",
+// "GrabFood - Fore Coffee, Cinere" (the restaurant's own " - " becomes ", ").
 function grabPayeeFor_(r) {
-  if (r.kind === 'tip') return 'Grab tip (' + r.service + ')';
-  if (r.kind === 'food' && r.merchant) return r.merchant;
+  if (r.kind === 'tip') return r.service + ' - Tip';
+  if (r.kind === 'food' && r.merchant) return r.service + ' - ' + r.merchant.replace(/\s+-\s+/g, ', ');
   return r.service;
 }
 
 function grabNotesFor_(r) {
   var parts = [];
   if (r.kind === 'food') {
-    parts.push(r.service);
     if (r.items.length) parts.push(r.items.join(', '));
   } else {
-    if (r.kind === 'tip') parts.push('Tip');
     if (r.pickup || r.dropoff) parts.push((r.pickup || '?') + ' → ' + (r.dropoff || '?'));
     if (r.distance) parts.push(r.distance);
     if (r.startTime && r.endTime) parts.push(r.startTime + '–' + r.endTime);
