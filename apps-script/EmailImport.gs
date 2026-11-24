@@ -1893,8 +1893,9 @@ function tryAiFallback_(labelKey, subject, bodyHtml) {
 // Grab's own receipt email arrives only for a completed trip/order, and it
 // carries the final total. So this section reads receipts (Gmail label
 // mnab/grab) and, for the charge each one belongs to:
-//   - sets Payee to the product (GrabBike XL, GrabExpress Instant, the
-//     restaurant for GrabFood, "Grab tip (…)" for a tip),
+//   - sets Payee to the product, plus the restaurant for food or "Tip" for a
+//     tip ("GrabBike XL", "GrabFood - Fore Coffee, Cinere",
+//     "GrabExpress Instant - Tip"),
 //   - prepends route / distance / times / items to Notes,
 //   - corrects Amount (and Expense/Income/Total) to the receipt total when
 //     the row isn't Cleared or Reconciled yet,
@@ -2095,19 +2096,20 @@ function parseGrabReceipt_(subject, bodyHtml, messageDate) {
   };
 }
 
+// Always "<product>" or "<product> - <detail>", so the Grab product leads
+// the Payee: "GrabBike XL", "GrabExpress Instant", "GrabExpress Instant - Tip",
+// "GrabFood - Fore Coffee, Cinere" (the restaurant's own " - " becomes ", ").
 function grabPayeeFor_(r) {
-  if (r.kind === 'tip') return 'Grab tip (' + r.service + ')';
-  if (r.kind === 'food' && r.merchant) return r.merchant;
+  if (r.kind === 'tip') return r.service + ' - Tip';
+  if (r.kind === 'food' && r.merchant) return r.service + ' - ' + r.merchant.replace(/\s+-\s+/g, ', ');
   return r.service;
 }
 
 function grabNotesFor_(r) {
   var parts = [];
   if (r.kind === 'food') {
-    parts.push(r.service);
     if (r.items.length) parts.push(r.items.join(', '));
   } else {
-    if (r.kind === 'tip') parts.push('Tip');
     if (r.pickup || r.dropoff) parts.push((r.pickup || '?') + ' → ' + (r.dropoff || '?'));
     if (r.distance) parts.push(r.distance);
     if (r.startTime && r.endTime) parts.push(r.startTime + '–' + r.endTime);
@@ -2445,6 +2447,108 @@ function runGrabBackfillPass_(dryRun) {
         counts.none + ' no charge found, ' + counts.ambiguous + ' ambiguous. ' +
         (dryRun ? '(Preview covers the newest ' + GRAB_BACKFILL_PAGE + ' threads only.)'
             : done ? 'Done.' : 'More to go — run runGrabBackfill again.'));
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+// ── ONE-OFF: re-apply the current Payee format to already-matched rows ──
+//
+// Rows matched by the first version of this section got the old Payee
+// format ("Fore Coffee - Cinere", "Grab tip (GrabExpress Instant)").
+// Matching never revisits a matched row, so this rewrites them once:
+//
+//   previewReapplyGrabPayees() — dry run; logs each rename it would make.
+//   reapplyGrabPayees()        — writes (unless the DRY_RUN property is true).
+//
+// Only a Payee that is EXACTLY the old auto-written value is changed, so
+// any Payee you've edited by hand is left alone. The old "GrabFood · " /
+// "Tip · " prefix is also dropped from Notes. Rides and GrabExpress didn't
+// change format and are skipped. Safe to run more than once; it reads up to
+// GRAB_REAPPLY_MAX_THREADS receipt threads per run — run it again if the
+// log says there's more.
+
+var GRAB_REAPPLY_MAX_THREADS = 500;
+
+function previewReapplyGrabPayees() { reapplyGrabPayeesPass_(true); }
+function reapplyGrabPayees() { reapplyGrabPayeesPass_(isDryRun_()); }
+
+// The Payee the first version of this section wrote.
+function grabOldPayeeFor_(r) {
+  if (r.kind === 'tip') return 'Grab tip (' + r.service + ')';
+  if (r.kind === 'food' && r.merchant) return r.merchant;
+  return r.service;
+}
+
+// Pure: what to change on one matched row, or null.
+function grabReapplyChange_(receipt, row) {
+  var oldPayee = grabOldPayeeFor_(receipt);
+  var newPayee = grabPayeeFor_(receipt);
+  if (oldPayee === newPayee || String(row.payee) !== oldPayee) return null;
+  var notes = String(row.notes || '');
+  if (receipt.kind === 'food') notes = notes.replace(new RegExp('^' + receipt.service.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ' · '), '');
+  if (receipt.kind === 'tip') notes = notes.replace(/^Tip · /, '');
+  return { payee: newPayee, notes: notes };
+}
+
+function reapplyGrabPayeesPass_(dryRun) {
+  var lock = LockService.getScriptLock();
+  if (!lock.tryLock(LOCK_WAIT_MS)) {
+    Logger.log('An import run is in progress — try again in a minute.');
+    return;
+  }
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var offsetKey = 'GRAB_REAPPLY_OFFSET';
+    var start = dryRun ? 0 : (Number(props.getProperty(offsetKey)) || 0);
+    var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TRANSACTIONS_SHEET_NAME);
+    var lastCol = sheet.getLastColumn();
+    var headerMap = {};
+    sheet.getRange(1, 1, 1, lastCol).getValues()[0].forEach(function (h, i) { if (h) headerMap[h] = i + 1; });
+    if (!headerMap[GRAB_RECEIPT_COLUMN]) {
+      Logger.log('No "' + GRAB_RECEIPT_COLUMN + '" column yet — nothing has been matched, nothing to re-apply.');
+      return;
+    }
+    var byReceipt = {};
+    loadGrabRows_(sheet, headerMap).forEach(function (r) {
+      var id = String(r.receiptId || '').toUpperCase();
+      if (id && id !== GRAB_NO_RECEIPT_MARK) byReceipt[id] = r;
+    });
+
+    var renamed = 0, read = 0, threadsSeen = 0, more = false;
+    for (var offset = start; ; offset += GRAB_BACKFILL_PAGE) {
+      if (threadsSeen >= GRAB_REAPPLY_MAX_THREADS) { more = true; break; }
+      var threads = GmailApp.search(GRAB_BACKFILL_QUERY + ' after:' + GRAB_BACKFILL_SINCE, offset, GRAB_BACKFILL_PAGE);
+      threadsSeen += threads.length;
+      threads.forEach(function (thread) {
+        thread.getMessages().forEach(function (m) {
+          var receipt = parseGrabReceipt_(m.getSubject(), m.getBody(), m.getDate());
+          if (!receipt) return;
+          read++;
+          var row = byReceipt[receipt.bookingId];
+          if (!row) return;
+          var change = grabReapplyChange_(receipt, row);
+          if (!change) return;
+          renamed++;
+          if (dryRun) {
+            Logger.log('[DRY RUN] Row ' + row.rowNum + ': "' + row.payee + '" → "' + change.payee + '"');
+          } else {
+            sheet.getRange(row.rowNum, headerMap['Payee']).setValue(change.payee);
+            if (headerMap['Notes'] && change.notes !== String(row.notes || '')) sheet.getRange(row.rowNum, headerMap['Notes']).setValue(change.notes);
+            Logger.log('Row ' + row.rowNum + ': "' + row.payee + '" → "' + change.payee + '"');
+          }
+          row.payee = change.payee;
+          row.notes = change.notes;
+        });
+      });
+      if (threads.length < GRAB_BACKFILL_PAGE) break;
+    }
+    if (!dryRun) {
+      if (more) props.setProperty(offsetKey, String(start + threadsSeen));
+      else props.deleteProperty(offsetKey);
+    }
+    Logger.log((dryRun ? '[DRY RUN] ' : '') + 'Re-apply Grab payees: ' + read + ' receipt(s) read, ' + renamed + ' row(s) ' +
+        (dryRun ? 'would be renamed.' : 'renamed.') + (more ? (dryRun ? ' (Preview stopped early — more receipts not read.)' : ' More to go — run reapplyGrabPayees again.') : ' Done.'));
   } finally {
     lock.releaseLock();
   }
