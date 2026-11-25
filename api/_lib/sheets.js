@@ -534,18 +534,20 @@ async function fetchStealsRows(sheetsClient) {
   }
   const headers = (all[0] || []).map((h) => String(h || '').trim().toLowerCase());
   const idx = (name) => headers.indexOf(name);
-  const col = { date: idx('date'), direction: idx('direction'), type: idx('type'), source: idx('source'), amount: idx('amount') };
+  // Due Date is optional (WS8 push reminders); older tabs don't have it.
+  const col = { date: idx('date'), direction: idx('direction'), type: idx('type'), source: idx('source'), amount: idx('amount'), dueDate: idx('due date') };
   if (col.date < 0 || col.direction < 0 || col.type < 0 || col.amount < 0) {
     throw new Error('The "Steals" tab is missing a Date, Direction, Type or Amount column.');
   }
   const pad = (n) => String(n).padStart(2, '0');
+  const isoFromSerial = (raw) => {
+    if (typeof raw !== 'number' || !(raw > 0)) return null;
+    const d = serialToDate(Math.floor(raw));
+    return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+  };
   return all.slice(1).map((row, i) => {
-    const raw = row[col.date];
-    let date = null;
-    if (typeof raw === 'number' && raw > 0) {
-      const d = serialToDate(Math.floor(raw));
-      date = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
-    }
+    const date = isoFromSerial(row[col.date]);
+    const dueDate = col.dueDate >= 0 ? isoFromSerial(row[col.dueDate]) : null;
     const amount = typeof row[col.amount] === 'number' ? row[col.amount] : parseFloat(row[col.amount]);
     return {
       rowNumber: i + 2,
@@ -554,6 +556,7 @@ async function fetchStealsRows(sheetsClient) {
       type: String(row[col.type] || '').trim(),
       source: col.source >= 0 ? String(row[col.source] || '').trim() : '',
       amount: Number.isFinite(amount) ? amount : 0,
+      dueDate,
     };
   }).filter((r) => r.direction || r.amount);
 }

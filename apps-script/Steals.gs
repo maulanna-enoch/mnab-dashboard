@@ -22,6 +22,10 @@
  *              redemption fee). Optional
  *   Reason     why it was needed
  *   Notes
+ *   Due Date   optional: when this has to be rolled over or paid back.
+ *              The dashboard pushes a reminder the evening before and the
+ *              morning of (api/push.js, Debt Exit WS8). Steal rows only.
+ *              Clear it, or move it to the next rollover, once handled.
  *   Month      formula, don't type here: the calendar month of Date
  *
  * `Steals Summary` (formulas only, rebuilt by this menu item)
@@ -70,7 +74,8 @@ const STEALS_CONFIG = {
   ],
   // Log columns in the order a new tab gets them. An existing tab is matched
   // by header name, so reordering columns later is fine.
-  logHeaders: ['Date', 'Direction', 'Type', 'Source', 'Amount', 'Fee', 'Reason', 'Notes', 'Month'],
+  // Month must stay last: it's the formula column, set up separately.
+  logHeaders: ['Date', 'Direction', 'Type', 'Source', 'Amount', 'Fee', 'Reason', 'Notes', 'Due Date', 'Month'],
   moneyFormat: '#,##0',
   dateFormat: 'dd/mm/yyyy',
   monthFormat: 'mmm yyyy',
@@ -145,6 +150,9 @@ function steals_setupLog_(ss) {
   body('Fee').setNumberFormat(C.moneyFormat).setDataValidation(
     SpreadsheetApp.newDataValidation().requireNumberGreaterThanOrEqualTo(0).setAllowInvalid(false)
       .setHelpText('Optional: cash advance fee, interest, redemption fee.').build());
+  body('Due Date').setNumberFormat(C.dateFormat).setDataValidation(
+    SpreadsheetApp.newDataValidation().requireDate().setAllowInvalid(false)
+      .setHelpText('Optional: when to roll this over or pay it back. You get a push reminder.').build());
   body('Month').setNumberFormat(C.monthFormat).setFontColor('#888888');
   sheet.getRange(1, col['Month'] + 1).setNote('Filled in from Date. Don\'t type in this column.');
 

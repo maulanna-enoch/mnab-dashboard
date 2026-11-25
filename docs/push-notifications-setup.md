@@ -9,6 +9,47 @@ notifications on gets one push, for example:
 Tapping it opens Transactions filtered to rows pending review
 (`/transactions?pending=1`).
 
+## The other pushes (Debt Exit WS8)
+
+| Push | When | What it says |
+|---|---|---|
+| Morning | Daily ~06:00 WIB (Vercel cron, `?action=morning`) | Bills due today, Steals due today, this week's budget per day. Once past the warning threshold, a "% used" line. |
+| Allowance ready | The morning push on the first day of the budget week (`week_start_day`, Wednesday by default) | This week's allowance, with last week's carry-over or overspend spelled out. |
+| Evening | Daily ~19:00 WIB (Vercel cron, `?action=evening`) | Bills and installments due **tomorrow**, and Steals rows whose **Due Date** is tomorrow. Nothing is sent on a day with nothing due. |
+| Budget warning | As soon as this week's Variable spending passes `push_budget_warn_pct` of what's available (70% by default) | % used, what's left, per day from here. Once per week. |
+| Over budget | As soon as Variable spending goes past what's available | How much over. Once per week. If spending jumps straight past 100%, only this one is sent. |
+
+Vercel Hobby crons fire somewhere inside the scheduled hour, so "06:00" can
+be 06:00–06:59 and "19:00" 19:00–19:59.
+
+**When the budget is checked.** After every save in the Add/Edit form
+(`shared/transaction-form.js` calls `action=budget-check`), and after every
+email import (`action=notify` runs the same check). Swipe/bulk edits and the
+Import Inbox don't trigger a check; the next save, import or morning push
+catches up. What's already been sent is logged in a `PushLog` tab (created on
+first use: Key, Sent At, Title; no amounts). Deleting rows from it is safe;
+at worst a reminder repeats.
+
+**Settings tab (optional).** `push_budget_warn_pct`: the warning threshold,
+e.g. `70%` or `80%`. Blank = 70%.
+
+**Steals due dates.** Run **Finances › Set Up Steals from the Future…**
+once after pasting the updated `Steals.gs`: it adds a `Due Date` column to
+the existing `Steals` tab without touching your rows. Put the rollover or
+payback date on a Steal row to get the evening-before and morning-of
+reminders. Paybacks aren't linked to the Steal they settle, so clear the
+Due Date (or move it to the next rollover) once it's handled.
+
+**Trying them without sending** (bearer = `PUSH_NOTIFY_SECRET`):
+
+```sh
+curl -s -X POST https://mnab-dashboard.vercel.app/api/push \
+  -H "Authorization: Bearer $PUSH_NOTIFY_SECRET" -H 'Content-Type: application/json' \
+  -d '{"action":"evening","dryRun":true}'
+curl -s -X POST https://mnab-dashboard.vercel.app/api/push \
+  -H 'Content-Type: application/json' -d '{"action":"budget-check","dryRun":true}'
+```
+
 ## How it fits together
 
 ```
@@ -41,6 +82,7 @@ you want to test there), then redeploy:
 | `VAPID_PRIVATE_KEY` | private key from the same command |
 | `VAPID_SUBJECT` | `mailto:` + your email (push services use it to contact you) |
 | `PUSH_NOTIFY_SECRET` | any long random string; the same value goes into Apps Script |
+| `CRON_SECRET` | any long random string; Vercel sends it to the morning and evening crons. Without it the crons are refused (401) |
 
 Keep the VAPID pair once it's set. Changing it invalidates every existing
 subscription, and each device then has to turn notifications on again.

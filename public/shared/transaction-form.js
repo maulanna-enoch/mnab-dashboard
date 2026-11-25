@@ -1278,6 +1278,7 @@
       renderPayeeOptions();
       close();
       showToast('Saved');
+      requestBudgetCheck();
       if (typeof state.options.onSaved === 'function') state.options.onSaved(payload, isEdit);
     } catch (err) {
       state.formError.textContent = err.message;
@@ -1285,6 +1286,22 @@
     } finally {
       state.saveBtn.disabled = false;
     }
+  }
+
+  // Debt Exit WS8: a save can push this week's Variable spending past the
+  // warning threshold (70% by default) or over budget. The server decides
+  // and sends the push at most once per week (PushLog tab), so this just
+  // asks. Fire-and-forget: keepalive lets it finish if the page navigates,
+  // and a failure only means the warning waits for the next check.
+  function requestBudgetCheck() {
+    try {
+      fetch('/api/push', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'budget-check' }),
+        keepalive: true,
+      }).catch(() => {});
+    } catch (_) { /* fetch unavailable: nothing to do */ }
   }
 
   // Issue #51: user confirms the flagged pair really is the same
