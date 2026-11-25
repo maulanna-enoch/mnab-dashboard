@@ -8,11 +8,12 @@ const {
   payeeKindMap,
   normalizeSpendingKind,
 } = require('./kinds');
+const { BILL_YEAR_THRESHOLD, resolveKind, totalMonths } = require('./bills');
 
-// Bills use a far-future placeholder end date (e.g. Dec 2099) in the sheet to
-// mean "recurring, doesn't really end" -- as opposed to Installments, which
-// have a real payoff date. Anything ending in/after this year is a Bill.
-const BILL_YEAR_THRESHOLD = 2099;
+// BILL_YEAR_THRESHOLD (from ./bills): a far-future Ends (e.g. Dec 2099)
+// means "recurring, doesn't really end". Since WS2 a row's Kind column says
+// whether it's a bill or an installment; the year is only the fallback for
+// rows with no Kind set. See api/_lib/bills.js.
 
 // Google Sheets serial-date epoch is Dec 30, 1899.
 function serialToDate(serial) {
@@ -111,6 +112,9 @@ async function fetchInstallmentRows() {
   const all = response.data.values || [];
   const headers = (all[0] || []).map((h) => String(h || '').trim());
   const idIdx = headers.indexOf('ID');
+  // WS2: Cash bill / Card bill / Installment, self-provisioned by
+  // InstallmentsBills.gs ("Set Up Bill Kinds…"). Blank -> fallback.
+  const kindIdx = headers.indexOf('Kind');
   const rows = all.slice(1);
 
   return rows.map((row) => {
@@ -121,14 +125,16 @@ async function fetchInstallmentRows() {
     const endsSerial = row[4];
     const hasEndDate = typeof endsSerial === 'number';
     const endDate = hasEndDate ? serialToDate(endsSerial) : null;
-    const isBill = hasEndDate && endDate.getUTCFullYear() >= BILL_YEAR_THRESHOLD;
+    const { kind, kindSet, isBill } = resolveKind(kindIdx >= 0 ? row[kindIdx] : '', endDate);
     const sof = String(row[1] || '').trim();
     const startsSerial = row[5];
     const startDate = typeof startsSerial === 'number' ? serialToDate(startsSerial) : null;
     const dayOfMonth = Number(row[8]) || null;
     const id = idIdx >= 0 && row[idIdx] ? String(row[idIdx]).trim() : null;
 
-    return { id, name, sof, amount, isActive, hasEndDate, endDate, startDate, dayOfMonth, isBill };
+    const out = { id, name, sof, amount, isActive, hasEndDate, endDate, startDate, dayOfMonth, isBill, kind, kindSet };
+    out.totalMonths = totalMonths(out);
+    return out;
   });
 }
 

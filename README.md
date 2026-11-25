@@ -28,6 +28,13 @@ Reads the `installmentsbills` tab. Rows are split into two categories:
 
 Both only count rows where `is_active` is `TRUE`.
 
+Since WS2 of the Debt Exit plan, a `Kind` column (Cash bill / Card bill /
+Installment) decides which is which, with the 2099 rule only as the
+fallback for a blank Kind, and both cards count only rows whose Starts..Ends
+covers the current month. `?action=committed&from=YYYY-MM&months=N` on
+`/api/installments-summary` returns what's committed in each month, per
+Kind (see `api/_lib/bills.js`).
+
 ### Transactions (`/transactions`)
 
 Reads and **writes** the `transactions` tab (Payee, Income/Expense, SOF,
