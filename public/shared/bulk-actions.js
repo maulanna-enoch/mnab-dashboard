@@ -20,6 +20,12 @@
  *       { key: 'confirm', label: 'Confirm', hotkey: 'Enter', hotkeySymbol: '✓' },
  *       { key: 'changeDate', label: 'Change date', input: 'date', hotkey: 'h' },
  *       { key: 'changeBillingMonth', label: 'Change month', input: 'month', hotkey: 'm' },
+ *       // A `choices` action opens a row of buttons instead of an input;
+ *       // onAction gets the picked choice's `value` as inputValue. While
+ *       // that row is open each choice's own hotkey picks it and Escape
+ *       // closes it. Used by shared/kind-ui.js's "Set kind".
+ *       { key: 'setKind', label: 'Set kind', hotkey: 'k',
+ *         choices: [{ value: 'Variable', label: 'Variable', hotkey: 'v' }, ...] },
  *     ],
  *     onAction: async (key, rowNumbers, inputValue) => { ...call the
  *       existing single-row endpoints in a loop, then refetch + re-render... },
@@ -152,8 +158,35 @@
 
   function closeInputRow() {
     state.inputRow.style.display = 'none';
+    state.choiceRow.style.display = 'none';
     state.actionsRow.style.display = '';
     state.pendingAction = null;
+    state.pendingChoices = null;
+  }
+
+  // The open `choices` action, if its button row is showing.
+  function openChoiceAction() {
+    if (!state || !state.pendingChoices) return null;
+    return state.options.actions.find((a) => a.key === state.pendingAction) || null;
+  }
+
+  function openChoiceRow(action) {
+    state.pendingAction = action.key;
+    state.pendingChoices = action.choices;
+    state.choiceLabel.textContent = action.label + ':';
+    state.choiceButtons.innerHTML = '';
+    action.choices.forEach((c) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'blk-action-btn blk-choice-btn';
+      btn.dataset.choice = c.value;
+      btn.innerHTML = underlineLetter(c.label, c.hotkey);
+      btn.disabled = state.busy;
+      btn.addEventListener('click', () => runAction(action.key, c.value));
+      state.choiceButtons.appendChild(btn);
+    });
+    state.actionsRow.style.display = 'none';
+    state.choiceRow.style.display = 'flex';
   }
 
   function setBusy(busy) {
@@ -162,6 +195,7 @@
     state.closeBtn.disabled = busy;
     state.inputApply.disabled = busy;
     state.inputCancel.disabled = busy;
+    state.choiceRow.querySelectorAll('button').forEach((b) => { b.disabled = busy; });
   }
 
   // Underlines `letter`'s first case-insensitive occurrence in `label`
@@ -289,7 +323,8 @@
       btn.className = 'blk-action-btn' + (action.danger ? ' danger' : '');
       btn.innerHTML = actionButtonLabel(action);
       btn.addEventListener('click', () => {
-        if (action.input) openInputRow(action);
+        if (action.choices) openChoiceRow(action);
+        else if (action.input) openInputRow(action);
         else runAction(action.key, null);
       });
       state.actionsRow.appendChild(btn);
@@ -346,6 +381,11 @@
             <button type="button" class="blk-input-apply" id="blk-input-apply">Apply</button>
             <button type="button" class="blk-input-cancel" id="blk-input-cancel">Cancel</button>
           </div>
+          <div class="blk-input-row blk-choice-row" id="blk-choice-row" style="display:none;">
+            <span class="blk-input-label" id="blk-choice-label"></span>
+            <div class="blk-choice-buttons" id="blk-choice-buttons"></div>
+            <button type="button" class="blk-input-cancel" id="blk-choice-cancel">Cancel</button>
+          </div>
         </div>
       </div>
       <div class="blk-confirm-overlay" id="blk-confirm-overlay">
@@ -363,6 +403,7 @@
       options,
       busy: false,
       pendingAction: null,
+      pendingChoices: null,
       lastActive: false,
       bar: rootEl.querySelector('#blk-bar'),
       closeBtn: rootEl.querySelector('#blk-close'),
@@ -374,6 +415,10 @@
       input: rootEl.querySelector('#blk-input'),
       inputApply: rootEl.querySelector('#blk-input-apply'),
       inputCancel: rootEl.querySelector('#blk-input-cancel'),
+      choiceRow: rootEl.querySelector('#blk-choice-row'),
+      choiceLabel: rootEl.querySelector('#blk-choice-label'),
+      choiceButtons: rootEl.querySelector('#blk-choice-buttons'),
+      choiceCancel: rootEl.querySelector('#blk-choice-cancel'),
       confirmOverlay: rootEl.querySelector('#blk-confirm-overlay'),
       confirmMessage: rootEl.querySelector('#blk-confirm-message'),
       confirmYesBtn: rootEl.querySelector('#blk-confirm-yes-btn'),
@@ -384,6 +429,7 @@
 
     state.closeBtn.addEventListener('click', () => clear());
     state.inputCancel.addEventListener('click', () => closeInputRow());
+    state.choiceCancel.addEventListener('click', () => closeInputRow());
     state.inputApply.addEventListener('click', () => {
       if (!state.input.value) return;
       runAction(state.pendingAction, state.input.value);
@@ -420,9 +466,15 @@
   // would be worse than doing nothing. Which keys those are comes from the
   // host's own `actions` config, so a hotkey added there is covered here
   // automatically.
+  //
+  // While a `choices` row is open, its choice hotkeys (and Escape) belong
+  // to the bar too -- "Automatic" is A, which is also Accounts in
+  // keyboard-nav.js, and the Account page binds V to undo-reconcile.
   function ownsKey(e) {
     if (!state || count() === 0) return false;
     if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return false;
+    const choice = openChoiceAction();
+    if (choice && (e.key === 'Escape' || choice.choices.some((c) => hotkeyMatches(c.hotkey, e)))) return true;
     return state.options.actions.some((a) => hotkeyMatches(a.hotkey, e));
   }
 
@@ -442,10 +494,22 @@
     if (document.querySelector('.open')) return; // a real modal -- including our own confirm dialog above -- owns the keyboard
     if (state.busy) return;
 
+    // A choices row is open: its own hotkeys pick, Escape backs out, and
+    // the bar's action hotkeys are paused until it closes (so K/C/U etc.
+    // can't fire a second action from underneath the open row).
+    const open = openChoiceAction();
+    if (open) {
+      if (e.key === 'Escape') { e.preventDefault(); closeInputRow(); return; }
+      const c = open.choices.find((x) => hotkeyMatches(x.hotkey, e));
+      if (c) { e.preventDefault(); runAction(open.key, c.value); }
+      return;
+    }
+
     const action = state.options.actions.find((a) => hotkeyMatches(a.hotkey, e));
     if (!action) return;
     e.preventDefault();
-    if (action.input) openInputRow(action);
+    if (action.choices) openChoiceRow(action);
+    else if (action.input) openInputRow(action);
     else runAction(action.key, null);
   });
 

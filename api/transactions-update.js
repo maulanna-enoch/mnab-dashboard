@@ -8,8 +8,60 @@ const {
   getSheetGridId,
   fetchPayeeRows,
   writeTransactionKind,
+  fetchTransactionRows,
+  ensureTransactionsColumns,
 } = require('./_lib/sheets');
-const { kindForSave, payeeKindMap, normalizeBillId, KIND_COLUMN, KIND_RULE_COLUMN, BILL_ID_COLUMN } = require('./_lib/kinds');
+const { kindForSave, planBulkKind, payeeKindMap, normalizeBillId, KIND_COLUMN, KIND_RULE_COLUMN, BILL_ID_COLUMN } = require('./_lib/kinds');
+
+// Bulk "Set kind" (shared/kind-ui.js): { action: 'setKind', rowNumbers,
+// kind: 'Variable' | 'Fixed' | 'auto' }. Touches only Kind / Kind Rule --
+// no other cell, no Pending flip (unlike a full save, setting a Kind isn't
+// reviewing the row). One read of the tab, one batch write. Income and
+// Transfer rows are skipped and counted, see planBulkKind().
+async function setKindBulk(body) {
+  const rowNumbers = Array.isArray(body.rowNumbers) ? body.rowNumbers : [];
+  if (!rowNumbers.length) {
+    const err = new Error('Missing required field: rowNumbers');
+    err.status = 400;
+    throw err;
+  }
+  const sheets = getWriteSheetsClient();
+  const spreadsheetId = process.env.SHEET_ID;
+  const [rows, payees, headerMap] = await Promise.all([
+    fetchTransactionRows(),
+    fetchPayeeRows(sheets),
+    getHeaderMap(sheets, spreadsheetId, 'transactions'),
+  ]);
+  let plan;
+  try {
+    plan = planBulkKind(rows, rowNumbers, body.kind, payeeKindMap(payees));
+  } catch (e) {
+    e.status = 400;
+    throw e;
+  }
+  if (plan.writes.length) {
+    const map = await ensureTransactionsColumns(sheets, headerMap, [KIND_COLUMN, KIND_RULE_COLUMN]);
+    const kindCol = columnLetter(map[KIND_COLUMN]);
+    const ruleCol = columnLetter(map[KIND_RULE_COLUMN]);
+    const data = [];
+    plan.writes.forEach((w) => {
+      data.push({ range: `transactions!${kindCol}${w.rowNumber}`, values: [[w.kind]] });
+      data.push({ range: `transactions!${ruleCol}${w.rowNumber}`, values: [[w.rule]] });
+    });
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: { valueInputOption: 'RAW', data },
+    });
+  }
+  return {
+    ok: true,
+    updated: plan.writes.length,
+    skipped: plan.skipped.length,
+    missing: plan.missing.length,
+    rows: plan.writes,
+    updatedAt: new Date().toISOString(),
+  };
+}
 
 // WS1: re-derives and writes Kind / Kind Rule (and Source ID, when the
 // request links or unlinks a bill) for a row that was just saved. Reads the
@@ -97,6 +149,15 @@ module.exports = async (req, res) => {
 
   try {
     const { rowNumber, payee, type, sof, date, month, cleared, amount, notes, action, lat, lon, updatePayeeLocation, matchId } = req.body || {};
+
+    if (action === 'setKind') {
+      try {
+        res.status(200).json(await setKindBulk(req.body || {}));
+      } catch (e) {
+        res.status(e.status || 500).json({ error: e.message });
+      }
+      return;
+    }
 
     // Issue #51: user declines a proposed match ("not the same transaction")
     // -- clears the Match ID/Status off every row sharing it (normally the

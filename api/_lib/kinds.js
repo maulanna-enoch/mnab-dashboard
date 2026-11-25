@@ -127,6 +127,40 @@ function kindForSave(fields, request, existing, payeeKinds) {
   return classifyKind({ ...fields, storedKind, storedRule }, payeeKinds);
 }
 
+// Bulk "Set kind" (transactions-update { action: 'setKind' }).
+// rows: fetchTransactionRows() rows (needs rowNumber, type, isTransfer,
+//   billId, notes, payee, storedKind, storedKindRule).
+// rowNumbers: the selection. choice: 'Variable' | 'Fixed' | 'auto'.
+// Returns { writes: [{ rowNumber, kind, rule }], skipped: [rowNumber],
+// missing: [rowNumber] }. Income and Transfer rows are skipped -- rules 1-2
+// always decide those, so a hand-set Kind there would never take effect.
+function planBulkKind(rows, rowNumbers, choice, payeeKinds) {
+  const pick = choice === 'auto' ? 'auto' : normalizeSpendingKind(choice);
+  if (!pick) throw new Error('kind must be Variable, Fixed or auto');
+  const byRow = new Map((rows || []).map((r) => [r.rowNumber, r]));
+  const writes = [];
+  const skipped = [];
+  const missing = [];
+  const seen = new Set();
+  (rowNumbers || []).forEach((raw) => {
+    const n = Number(raw);
+    if (!Number.isInteger(n) || seen.has(n)) return;
+    seen.add(n);
+    const r = byRow.get(n);
+    if (!r) { missing.push(n); return; }
+    if (r.isTransfer || r.type === 'Income') { skipped.push(n); return; }
+    const request = pick === 'auto' ? { kindManual: false } : { kindManual: true, kind: pick };
+    const { kind, rule } = kindForSave(
+      { type: r.type, isTransfer: r.isTransfer, billId: r.billId, notes: r.notes, payee: r.payee },
+      request,
+      { storedKind: r.storedKind, storedRule: r.storedKindRule },
+      payeeKinds,
+    );
+    writes.push({ rowNumber: n, kind, rule });
+  });
+  return { writes, skipped, missing };
+}
+
 // ── Bill suggestions for the transaction form ─────────────────────────────
 // "Payee and amount match the registry": the payee names the bill (same
 // name, or one contains the other as whole words) and the amount is within
@@ -174,6 +208,7 @@ module.exports = {
   isManualKind,
   classifyKind,
   kindForSave,
+  planBulkKind,
   payeeKindMap,
   amountsClose,
   namesMatch,

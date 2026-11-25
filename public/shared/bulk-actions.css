@@ -169,6 +169,11 @@
   margin-top: 10px;
 }
 .blk-input-label { font-size: 0.78rem; color: var(--muted); white-space: nowrap; }
+/* A `choices` action's button row (e.g. Set kind: Variable / Fixed /
+ * Automatic) -- same row shape as the date/month input, buttons wrap on a
+ * narrow phone. */
+.blk-choice-row { flex-wrap: wrap; }
+.blk-choice-buttons { display: flex; flex-wrap: wrap; gap: 6px; }
 .blk-input {
   background: var(--bg);
   color: var(--text);

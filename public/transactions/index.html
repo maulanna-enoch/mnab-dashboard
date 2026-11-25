@@ -16,6 +16,7 @@
 <link rel="stylesheet" href="/shared/transaction-form.css" />
 <link rel="stylesheet" href="/shared/swipe-actions.css" />
 <link rel="stylesheet" href="/shared/bulk-actions.css" />
+<link rel="stylesheet" href="/shared/kind-ui.css" />
 <link rel="stylesheet" href="/shared/responsive.css" />
 <link rel="stylesheet" href="/shared/bottom-nav.css" />
 <style>
@@ -533,6 +534,13 @@
       <span class="prb-dot"></span><span id="pending-label">Review Pending</span>
     </button>
 
+    <!-- Kind filter (Variable / Fixed / Transfer / Income, see
+         shared/kind-ui.js). Shown at every width and shared by the mobile
+         card list and the wide table, same as Upcoming / Pending: it
+         filters the `visible` list renderList() hands to both. ?kind=Variable
+         opens the page already filtered. -->
+    <div id="kind-filter-slot"></div>
+
     <div class="txt-filters" id="txt-filters">
       <input type="search" id="txt-f-search" placeholder="Search payee or notes" />
       <select id="txt-f-sof"><option value="">All accounts</option></select>
@@ -590,6 +598,7 @@
           <col data-col="payee" style="width: 300px" />  <!-- Payee -->
           <col data-col="sof" style="width: 140px" />  <!-- Account -->
           <col data-col="amount" style="width: 110px" />  <!-- Amount -->
+          <col data-col="kind" style="width: 92px" />  <!-- Kind (Variable / Fixed / Transfer / Income) -->
           <col data-col="cleared" style="width: 34px" />   <!-- Status (C) -->
           <col data-col="pending" style="width: 78px" />  <!-- Pending / Confirm (issue #49) -- not part of the issue #79 show/hide+resize picker: see COLUMNS comment below -->
           <col data-col="notes" />                        <!-- Notes: takes the rest -->
@@ -602,6 +611,7 @@
             <th data-sort="payee" data-col="payee" class="txt-truncate">Payee <span class="txt-sort-arrow"></span></th>
             <th data-sort="sof" data-col="sof">Account <span class="txt-sort-arrow"></span></th>
             <th data-sort="amount" data-col="amount">Amount <span class="txt-sort-arrow"></span></th>
+            <th data-sort="kind" data-col="kind">Kind <span class="txt-sort-arrow"></span></th>
             <th data-sort="cleared" data-col="cleared" class="txt-status-col" title="Cleared">C <span class="txt-sort-arrow"></span></th>
             <th data-sort="pending" data-col="pending" class="txt-pending-col" title="Pending">Pending <span class="txt-sort-arrow"></span></th>
             <th data-col="notes" class="txt-truncate">Notes</th>
@@ -633,6 +643,7 @@
   <script src="/shared/transaction-form.js"></script>
   <script src="/shared/swipe-actions.js"></script>
   <script src="/shared/bulk-actions.js"></script>
+  <script src="/shared/kind-ui.js"></script>
   <script src="/shared/bottom-nav.js"></script>
   <script src="/shared/keyboard-nav.js"></script>
   <script>
@@ -664,9 +675,25 @@
     // issue #49. ?pending=1 opens the page already filtered to rows awaiting
     // review -- it's where a new-transaction push notification lands.
     let showPendingOnly = new URLSearchParams(location.search).get('pending') === '1';
+    // Kind filter: the picked Kinds, multi-select (empty = all rows).
+    // Starts from ?kind=Variable or ?kind=Variable,Fixed so a link (e.g.
+    // from Home's weekly budget) can open just those rows.
+    let kindFilter = KindUI.parseKinds(new URLSearchParams(location.search).get('kind'));
 
     const upcomingToggleEl = document.getElementById('upcoming-toggle');
     const upcomingSwitchEl = document.getElementById('upcoming-switch');
+
+    document.getElementById('kind-filter-slot').outerHTML = KindUI.filterChipsHTML('kind-filter');
+    const setKindFilterPressed = KindUI.wireFilter(document.getElementById('kind-filter'), (value) => {
+      kindFilter = value;
+      // Keep the URL in step so a reload / shared link keeps the filter.
+      const params = new URLSearchParams(location.search);
+      if (value.length) params.set('kind', value.join(',')); else params.delete('kind');
+      const qs = params.toString();
+      history.replaceState(null, '', location.pathname + (qs ? '?' + qs : ''));
+      renderList();
+    });
+    setKindFilterPressed(kindFilter);
     const upcomingLabelEl = document.getElementById('upcoming-label');
     const pendingToggleEl = document.getElementById('pending-toggle');
     const pendingLabelEl = document.getElementById('pending-label');
@@ -711,6 +738,7 @@
       { key: 'payee', label: 'Payee', defaultWidth: 300, minWidth: 100, resizable: true },
       { key: 'sof', label: 'Account', defaultWidth: 140, minWidth: 80, resizable: true },
       { key: 'amount', label: 'Amount', defaultWidth: 110, minWidth: 70, resizable: true },
+      { key: 'kind', label: 'Kind', defaultWidth: 92, minWidth: 70, resizable: true },
       { key: 'cleared', label: 'Cleared', defaultWidth: 34, minWidth: 34, resizable: false },
       { key: 'notes', label: 'Notes', defaultWidth: null, minWidth: 80, resizable: false },
     ];
@@ -802,6 +830,7 @@
       { key: 'payee', label: 'Payee' },
       { key: 'sof', label: 'Account' },
       { key: 'amount', label: 'Amount' },
+      { key: 'kind', label: 'Kind' },
       { key: 'cleared', label: 'Cleared' },
     ];
 
@@ -1076,6 +1105,7 @@
             <td class="txt-truncate txt-editable" data-field="payee" title="${payee.replace(/"/g, '&quot;')}">${payee}</td>
             <td class="txt-editable" data-field="sof">${t.sof || ''}</td>
             <td class="txt-amount txt-editable ${isIncome ? 'income' : ''}" data-field="amount">${amountText}</td>
+            <td class="knd-cell" data-field="kind">${KindUI.badge(t)}</td>
             <td class="txt-status-col" data-field="cleared">${statusHtml}</td>
             <td class="txt-pending-col">${pendingHtml}</td>
             <td class="txt-truncate txt-editable" data-field="notes" title="${notes.replace(/"/g, '&quot;')}">${notes}</td>
@@ -2208,6 +2238,14 @@
         for (const txn of rows) {
           await bulkUpdateRow(txn, { month: inputValue });
         }
+      } else if (key === 'setKind') {
+        // One request for the whole selection (only Kind / Kind Rule
+        // change). Income / Transfer rows are skipped server-side.
+        const result = await KindUI.applyBulk(rows.map((t) => t.rowNumber), inputValue);
+        await loadTransactions();
+        const note = KindUI.bulkSummary(result);
+        if (note) TransactionForm.toast(note, 3500);
+        return;
       }
 
       await loadTransactions();
@@ -2226,6 +2264,7 @@
         { key: 'confirm', label: 'Confirm', hotkey: 'Enter', hotkeySymbol: '✓' },
         { key: 'changeDate', label: 'Change date', input: 'date', hotkey: 'h' },
         { key: 'changeBillingMonth', label: 'Change month', input: 'month', hotkey: 'm' },
+        KindUI.bulkAction,
       ],
       onAction: bulkOnAction,
       // Cheap post-clear redraw (see shared/bulk-actions.js's comment on
@@ -2321,6 +2360,10 @@
 
       let visible = showUpcoming ? sorted : sorted.filter((t) => t.date <= todayStr);
       if (showPendingOnly) visible = visible.filter((t) => t.pending);
+      // Kind chips count what Upcoming/Pending already let through, so each
+      // number is what that chip would show.
+      KindUI.updateCounts(document.getElementById('kind-filter'), visible);
+      visible = visible.filter((t) => KindUI.matches(t, kindFilter));
 
       // Wide-viewport table (issue #65) renders from the same
       // upcoming-filtered list as the mobile cards, then applies its own
@@ -2348,7 +2391,9 @@
       }
 
       if (!visible.length) {
-        listEl.innerHTML = '<div class="sub">No transactions yet. Tap + to add one.</div>';
+        listEl.innerHTML = kindFilter.length
+          ? `<div class="sub">No ${kindFilter.join(' / ')} transactions here.</div>`
+          : '<div class="sub">No transactions yet. Tap + to add one.</div>';
         return;
       }
 
@@ -2381,7 +2426,7 @@
             <div class="txn-row-main">
               <div>
                 <div class="txn-name">${t.payee}</div>
-                <div class="txn-meta">${metaBits.join(' &middot; ')}</div>
+                <div class="txn-meta">${KindUI.badge(t)} ${metaBits.join(' &middot; ')}</div>
               </div>
               <div class="txn-amount-block">
                 <div class="txn-amount ${isIncome ? 'income' : ''}">${amountText}</div>

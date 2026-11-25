@@ -181,6 +181,15 @@ function findAccount(accounts, name) {
   return accounts.find((a) => a.name.toLowerCase() === String(name || '').toLowerCase());
 }
 
+// Trimmed text of a header-mapped cell, or null when the column or value is missing.
+function cellText(row, idx) {
+  if (idx === undefined) return null;
+  const v = row[idx];
+  if (v === undefined || v === null) return null;
+  const t = String(v).trim();
+  return t || null;
+}
+
 async function fetchTransactionsForReconcile(sheets) {
   const spreadsheetId = process.env.SHEET_ID;
   const map = await getHeaderMap(sheets, spreadsheetId, RECONCILE_SHEETS.transactions);
@@ -246,6 +255,12 @@ async function fetchTransactionsForReconcile(sheets) {
       isPending: pendingRaw === true || pendingRaw === 'TRUE' || pendingRaw === 'true',
       matchId: matchIdRaw ? String(matchIdRaw).trim() : null,
       matchStatus: matchStatusRaw ? String(matchStatusRaw).trim() : null,
+      // WS1 Kind inputs (same columns fetchTransactionRows in sheets.js
+      // reads) -- the Account detail endpoint classifies from these so its
+      // rows carry the same effective Kind the Transactions page shows.
+      storedKind: cellText(row, map['Kind']),
+      storedKindRule: cellText(row, map['Kind Rule']),
+      billId: cellText(row, map['Source ID']),
     };
   });
 
