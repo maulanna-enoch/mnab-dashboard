@@ -138,66 +138,6 @@ async function fetchInstallmentRows() {
   });
 }
 
-async function fetchDiaryRows() {
-  const sheets = getSheetsClient();
-
-  // Columns: Name, Income/Expense, Date, Month, Status, amountDefault, Expense,
-  // Income, Category, amountVariable.
-  //
-  // amountDefault (F) is just the template/planned figure. Expense (G) and
-  // Income (H) are the real amounts -- each equals amountDefault +
-  // amountVariable (J), where amountVariable is a SUMIF pulled from a
-  // separate transactions tab. G is populated for Expense rows, H for
-  // Income rows.
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId: process.env.SHEET_ID,
-    range: 'Diary!A2:J',
-    valueRenderOption: 'UNFORMATTED_VALUE',
-  });
-
-  const rows = response.data.values || [];
-
-  return rows.map((row) => {
-    const name = row[0] || '(unnamed)';
-    const type = row[1] === 'Income' ? 'Income' : 'Expense';
-    const monthSerial = row[3];
-    const hasMonth = typeof monthSerial === 'number';
-    const monthDate = hasMonth ? serialToDate(monthSerial) : null;
-    const status = (row[4] || '').toString().trim();
-    const statusLower = status.toLowerCase();
-    // Three statuses: "Paid" (settled), "Billed" (statement closed, amount
-    // is final/known), "Unbilled" (still accruing, amount is an estimate).
-    // Anything unrecognized falls back to "unbilled" so it reads as an
-    // estimate rather than silently disappearing.
-    const isPaid = statusLower === 'paid';
-    const isBilled = statusLower === 'billed';
-    const isUnbilled = !isPaid && !isBilled;
-    const statusKey = isPaid ? 'paid' : isBilled ? 'billed' : 'unbilled';
-    const amountDefault = parseFloat(row[5]) || 0;
-    const expenseAmount = parseFloat(row[6]) || 0;
-    const incomeAmount = parseFloat(row[7]) || 0;
-    const category = row[8] || 'Uncategorized';
-    const amountVariable = parseFloat(row[9]) || 0;
-    const amount = type === 'Income' ? incomeAmount : expenseAmount;
-
-    return {
-      name,
-      type,
-      monthDate,
-      month: hasMonth ? monthKey(monthDate) : null,
-      status,
-      statusKey,
-      isPaid,
-      isBilled,
-      isUnbilled,
-      amount,
-      amountDefault,
-      amountVariable,
-      category,
-    };
-  });
-}
-
 // Reads the header row (row 1) of a tab and returns a { headerName: index0 }
 // map -- same pattern api/_lib/reconcile.js already uses for its own
 // self-provisioned columns (Reconciled, Reconciled Date, Transfer, Payment
@@ -622,7 +562,6 @@ module.exports = {
   fetchStealsRows,
   fetchSettings,
   fetchInstallmentRows,
-  fetchDiaryRows,
   fetchAccountRows,
   fetchTransactionRows,
   fetchClassifiedTransactionRows,

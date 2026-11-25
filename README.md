@@ -16,22 +16,8 @@ Answers "can I spend this?" and "am I getting out of debt?" (Debt Exit WS5):
   reserves only) and % of salary, the projected debt-free date, how many
   days last week's over/under-spend moved it, and the date at your recent
   pace.
-- **Monthly cash flow (Diary)**: the old Cash Flow view below, collapsed;
-  it only loads when opened.
-
-### Cash Flow (inside Home, collapsed)
-
-`/cashflow` redirects to Home. Reads the `Diary` tab. A month dropdown (populated from whatever months
-actually exist in `Diary`) drives three cards:
-
-- **Left to spend** (hero number) — `Income − Outflow`. Red if negative.
-- **Income** — sum of `Income/Expense = Income` rows for the selected month.
-- **Outflow** — sum of `Income/Expense = Expense` rows, split three ways by
-  `Status`: **Paid** (settled), **Billed** (statement closed, amount is
-  final), and **Unbilled** (still accruing, amount is an estimate — anything
-  that isn't exactly `Paid` or `Billed` falls into this bucket).
-
-Each card expands to show the underlying line items.
+The old Diary-based monthly Cash Flow view was removed when the Diary tab
+was retired; `/cashflow` still redirects to Home.
 
 ### Bills (`/installments`)
 
@@ -158,9 +144,7 @@ mnab-dashboard/
   api/_lib/settings.js                Settings tab keys, defaults and value parsing (see "Settings tab" below)
   api/_lib/kinds.js                   Fixed / Variable / Transfer / Income rules (see "Fixed / variable" below)
   api/_lib/week.js                    Weekly budget engine (see "Weekly budget" below)
-  api/cashflow-summary.js             Income/Paid/Budgeted/Left-to-spend for a given ?month=YYYY-MM;
-                                      ?action=months lists the Diary months for the dropdown
-                                      ?action=settings returns the Settings tab (typed, with defaults)
+  api/cashflow-summary.js             Home's data: ?action=settings returns the Settings tab (typed, with defaults)
                                       ?action=week returns the weekly budget (allowance, left, history)
                                       ?action=debt returns the actual hole and debt projection
   api/push.js                         Web Push: device subscriptions + the notify call EmailImport.gs makes

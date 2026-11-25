@@ -283,7 +283,7 @@
 .txf-pair-opt-main { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .txf-pair-opt-meta { font-size: 11.5px; color: var(--muted); margin-top: 2px; }
 .txf-pair-opt-new { color: var(--muted); font-size: 12.5px; }
-/* Card-payment conversions: Diary statement sanity check under the hint. */
+/* Card-payment conversions: statement sanity check under the hint. */
 .txf-billed-check { font-size: 12px; color: var(--muted); min-height: 16px; margin: -6px 0 12px; }
 .txf-billed-check:empty { display: none; }
 .txf-billed-check.match { color: var(--accent); }
