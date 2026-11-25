@@ -10,6 +10,7 @@
 // up in, so column-letter assumptions would be fragile here specifically.
 
 const { getSheetsClient, getWriteSheetsClient, getSheetGridId, serialToDate, dateToSerial, monthKey } = require('./sheets');
+const { statementFor } = require('./statements');
 
 const RECONCILE_SHEETS = {
   transactions: 'transactions',
@@ -151,11 +152,15 @@ async function fetchAccountsForReconcile(sheets) {
     valueRenderOption: 'UNFORMATTED_VALUE',
   });
   const rows = response.data.values || [];
+  // Optional, typed by hand: the day of month a card's statement is due
+  // (see api/_lib/statements.js). Header matched case-insensitively.
+  const dueDayHeader = Object.keys(map).find((h) => h.toLowerCase() === 'statement due day');
 
   const accounts = rows
     .map((row, i) => {
       const name = row[map['Name']];
       if (!name) return null;
+      const dueDayRaw = dueDayHeader ? Number(row[map[dueDayHeader]]) : NaN;
       const lastThroughSerial = map['Last Reconciled Through'] !== undefined ? row[map['Last Reconciled Through']] : undefined;
       const lastStmt = map['Last Reconciled Statement'] !== undefined ? row[map['Last Reconciled Statement']] : undefined;
       return {
@@ -163,6 +168,7 @@ async function fetchAccountsForReconcile(sheets) {
         type: map['Type'] !== undefined ? (row[map['Type']] || '') : '',
         lastReconciledThrough: typeof lastThroughSerial === 'number' ? serialToDate(lastThroughSerial) : null,
         lastReconciledStatement: typeof lastStmt === 'number' ? lastStmt : null,
+        statementDueDay: Number.isInteger(dueDayRaw) && dueDayRaw >= 1 && dueDayRaw <= 31 ? dueDayRaw : null,
         rowNumber: i + 2,
       };
     })
@@ -1010,6 +1016,20 @@ async function getDiaryBilledAmount(sheets, { cardAccount, month }) {
   return { found: true, amount };
 }
 
+// A card's statement for one month, worked out from `transactions` (see
+// api/_lib/statements.js) -- replaces the Diary "Billed" lookup. Read-only.
+// `month` is a UTC first-of-month Date (parseISOMonth). Returns null when
+// the card isn't in Accounts.
+async function getCardStatement(sheets, { cardAccount, month }) {
+  const [{ accounts }, { rows }] = await Promise.all([
+    fetchAccountsForReconcile(sheets),
+    fetchTransactionsForReconcile(sheets),
+  ]);
+  const card = findAccount(accounts, cardAccount);
+  if (!card) return null;
+  return statementFor(rows, { card: card.name, month: monthKey(month), today: todayWIBDate(), dueDay: card.statementDueDay });
+}
+
 // Finds every transactions-tab row tagged with `paymentId` and deletes them
 // (highest row number first, so deleting one doesn't shift the row number of
 // another still pending deletion in the same batch). Works even if only one
@@ -1324,6 +1344,7 @@ module.exports = {
   tryFlipDiaryBilledToPaid,
   tryFlipDiaryPaidToBilled,
   getDiaryBilledAmount,
+  getCardStatement,
   deletePaymentRows,
   shiftMonth,
   updateAccountLastReconciled,

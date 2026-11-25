@@ -35,6 +35,19 @@ covers the current month. `?action=committed&from=YYYY-MM&months=N` on
 `/api/installments-summary` returns what's committed in each month, per
 Kind (see `api/_lib/bills.js`).
 
+### Card statements (worked out, no Diary)
+
+A credit card's statement for month M is worked out from `transactions`
+(`api/_lib/statements.js`): the card's rows with `Month = M`, except
+Transfer Income legs, are the charges; the card's Transfer Income legs with
+`Month = M` (what Add Payment writes) are the payments. It closes on the
+12th of M (`open` until then), then reads `billed` until payments cover it
+(within Rp0.5) and `paid` after. Add an optional **Statement Due Day**
+column to `Accounts` (a day of month) for a due date and a late flag.
+`GET /api/reconcile?action=statements[&month=YYYY-MM][&months=N][&card=]`
+lists them; `?action=billed-amount` (Add Payment pre-fill, Convert to card
+payment check) now reads the same numbers instead of the Diary.
+
 ### Transactions (`/transactions`)
 
 Reads and **writes** the `transactions` tab (Payee, Income/Expense, SOF,
