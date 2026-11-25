@@ -41,7 +41,8 @@ const {
   RECONCILE_SHEETS,
 } = require('./_lib/reconcile');
 const { statementsFor, STATUS_PAID, STATUS_BILLED, shiftMonthKey } = require('./_lib/statements');
-const { monthKey } = require('./_lib/sheets');
+const { monthKey, fetchPayeeRows } = require('./_lib/sheets');
+const { classifyKind, payeeKindMap } = require('./_lib/kinds');
 
 // After a card payment is written or undone: the statement it belongs to,
 // worked out from transactions. Best-effort -- never fails the request.
@@ -757,6 +758,19 @@ async function actionStatements(query, res) {
 // running-balance stats, for the Accounts > account detail screen. Folded
 // in here (rather than its own api/accounts-detail.js) for the same
 // Serverless Function count reason as the reconcile-* actions above.
+function kindFields(r, payeeKinds) {
+  const { kind, rule } = classifyKind({
+    type: r.type,
+    isTransfer: r.isTransfer,
+    billId: r.billId,
+    notes: r.notes,
+    payee: r.payee,
+    storedKind: r.storedKind,
+    storedRule: r.storedKindRule,
+  }, payeeKinds);
+  return { kind, kindRule: rule, billId: r.billId || null };
+}
+
 async function actionDetail(query, res) {
   const accountName = query && query.name;
   if (!accountName) {
@@ -772,7 +786,13 @@ async function actionDetail(query, res) {
     return;
   }
 
-  const { rows: txnRows } = await fetchTransactionsForReconcile(sheets);
+  const [{ rows: txnRows }, payeeRows] = await Promise.all([
+    fetchTransactionsForReconcile(sheets),
+    // Kind is best-effort here: a Payees read failure just drops payee
+    // overrides from the classification instead of failing the page.
+    fetchPayeeRows(sheets).catch(() => []),
+  ]);
+  const payeeKinds = payeeKindMap(payeeRows);
   const rows = txnRows
     .filter((r) => r.sof && r.sof.toLowerCase() === account.name.toLowerCase())
     .sort((a, b) => {
@@ -827,6 +847,8 @@ async function actionDetail(query, res) {
       pending: r.isPending,
       matchId: r.matchId,
       matchStatus: r.matchStatus,
+      // Same effective Kind as /api/transactions-list (see api/_lib/kinds.js).
+      ...kindFields(r, payeeKinds),
     })),
     stats: {
       clearedTotal: Math.round(clearedTotal * 100) / 100,

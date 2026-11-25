@@ -1,0 +1,56 @@
+/* Kind badge + filter chips (see shared/kind-ui.js). Prefix knd-.
+ *
+ * Colours: Variable is amber because it's the one that eats the weekly
+ * allowance -- the thing worth noticing. Fixed is teal, Income uses the
+ * app's green accent, Transfer stays grey (it's neither spending nor
+ * income). Blue and purple are already taken by Upcoming and Pending.
+ */
+.knd-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 0.68rem;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+  vertical-align: middle;
+  border: 1px solid transparent;
+}
+.knd-variable { color: #fbbf24; background: rgba(251,191,36,0.12); border-color: rgba(251,191,36,0.3); }
+.knd-fixed    { color: #2dd4bf; background: rgba(45,212,191,0.12); border-color: rgba(45,212,191,0.3); }
+.knd-income   { color: var(--accent, #22c55e); background: rgba(34,197,94,0.12); border-color: rgba(34,197,94,0.3); }
+.knd-transfer { color: var(--muted, #9ca3af); background: rgba(156,163,175,0.12); border-color: rgba(156,163,175,0.3); }
+.knd-manual { font-size: 0.62rem; opacity: 0.85; }
+
+/* Chip row: shown at every width (mobile card list and the wide table
+   share it). Scrolls sideways rather than wrapping on a narrow phone. */
+.knd-filter {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  margin: 0 0 12px;
+  padding-bottom: 2px;
+  scrollbar-width: none;
+}
+.knd-filter::-webkit-scrollbar { display: none; }
+.knd-chip {
+  flex-shrink: 0;
+  background: var(--card, #1a1d24);
+  color: var(--muted, #9ca3af);
+  border: 1px solid #2a2e37;
+  border-radius: 999px;
+  padding: 6px 11px;
+  font-size: 0.75rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+.knd-chip:hover { color: var(--text, #e5e7eb); }
+.knd-chip[aria-pressed="true"] { color: var(--text, #e5e7eb); border-color: var(--text, #e5e7eb); }
+.knd-chip-variable[aria-pressed="true"] { color: #fbbf24; border-color: #fbbf24; }
+.knd-chip-fixed[aria-pressed="true"]    { color: #2dd4bf; border-color: #2dd4bf; }
+.knd-chip-income[aria-pressed="true"]   { color: var(--accent, #22c55e); border-color: var(--accent, #22c55e); }
+.knd-chip-count { opacity: 0.6; margin-left: 2px; font-variant-numeric: tabular-nums; }
+
+/* Kind column in the wide tables. */
+.knd-cell { white-space: nowrap; }

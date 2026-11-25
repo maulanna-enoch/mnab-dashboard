@@ -16,6 +16,7 @@
 <link rel="stylesheet" href="/shared/transaction-form.css" />
 <link rel="stylesheet" href="/shared/swipe-actions.css" />
 <link rel="stylesheet" href="/shared/bulk-actions.css" />
+<link rel="stylesheet" href="/shared/kind-ui.css" />
 <link rel="stylesheet" href="/shared/responsive.css" />
 <link rel="stylesheet" href="/shared/bottom-nav.css" />
 <style>
@@ -796,6 +797,7 @@
         <col data-col="date" style="width: 90px" />    <!-- Date -->
         <col data-col="payee" style="width: 300px" />  <!-- Payee -->
         <col data-col="amount" style="width: 110px" /> <!-- Amount -->
+        <col data-col="kind" style="width: 92px" />    <!-- Kind (Variable / Fixed / Transfer / Income) -->
         <col data-col="cleared" style="width: 34px" /> <!-- Status (C) -->
         <col data-col="pending" style="width: 78px" /> <!-- Pending / Confirm (issue #49) -- not part of the show/hide+resize picker, see DTX_COLUMNS comment below -->
         <col data-col="notes" />                       <!-- Notes: takes the rest -->
@@ -807,6 +809,7 @@
           <th data-sort="date" data-col="date">Date <span class="dtx-sort-arrow"></span></th>
           <th data-sort="payee" data-col="payee" class="dtx-truncate">Payee <span class="dtx-sort-arrow"></span></th>
           <th data-sort="amount" data-col="amount">Amount <span class="dtx-sort-arrow"></span></th>
+          <th data-sort="kind" data-col="kind">Kind <span class="dtx-sort-arrow"></span></th>
           <th data-sort="cleared" data-col="cleared" class="dtx-status-col" title="Cleared">C <span class="dtx-sort-arrow"></span></th>
           <th data-col="pending" class="dtx-pending-col" title="Pending">Pending</th>
           <th data-col="notes" class="dtx-truncate">Notes</th>
@@ -957,6 +960,7 @@
 <script src="/shared/transaction-form.js"></script>
 <script src="/shared/swipe-actions.js"></script>
 <script src="/shared/bulk-actions.js"></script>
+<script src="/shared/kind-ui.js"></script>
 <script src="/shared/bottom-nav.js"></script>
 <script src="/shared/keyboard-nav.js"></script>
 <script>
@@ -1245,6 +1249,7 @@
     { key: 'date', label: 'Date', defaultWidth: 90, minWidth: 70, resizable: true },
     { key: 'payee', label: 'Payee', defaultWidth: 300, minWidth: 100, resizable: true },
     { key: 'amount', label: 'Amount', defaultWidth: 110, minWidth: 70, resizable: true },
+    { key: 'kind', label: 'Kind', defaultWidth: 92, minWidth: 70, resizable: true },
     { key: 'cleared', label: 'Cleared', defaultWidth: 34, minWidth: 34, resizable: false },
     { key: 'notes', label: 'Notes', defaultWidth: null, minWidth: 80, resizable: false },
   ];
@@ -1325,6 +1330,7 @@
     { key: 'date', label: 'Date' },
     { key: 'payee', label: 'Payee' },
     { key: 'amount', label: 'Amount' },
+    { key: 'kind', label: 'Kind' },
     { key: 'cleared', label: 'Cleared' },
   ];
 
@@ -2130,6 +2136,7 @@
           <td class="${editableCls.trim()}" data-field="date">${t.date || ''}</td>
           <td class="dtx-truncate${editableCls}" data-field="payee" title="${payee.replace(/"/g, '&quot;')}">${payee}</td>
           <td class="dtx-amount${editableCls} ${isIncome ? 'income' : ''}" data-field="amount">${amountText}</td>
+          <td class="knd-cell" data-field="kind">${KindUI.badge(t)}</td>
           <td class="dtx-status-col" data-field="cleared">${statusHtml}</td>
           <td class="dtx-pending-col">${pendingHtml}</td>
           <td class="dtx-truncate${editableCls}" data-field="notes" title="${notes.replace(/"/g, '&quot;')}">${notes}</td>
@@ -2376,6 +2383,9 @@
       }
       const isIncome = t.type === 'Income';
       const amountText = (isIncome ? '+' : '') + formatIDR(t.amount);
+      // Kind badge -- left off transfer legs, whose own transfer tag below
+      // already says the same thing (the table's Kind column still shows it).
+      const kindHtml = t.transfer ? '' : KindUI.badge(t);
       const metaBits = [];
       if (!t.isCleared) metaBits.push('<span class="uncleared">uncleared</span>');
       if (t.reconciled) metaBits.push('<span class="reconciled-tag">reconciled</span>');
@@ -2397,7 +2407,7 @@
           <div class="txn-row-main">
             <div>
               <div class="txn-name">${t.payee}</div>
-              <div class="txn-meta">${metaBits.join(' &middot; ') || '&nbsp;'}</div>
+              <div class="txn-meta">${kindHtml} ${metaBits.join(' &middot; ') || (kindHtml ? '' : '&nbsp;')}</div>
             </div>
             <div class="txn-amount-block">
               <div class="txn-amount ${isIncome ? 'income' : ''}">${amountText}</div>
@@ -3554,6 +3564,9 @@
     // back off (still calling preventDefault) rather than run their
     // single-row behavior. Up/Down/S keep working identically either way.
     const bulkActive = BulkSelect.count() > 0;
+    // The bulk bar's open "Set kind" row owns V / F / A / Escape (and the
+    // bar's own hotkeys) -- without this, V would also open Undo here.
+    if (BulkSelect.ownsKey(e)) { e.preventDefault(); return; }
     if (key === 'r') {
       e.preventDefault();
       openReconcile();
@@ -3765,6 +3778,14 @@
       for (const txn of rows) {
         await bulkUpdateDetailRow(txn, { month: inputValue });
       }
+    } else if (key === 'setKind') {
+      // One request for the whole selection; Income rows are skipped
+      // server-side (transfer legs can't be selected on this page).
+      const result = await KindUI.applyBulk(rows.map((t) => t.rowNumber), inputValue);
+      await fetchAndRenderAccountDetail(currentAccount);
+      const note = KindUI.bulkSummary(result);
+      if (note) TransactionForm.toast(note, 3500);
+      return;
     }
 
     await fetchAndRenderAccountDetail(currentAccount);
@@ -3783,6 +3804,7 @@
       { key: 'confirm', label: 'Confirm', hotkey: 'Enter', hotkeySymbol: '✓' },
       { key: 'changeDate', label: 'Change date', input: 'date', hotkey: 'h' },
       { key: 'changeBillingMonth', label: 'Change month', input: 'month', hotkey: 'm' },
+      KindUI.bulkAction,
     ],
     onAction: bulkOnDetailAction,
     // Cheap post-clear redraw (see shared/bulk-actions.js's comment on

@@ -113,6 +113,7 @@
         <div class="txf-kind-group" id="txf-kind-group" style="display:none;">
           <div class="txf-bill-suggest" id="txf-bill-suggest" style="display:none;"></div>
           <label class="txf-field-label">Kind</label>
+          <div class="txf-kind-static" id="txf-kind-static" style="display:none;"></div>
           <div class="txf-toggle-row txf-kind-toggle" id="txf-kind-toggle">
             <button type="button" class="txf-toggle-btn" data-kind="Variable">Variable</button>
             <button type="button" class="txf-toggle-btn" data-kind="Fixed">Fixed</button>
@@ -239,11 +240,12 @@
     state.amountCurrency.style.color = color;
   }
 
-  function showToast(msg) {
-    if (!state.toast) return;
+  function showToast(msg, ms) {
+    if (!state || !state.toast) return;
     state.toast.textContent = msg;
     state.toast.classList.add('show');
-    setTimeout(() => state.toast.classList.remove('show'), 1400);
+    clearTimeout(state.toastTimer);
+    state.toastTimer = setTimeout(() => state.toast.classList.remove('show'), ms || 1400);
   }
 
   async function loadAccounts() {
@@ -689,11 +691,37 @@
     return state.kindManual ? { kind: state.kindChoice, rule: 'manual' } : autoKind();
   }
 
+  // Income and Transfer rows can't be given a Kind -- rules 1-2 in
+  // api/_lib/kinds.js always decide them -- but they still show it,
+  // read-only, so every open sheet answers "does this count toward the
+  // weekly allowance?". A row that's already a transfer leg (Transfer flag)
+  // reads Transfer even though its type toggle says Expense or Income.
+  function staticKind() {
+    const mode = getToggle('txf-type-toggle', 'type');
+    if (mode === 'Transfer') {
+      return { kind: 'Transfer', why: 'Money moving between your own accounts.' };
+    }
+    const txn = state.editingRow !== null ? state.editingTxn : null;
+    if (txn && txn.transfer) {
+      return { kind: 'Transfer', why: 'This row is one leg of a transfer (its Transfer flag is on), so it’s never spending.' };
+    }
+    if (mode === 'Income') return { kind: 'Income', why: '' };
+    return null;
+  }
+
   function renderKind() {
     if (!state || !state.kindGroup) return;
-    const show = getToggle('txf-type-toggle', 'type') === 'Expense';
-    state.kindGroup.style.display = show ? '' : 'none';
-    if (!show) return;
+    state.kindGroup.style.display = '';
+    const fixedKind = staticKind();
+    state.kindToggle.style.display = fixedKind ? 'none' : '';
+    state.kindStaticEl.style.display = fixedKind ? '' : 'none';
+    if (fixedKind) {
+      setHtml(state.kindStaticEl, `<span class="txf-kind-pill txf-kind-pill-${fixedKind.kind.toLowerCase()}">${fixedKind.kind}</span>`);
+      setHtml(state.billSuggestEl, '');
+      state.billSuggestEl.style.display = 'none';
+      setHtml(state.kindHintEl, `${fixedKind.why ? fixedKind.why + ' ' : ''}Not counted in the weekly allowance.`);
+      return;
+    }
     const eff = effectiveKind();
     setToggle('txf-kind-toggle', 'kind', eff.kind);
 
@@ -1415,6 +1443,7 @@
       toMonthTouched: false,
       kindGroup: rootEl.querySelector('#txf-kind-group'),
       kindToggle: rootEl.querySelector('#txf-kind-toggle'),
+      kindStaticEl: rootEl.querySelector('#txf-kind-static'),
       kindHintEl: rootEl.querySelector('#txf-kind-hint'),
       billSuggestEl: rootEl.querySelector('#txf-bill-suggest'),
       kindManual: false,
@@ -1553,5 +1582,5 @@
     loadBillRegistry();
   }
 
-  global.TransactionForm = { mount, open, close, todayISO, guessBillingMonth, isCashAccountType };
+  global.TransactionForm = { mount, open, close, todayISO, guessBillingMonth, isCashAccountType, toast: showToast };
 })(window);
