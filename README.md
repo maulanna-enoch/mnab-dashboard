@@ -113,8 +113,10 @@ second account in the same project doesn't shrink your headroom.
 ```
 mnab-dashboard/
   api/_lib/sheets.js                  Shared: read/write clients, row parsing + classification, buildTransactionRow
+  api/_lib/settings.js                Settings tab keys, defaults and value parsing (see "Settings tab" below)
   api/cashflow-summary.js             Income/Paid/Budgeted/Left-to-spend for a given ?month=YYYY-MM;
                                       ?action=months lists the Diary months for the dropdown
+                                      ?action=settings returns the Settings tab (typed, with defaults)
   api/push.js                         Web Push: device subscriptions + the notify call EmailImport.gs makes
   api/installments-summary.js         Sum of active Installment amounts (excludes Bills)
   api/installments-by-end-month.js    Active Installments grouped by ending month, with running remaining total
@@ -136,6 +138,28 @@ mnab-dashboard/
 Files under `api/_lib/` are not deployed as endpoints — Vercel ignores any
 path with an underscore-prefixed segment, which is exactly what we want for
 shared helper code.
+
+## Settings tab
+
+One key/value tab, `Settings`, holds the numbers the weekly budget depends on,
+so no page or endpoint hard-codes them. Create it once by hand in the MNAB
+sheet: row 1 headers `Key | Value | Notes`, then one row per setting below.
+Rows are read **by key**, so order doesn't matter and extra rows are ignored.
+
+| Key | Value | Default if blank or missing |
+|---|---|---|
+| `weekly_allowance_rp` | Weekly variable-spending allowance, e.g. `1.500.000` | not set |
+| `week_start_day` | `Wednesday` (or `Wed`) | Wednesday |
+| `rollover_enabled` | `TRUE` / `FALSE` | TRUE |
+| `rollover_cap_rp` | Max carried into next week, in Rp | blank = no cap |
+| `monthly_salary_rp` | Monthly salary, in Rp | not set |
+| `hole_start_date` | Date the Steals hole is counted from, `dd/mm/yyyy` | not set |
+
+Rupiah can be typed as a number or with `.` separators (`5.000.000`). A value
+that can't be read falls back to its default and shows up in `warnings` from
+`GET /api/cashflow-summary?action=settings`; nothing throws. Server code reads
+settings with `fetchSettings()` from `api/_lib/sheets.js`. Rupiah values stay
+in MNAB -- never copy them into the Claude Sheet.
 
 ## Bill vs. Installment classification
 
