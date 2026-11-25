@@ -1,10 +1,27 @@
 # MNAB Dashboard
 
-A mobile-friendly home menu with three pages:
+A mobile-friendly dashboard. Pages:
 
-### Cash Flow (`/cashflow`)
+### Home (`/`)
 
-Reads the `Diary` tab. A month dropdown (populated from whatever months
+Answers "can I spend this?" and "am I getting out of debt?" (Debt Exit WS5):
+
+- **Left this week** (hero) from `?action=week`: what's left of this week's
+  allowance plus rollover, with a per-day hint, the week's dates, spent vs.
+  available, and this week's Variable transactions. Red when over.
+- **Weeks on budget**: one bar per completed budget week (oldest first) plus
+  this week, height = spent / available, the dashed line = 100%, green when
+  kept, red when not, with the streak of weeks kept.
+- **Owed to the future** from `?action=debt`: the actual hole (Steals,
+  reserves only) and % of salary, the projected debt-free date, how many
+  days last week's over/under-spend moved it, and the date at your recent
+  pace.
+- **Monthly cash flow (Diary)**: the old Cash Flow view below, collapsed;
+  it only loads when opened.
+
+### Cash Flow (inside Home, collapsed)
+
+`/cashflow` redirects to Home. Reads the `Diary` tab. A month dropdown (populated from whatever months
 actually exist in `Diary`) drives three cards:
 
 - **Left to spend** (hero number) — `Income − Outflow`. Red if negative.
