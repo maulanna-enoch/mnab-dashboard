@@ -23,8 +23,6 @@ const {
   isTransferPaymentId,
   convertRowToTransfer,
   findTransferCandidates,
-  tryFlipDiaryBilledToPaid,
-  tryFlipDiaryPaidToBilled,
   getCardStatement,
   deletePaymentRows,
   shiftMonth,
@@ -412,21 +410,13 @@ async function actionPayCard(body, res) {
     month,
   });
 
-  // Best-effort only -- never let a Diary-matching quirk fail a payment
-  // that's already been written. See tryFlipDiaryBilledToPaid's own
-  // comment for the matching rules/assumptions.
-  let diaryFlip = { flipped: false };
-  try {
-    diaryFlip = await tryFlipDiaryBilledToPaid(sheets, { cardAccount: card.name, month, amountPaid: numAmount });
-  } catch (err) {
-    console.error('Diary Billed->Paid flip failed (non-fatal):', err);
-  }
-
+  // Paid / unpaid is worked out from transactions (api/_lib/statements.js),
+  // so there's nothing else to update -- just report where the statement
+  // stands now.
   const statement = await statementAfterWrite(sheets, card.name, month);
   res.status(200).json({
     ok: true,
     ...result,
-    diaryFlipped: !!diaryFlip.flipped,
     statement,
     statementPaid: !!statement && statement.status === STATUS_PAID,
   });
@@ -435,9 +425,8 @@ async function actionPayCard(body, res) {
 // "Transfer" from the Add transaction sheet: moves money between any two of
 // the user's own accounts as a linked, Transfer=TRUE pair (see
 // appendTransferRows). Lives in this dispatcher rather than its own
-// /api file because of the Vercel Hobby 12-function cap. Unlike pay-card it
-// never touches the Diary -- the form points card-statement payments at
-// Add Payment instead.
+// /api file because of the Vercel Hobby 12-function cap. Card-statement
+// payments go through Add Payment instead, which stamps the statement month.
 async function actionTransfer(body, res) {
   const {
     fromAccount, toAccount, amount, date: dateStr,
@@ -511,8 +500,8 @@ async function actionTransfer(body, res) {
 //
 // A cash/bank -> credit card move is a card payment (replaces the old
 // convert-to-card-payment action): both legs take `month` as the card
-// statement being paid, and the card's Diary line gets the same best-effort
-// Billed->Paid flip as actionPayCard. Field values come from the edit form
+// statement being paid, which is what makes it count towards that
+// statement (api/_lib/statements.js). Field values come from the edit form
 // so anything the user changed before converting is saved too.
 async function actionConvertToTransfer(body, res) {
   const {
@@ -620,15 +609,6 @@ async function actionConvertToTransfer(body, res) {
     return;
   }
 
-  let diaryFlip = { flipped: false };
-  if (cardPayment) {
-    try {
-      diaryFlip = await tryFlipDiaryBilledToPaid(sheets, { cardAccount: to.name, month, amountPaid: numAmount });
-    } catch (err) {
-      console.error('Diary Billed->Paid flip failed (non-fatal):', err);
-    }
-  }
-
   const statement = cardPayment ? await statementAfterWrite(sheets, to.name, month) : null;
   res.status(200).json({
     ok: true,
@@ -636,7 +616,6 @@ async function actionConvertToTransfer(body, res) {
     cardPayment,
     fromAccount: from.name,
     toAccount: to.name,
-    diaryFlipped: !!diaryFlip.flipped,
     statement,
     statementPaid: !!statement && statement.status === STATUS_PAID,
   });
@@ -696,29 +675,17 @@ async function actionUndoPayment(body, res) {
     return;
   }
 
-  // Best-effort only, same contract as actionPayCard's forward flip above --
-  // never let a Diary-matching quirk fail an undo that's already happened.
-  // See tryFlipDiaryPaidToBilled's own comment (GitHub issue #37).
-  // A plain account-to-account transfer ('trf_', or a converted 'cvt*_'
-  // one -- see paymentIdKind) never flipped a Diary
-  // statement to Paid, so undoing one mustn't flip anything back either --
-  // even when its "to" leg happens to be a credit card.
-  let diaryFlip = { flipped: false };
-  if (cardAccount && month && !isTransferPaymentId(paymentId)) {
-    try {
-      diaryFlip = await tryFlipDiaryPaidToBilled(sheets, { cardAccount, month });
-    } catch (err) {
-      console.error('Diary Paid->Billed flip failed (non-fatal):', err);
-    }
-  }
-
+  // With the legs gone the statement is worked out again from what's left
+  // (GitHub issue #37 used to need a Diary Paid->Billed flip here). A plain
+  // account-to-account transfer ('trf_', or a converted 'cvt*_' one -- see
+  // paymentIdKind) isn't a statement payment, so there's no statement to
+  // report even when its "to" leg is a credit card.
   const statement = cardAccount && month && !isTransferPaymentId(paymentId)
     ? await statementAfterWrite(sheets, cardAccount, month)
     : null;
   res.status(200).json({
     deletedCount,
     revertedCount,
-    diaryFlipped: !!diaryFlip.flipped,
     statement,
     statementReopened: !!statement && statement.status === STATUS_BILLED,
   });

@@ -21,7 +21,8 @@
 // Note: like every other /api endpoint, subscribe/unsubscribe/test are not
 // authenticated. Only notify, the one that broadcasts, needs the secret.
 const crypto = require('crypto');
-const { getWriteSheetsClient, fetchInstallmentRows, fetchDiaryRows } = require('./_lib/sheets');
+const { getWriteSheetsClient, fetchInstallmentRows, fetchSettings, fetchClassifiedTransactionRows } = require('./_lib/sheets');
+const { computeWeek } = require('./_lib/week');
 const push = require('./_lib/push');
 const morning = require('./_lib/morning');
 
@@ -128,12 +129,23 @@ async function actionMorning(req, res, dryRun) {
   }
 
   const today = morning.jakartaToday();
-  const cycle = morning.cycleFor(today);
-  const [installments, diary] = await Promise.all([fetchInstallmentRows(), fetchDiaryRows()]);
+  const [installments, { values: settings }, txns] = await Promise.all([
+    fetchInstallmentRows(),
+    fetchSettings(),
+    fetchClassifiedTransactionRows(),
+  ]);
+  // This week's budget (WS4), the same call and default history as
+  // ?action=week so the rollover matches what Home shows. Best-effort:
+  // a settings problem mustn't stop the bills part of the push.
+  let week = null;
+  try {
+    week = computeWeek(txns, settings, { includeTransactions: false }).week;
+  } catch (err) {
+    console.error('Weekly budget for the morning push failed (non-fatal):', err);
+  }
   const message = morning.composeMorning({
     bills: morning.billsDueOn(installments, today),
-    leftToSpend: morning.leftToSpendFor(diary, cycle.month),
-    cycle,
+    week,
   });
   const { summary, ...payload } = message;
 
