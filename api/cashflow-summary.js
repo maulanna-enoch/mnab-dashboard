@@ -1,13 +1,8 @@
-// Cash Flow endpoint for the home page.
+// Home page endpoint.
 //
-// GET ?month=YYYY-MM          -> that month's income / outflow / left-to-spend.
-// GET ?action=months          -> distinct months found in Diary, for the
-//                                month dropdown.
-//
-// action=months used to be its own file, api/cashflow-months.js. It was
-// folded in here to free one of Vercel Hobby's 12 Serverless Function
-// slots for api/push.js. vercel.json rewrites the old /api/cashflow-months
-// URL to ?action=months, so anything still calling it keeps working.
+// The Diary-based monthly Cash Flow (?month=YYYY-MM and ?action=months) was
+// removed when the Diary tab was retired (Debt Exit plan); Home now runs on
+// the weekly budget and the debt projection below.
 //
 // GET ?action=settings        -> the Settings tab, typed and defaulted
 //                                (see api/_lib/settings.js). Lives here
@@ -32,30 +27,16 @@
 //     &pace=N                 -> weeks averaged for "at your pace" (default 4)
 //     &rows=0                 -> leave out the month-by-month table
 const {
-  fetchDiaryRows,
   fetchSettings,
   fetchClassifiedTransactionRows,
   fetchStealsRows,
   fetchInstallmentRows,
   fetchAccountRows,
-  monthLabel,
 } = require('./_lib/sheets');
 const { SETTINGS_SCHEMA } = require('./_lib/settings');
 const { computeWeek, jakartaToday, isoFromDay } = require('./_lib/week');
 const { projectDebt } = require('./_lib/debt');
 const { KIND_CARD_BILL } = require('./_lib/bills');
-
-async function actionMonths(res) {
-  const rows = await fetchDiaryRows();
-  const monthSet = new Set(rows.filter((r) => r.month).map((r) => r.month));
-  const months = Array.from(monthSet)
-    .sort()
-    .reverse() // most recent first
-    .map((value) => ({ value, label: monthLabel(value) }));
-
-  res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
-  res.status(200).json({ months, updatedAt: new Date().toISOString() });
-}
 
 async function actionSettings(res) {
   const { values, warnings, tabFound } = await fetchSettings();
@@ -142,57 +123,11 @@ async function actionDebt(req, res) {
 
 module.exports = async (req, res) => {
   try {
-    if (req.query && req.query.action === 'months') return await actionMonths(res);
     if (req.query && req.query.action === 'settings') return await actionSettings(res);
     if (req.query && req.query.action === 'week') return await actionWeek(req, res);
     if (req.query && req.query.action === 'debt') return await actionDebt(req, res);
 
-    const month = (req.query && req.query.month) || '';
-    if (!month) {
-      res.status(400).json({ error: 'Missing "month" query param, e.g. ?month=2026-08' });
-      return;
-    }
-
-    const rows = await fetchDiaryRows();
-    const monthRows = rows.filter((r) => r.month === month);
-
-    const incomeItems = monthRows
-      .filter((r) => r.type === 'Income')
-      .map((r) => ({ name: r.name, amount: r.amount }));
-    const income = incomeItems.reduce((sum, i) => sum + i.amount, 0);
-
-    const expenseRows = monthRows.filter((r) => r.type === 'Expense');
-    const paidItems = expenseRows
-      .filter((r) => r.isPaid)
-      .map((r) => ({ name: r.name, amount: r.amount, category: r.category }));
-    const billedItems = expenseRows
-      .filter((r) => r.isBilled)
-      .map((r) => ({ name: r.name, amount: r.amount, category: r.category }));
-    const unbilledItems = expenseRows
-      .filter((r) => r.isUnbilled)
-      .map((r) => ({ name: r.name, amount: r.amount, category: r.category }));
-
-    const paid = paidItems.reduce((sum, i) => sum + i.amount, 0);
-    const billed = billedItems.reduce((sum, i) => sum + i.amount, 0);
-    const unbilled = unbilledItems.reduce((sum, i) => sum + i.amount, 0);
-    const outflow = paid + billed + unbilled;
-    const leftToSpend = income - outflow;
-
-    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
-    res.status(200).json({
-      month,
-      income,
-      incomeItems,
-      paid,
-      billed,
-      unbilled,
-      outflow,
-      leftToSpend,
-      paidItems,
-      billedItems,
-      unbilledItems,
-      updatedAt: new Date().toISOString(),
-    });
+    res.status(400).json({ error: 'Unknown or missing action. Use ?action=week, ?action=debt or ?action=settings.' });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
