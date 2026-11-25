@@ -19,26 +19,26 @@ Each card expands to show the underlying line items.
 ### Bills (`/installments`)
 
 Debt Exit plan WS3. One request, `GET /api/installments-summary?action=page`
-(rules in `api/_lib/bills-page.js`), feeds the whole page:
+(rules in `api/_lib/bills-page.js`), feeds three tabs, one question each:
 
-- **Left to pay before payroll** (hero) and **This pay cycle**: every bill,
-  installment and card statement due from the last 25th to the next one,
-  marked Paid, Due soon (3 days), Late or Upcoming. A bill is paid when a
-  transaction carries its Bill ID (`Source ID`), isn't Pending, and is dated
-  between the previous and the next due date. A paid amount that differs
-  from the registry is flagged, and so is an auto-inserted row still waiting
-  to be confirmed.
-- **Card statements**: the open one and the two before it, per card, worked
-  out from transactions (see Card statements below).
-- **Running now**: Cash bills, Card bills and Installments (n/total, end
-  month, what's left), from `installmentsbills`' Kind column.
-- **Ending soon**: when rows end and how much each frees up.
-- **Committed as % of salary**: this month and the next 12, using
-  `monthly_salary_rp` from Settings (amounts only if it's blank).
+- **This cycle** — what to pay before payroll (the last 25th up to the next
+  one) and what's done. Only money leaving a cash account: bills paid from a
+  cash account, and card statements. Bills and cicilan charged to a card are
+  listed *inside* the statement they land on, never on their own, so the
+  hero total never counts them twice. Late / Due soon (3 days) / Upcoming
+  first, Paid greyed out at the bottom. A cash bill is paid when a
+  non-Pending transaction carries its Bill ID (`Source ID`) between the
+  previous and next due date; amount mismatches and auto-inserted rows still
+  waiting to be confirmed are flagged.
+- **Commitments** — what you're signed up for, by how it's paid: *From
+  cash*, then one card per credit card with its bills and cicilan and its
+  recent statements. A row is "on a card" when its SOF is a credit card
+  account.
+- **Outlook** — committed as % of salary (`monthly_salary_rp` in Settings)
+  for 13 months, and the Ending soon list that explains the drops.
 
-The older `?action=committed`, `/api/bills-summary` and
-`/api/installments-by-end-month` still work but the page no longer uses the
-last two.
+A notice lists active `installmentsbills` rows the page can't place (no Day
+of Month, no Kind, an Installment without Starts/Ends).
 
 ### Card statements (worked out, no Diary)
 
