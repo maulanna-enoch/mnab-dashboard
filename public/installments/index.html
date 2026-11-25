@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
-<title>Installments & Bills · MNAB</title>
+<title>Bills · MNAB</title>
 <link rel="icon" type="image/png" href="/favicon.png" />
 <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=2" />
@@ -158,29 +158,69 @@
     color: var(--muted);
     margin-top: 8px;
   }
+  .hero-due { font-size: 0.85rem; color: var(--muted); margin-top: 8px; }
+  .notice { width: 100%; max-width: var(--page-max-width); font-size: 0.8rem; color: #fbbf24; background: #2a2316; border-radius: 12px; padding: 10px 14px; margin-bottom: 12px; }
+  .rows { list-style: none; margin: 0; padding: 0; }
+  .rows li { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 10px 0; border-bottom: 1px solid #2a2e37; }
+  .rows li:last-child { border-bottom: none; }
+  .rows .name { font-weight: 600; font-size: 0.95rem; }
+  .rows .meta { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
+  .rows .flag { font-size: 0.75rem; color: #fbbf24; margin-top: 2px; }
+  .rows .right { text-align: right; white-space: nowrap; }
+  .rows .amt { font-weight: 600; }
+  .pill { display: inline-block; font-size: 0.7rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; margin-top: 4px; }
+  .pill.paid { background: #14532d; color: #86efac; }
+  .pill.due-soon { background: #422006; color: #fbbf24; }
+  .pill.late { background: #450a0a; color: #fca5a5; }
+  .pill.upcoming, .pill.open, .pill.none { background: #1f2937; color: var(--muted); }
+  .pill.billed { background: #422006; color: #fbbf24; }
+  details.section { border-bottom: 1px solid #2a2e37; }
+  details.section:last-child { border-bottom: none; }
+  details.section > summary { list-style: none; display: flex; justify-content: space-between; align-items: baseline; padding: 12px 0; cursor: pointer; font-weight: 600; }
+  details.section > summary::-webkit-details-marker { display: none; }
+  .count { font-size: 0.75rem; color: var(--muted); font-weight: 400; }
+  .bar-row { display: grid; grid-template-columns: 64px 1fr 72px; align-items: center; gap: 8px; font-size: 0.8rem; padding: 4px 0; }
+  .bar-track { background: #2a2e37; border-radius: 999px; height: 8px; overflow: hidden; }
+  .bar-fill { background: var(--accent); height: 100%; border-radius: 999px; }
+  .bar-row .v { text-align: right; color: var(--text); }
+  .bar-row .m { color: var(--muted); }
+  .empty { font-size: 0.85rem; color: var(--muted); padding: 8px 0; }
 </style>
 </head>
 <body>
-  <h1>Installments & Bills</h1>
+  <h1>Bills</h1>
+
+  <div id="notices"></div>
 
   <div class="card">
-    <div class="label">Total Active (Installments + Bills)</div>
+    <div class="label">Left to pay before payroll</div>
     <div class="total" id="hero-total">Loading…</div>
-    <div class="sub" id="hero-meta"></div>
+    <div class="hero-due" id="hero-meta"></div>
   </div>
 
   <div class="card wide">
-    <div class="label">Active Installments</div>
-    <div class="section-total" id="installments-total">Loading…</div>
-    <div class="section-meta" id="installments-meta"></div>
-    <div id="months-list">Loading…</div>
-    <div class="no-end" id="no-end"></div>
+    <div class="label">This pay cycle</div>
+    <ul class="rows" id="checklist"><li class="empty">Loading…</li></ul>
   </div>
 
   <div class="card wide">
-    <div class="label">Recurring Bills (active)</div>
-    <div class="section-total" id="bills-total">Loading…</div>
-    <ul class="item-list" id="bills-list"></ul>
+    <div class="label">Card statements</div>
+    <ul class="rows" id="statements"><li class="empty">Loading…</li></ul>
+  </div>
+
+  <div class="card wide">
+    <div class="label">Running now</div>
+    <div id="sections"><div class="empty">Loading…</div></div>
+  </div>
+
+  <div class="card wide">
+    <div class="label">Ending soon</div>
+    <ul class="rows" id="drop-off"><li class="empty">Loading…</li></ul>
+  </div>
+
+  <div class="card wide">
+    <div class="label" id="committed-label">Committed each month</div>
+    <div id="committed"><div class="empty">Loading…</div></div>
   </div>
 
   <button class="refresh" onclick="load()">Refresh</button>
@@ -194,90 +234,140 @@
     KeyboardNav.mount();
   </script>
   <script>
+    // Debt Exit plan WS3. Everything comes from one request,
+    // /api/installments-summary?action=page (rules in api/_lib/bills-page.js).
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const STATUS_LABEL = { paid: 'Paid', 'due-soon': 'Due soon', late: 'Late', upcoming: 'Upcoming', open: 'Open', billed: 'Unpaid', none: 'Nothing owed' };
+
     function formatIDR(value) {
-      return new Intl.NumberFormat('id-ID', {
-        style: 'currency',
-        currency: 'IDR',
-        maximumFractionDigits: 0,
-      }).format(value);
+      return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(value || 0);
+    }
+    function esc(str) {
+      return String(str == null ? '' : str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+    // dd/mm -- the project's display convention, built from the string so no
+    // time zone ever shifts it.
+    function dm(isoDate) {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate || '');
+      return m ? `${m[3]}/${m[2]}` : '';
+    }
+    function monthLabel(ym) {
+      const m = /^(\d{4})-(\d{2})$/.exec(ym || '');
+      return m ? `${MONTHS[Number(m[2]) - 1]} ${m[1]}` : '';
+    }
+    function pill(status) {
+      return `<span class="pill ${esc(status)}">${esc(STATUS_LABEL[status] || status)}</span>`;
     }
 
-    function renderMonths(monthsData) {
-      const monthsEl = document.getElementById('months-list');
-      const noEndEl = document.getElementById('no-end');
-
-      if (!monthsData.months.length) {
-        monthsEl.innerHTML = '<div class="sub">No active installments with an end date.</div>';
-      } else {
-        monthsEl.innerHTML = monthsData.months.map((m) => `
-          <details class="month-row">
-            <summary>
-              <span>
-                <span class="month-name">${m.label}</span>
-                <span class="month-count">(${m.count})</span>
-              </span>
-              <span class="month-amount">${formatIDR(m.amountEnding)}</span>
-            </summary>
-            <div class="month-detail">
-              <div class="remaining">Remaining after: ${formatIDR(m.remainingAfter)}</div>
-              <ul class="item-list">
-                ${m.items.map((i) => `<li><span>${i.name}</span><span>${formatIDR(i.amount)}</span></li>`).join('')}
-              </ul>
-            </div>
-          </details>
-        `).join('');
-      }
-
-      noEndEl.textContent = (monthsData.noEndDate && monthsData.noEndDate.count > 0)
-        ? `+ ${monthsData.noEndDate.count} active item(s) with no end date (${formatIDR(monthsData.noEndDate.amount)}) not shown above.`
-        : '';
+    function renderChecklist(items) {
+      const el = document.getElementById('checklist');
+      if (!items.length) { el.innerHTML = '<li class="empty">Nothing due before payroll.</li>'; return; }
+      el.innerHTML = items.map((i) => {
+        const meta = [i.kind, i.sof, i.dueDate ? `due ${dm(i.dueDate)}` : '', i.installment ? `${i.installment}/${i.totalMonths || '?'}` : '',
+          i.statementMonth ? `${monthLabel(i.statementMonth)} statement` : ''].filter(Boolean).join(' · ');
+        const flags = [];
+        if (i.mismatch) flags.push(`Paid ${formatIDR(i.paidAmount)}, registry says ${formatIDR(i.amount)}`);
+        if (i.awaitingConfirm) flags.push('Auto-inserted row is waiting for you to confirm it');
+        if (i.kind === 'Card statement' && i.status !== 'paid' && i.paidAmount) flags.push(`${formatIDR(i.paidAmount)} paid so far`);
+        const shown = i.kind === 'Card statement' && i.status !== 'paid' ? i.remaining : i.amount;
+        return `<li>
+          <div><div class="name">${esc(i.name)}</div><div class="meta">${esc(meta)}</div>${flags.map((f) => `<div class="flag">${esc(f)}</div>`).join('')}</div>
+          <div class="right"><div class="amt">${formatIDR(shown)}</div>${pill(i.status)}</div>
+        </li>`;
+      }).join('');
     }
 
-    function renderBills(billsData) {
-      const totalEl = document.getElementById('bills-total');
-      const listEl = document.getElementById('bills-list');
-      totalEl.textContent = formatIDR(billsData.total);
-      listEl.innerHTML = billsData.count
-        ? billsData.items.map((i) => `<li><span>${i.name}</span><span>${formatIDR(i.amount)}</span></li>`).join('')
-        : '<li><span class="sub">No active bills.</span></li>';
+    function renderStatements(list) {
+      const el = document.getElementById('statements');
+      if (!list.length) { el.innerHTML = '<li class="empty">No card statements with activity lately.</li>'; return; }
+      el.innerHTML = list.map((s) => {
+        const meta = [s.status === 'open' ? `closes ${dm(s.closeDate)}` : `closed ${dm(s.closeDate)}`, s.dueDate ? `due ${dm(s.dueDate)}` : '',
+          s.paid ? `paid ${formatIDR(s.paid)}` : ''].filter(Boolean).join(' · ');
+        const status = s.isLate ? 'late' : s.status;
+        return `<li>
+          <div><div class="name">${esc(s.card)} · ${esc(monthLabel(s.month))}</div><div class="meta">${esc(meta)}</div></div>
+          <div class="right"><div class="amt">${formatIDR(s.amount)}</div>${pill(status)}</div>
+        </li>`;
+      }).join('');
+    }
+
+    function sectionRows(items, installments) {
+      if (!items.length) return '<div class="empty">None.</div>';
+      return `<ul class="rows">${items.map((i) => {
+        const meta = installments
+          ? [i.sof, i.installment ? `${i.installment}/${i.totalMonths || '?'}` : '', i.endsMonth ? `ends ${monthLabel(i.endsMonth)}` : '',
+            i.remainingTotal !== null && i.remainingTotal !== undefined ? `${formatIDR(i.remainingTotal)} left` : ''].filter(Boolean).join(' · ')
+          : [i.sof, i.dayOfMonth ? `day ${i.dayOfMonth}` : '', i.endsMonth ? `ends ${monthLabel(i.endsMonth)}` : ''].filter(Boolean).join(' · ');
+        return `<li><div><div class="name">${esc(i.name)}</div><div class="meta">${esc(meta)}</div></div>
+          <div class="right"><div class="amt">${formatIDR(i.amount)}</div>${i.status ? pill(i.status) : ''}</div></li>`;
+      }).join('')}</ul>`;
+    }
+
+    function renderSections(sections) {
+      const groups = [
+        ['Cash bills', sections.cashBills, false],
+        ['Card bills', sections.cardBills, false],
+        ['Installments', sections.installments, true],
+        ['Bills with no Kind set', sections.otherBills, false],
+      ].filter(([label, items]) => items.length || label !== 'Bills with no Kind set');
+      document.getElementById('sections').innerHTML = groups.map(([label, items, inst]) => {
+        const total = items.reduce((s, i) => s + i.amount, 0);
+        return `<details class="section"><summary><span>${esc(label)} <span class="count">(${items.length})</span></span><span>${formatIDR(total)}</span></summary>${sectionRows(items, inst)}</details>`;
+      }).join('');
+    }
+
+    function renderDropOff(groups) {
+      const el = document.getElementById('drop-off');
+      if (!groups.length) { el.innerHTML = '<li class="empty">Nothing with an end date.</li>'; return; }
+      let freed = 0;
+      el.innerHTML = groups.map((g) => {
+        freed += g.amount;
+        return `<li>
+          <div><div class="name">From ${esc(monthLabel(g.freedFrom))}</div><div class="meta">${esc(g.items.map((i) => i.name).join(', '))} · last payment ${esc(monthLabel(g.endsMonth))}</div></div>
+          <div class="right"><div class="amt">−${formatIDR(g.amount)}</div><div class="meta">${formatIDR(freed)}/mo freed in total</div></div>
+        </li>`;
+      }).join('');
+    }
+
+    function renderCommitted(months, salarySet) {
+      document.getElementById('committed-label').textContent = salarySet ? 'Committed as % of salary' : 'Committed each month';
+      const max = Math.max(1, ...months.map((m) => (salarySet ? m.pctOfSalary : m.total) || 0));
+      document.getElementById('committed').innerHTML = months.map((m) => {
+        const v = salarySet ? m.pctOfSalary : m.total;
+        const width = Math.max(0, Math.min(100, (salarySet ? v : (v / max) * 100) || 0));
+        const label = salarySet ? `${v.toFixed(1)}%` : formatIDR(v);
+        return `<div class="bar-row" title="${esc(formatIDR(m.total))}"><span class="m">${esc(monthLabel(m.month))}</span><span class="bar-track"><span class="bar-fill" style="display:block;width:${width}%"></span></span><span class="v">${esc(label)}</span></div>`;
+      }).join('');
+    }
+
+    function renderNotices(p) {
+      const notes = [];
+      if (p.unsetKinds) notes.push(`${p.unsetKinds} active row(s) in installmentsbills have no Kind. Run Finances › Set Up Bill Kinds… in the sheet.`);
+      if (!p.salarySet) notes.push('Set monthly_salary_rp in the Settings tab to see commitments as % of salary.');
+      document.getElementById('notices').innerHTML = notes.map((n) => `<div class="notice">${esc(n)}</div>`).join('');
     }
 
     async function load() {
       const heroTotalEl = document.getElementById('hero-total');
       const heroMetaEl = document.getElementById('hero-meta');
-      const instTotalEl = document.getElementById('installments-total');
-      const instMetaEl = document.getElementById('installments-meta');
-
       heroTotalEl.textContent = 'Loading…';
       heroMetaEl.textContent = '';
-      instTotalEl.textContent = 'Loading…';
-      instMetaEl.textContent = '';
-      document.getElementById('months-list').textContent = 'Loading…';
-      document.getElementById('bills-total').textContent = 'Loading…';
-      document.getElementById('bills-list').innerHTML = '';
-
       try {
-        const [installments, bills, byMonth] = await Promise.all([
-          fetch('/api/installments-summary').then((r) => r.json()),
-          fetch('/api/bills-summary').then((r) => r.json()),
-          fetch('/api/installments-by-end-month').then((r) => r.json()),
-        ]);
-
-        const firstError = installments.error || bills.error || byMonth.error;
-        if (firstError) throw new Error(firstError);
-
-        const heroTotal = installments.total + bills.total;
-        heroTotalEl.textContent = formatIDR(heroTotal);
-        heroMetaEl.textContent = `${installments.activeCount} installments + ${bills.count} bills · updated ${new Date().toLocaleTimeString()}`;
-
-        instTotalEl.textContent = formatIDR(installments.total);
-        instMetaEl.textContent = `${installments.activeCount} active installments`;
-
-        renderMonths(byMonth);
-        renderBills(bills);
+        const p = await fetch('/api/installments-summary?action=page').then((r) => r.json());
+        if (p.error) throw new Error(p.error);
+        heroTotalEl.textContent = formatIDR(p.leftToPay);
+        const bits = [`${p.unpaidCount} to pay before payroll on ${dm(p.cycle.payroll)}`];
+        if (p.lateCount) bits.push(`${p.lateCount} late`);
+        heroMetaEl.textContent = `${bits.join(' · ')} · updated ${new Date().toLocaleTimeString()}`;
+        renderNotices(p);
+        renderChecklist(p.checklist);
+        renderStatements(p.statements);
+        renderSections(p.sections);
+        renderDropOff(p.dropOff);
+        renderCommitted(p.committed, p.salarySet);
       } catch (err) {
         heroTotalEl.textContent = '—';
-        heroMetaEl.innerHTML = `<span class="error">${err.message}</span>`;
+        heroMetaEl.innerHTML = `<span class="error">${esc(err.message)}</span>`;
       }
     }
 

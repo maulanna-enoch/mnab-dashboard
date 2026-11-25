@@ -16,24 +16,29 @@ actually exist in `Diary`) drives three cards:
 
 Each card expands to show the underlying line items.
 
-### Installments & Bills (`/installments`)
+### Bills (`/installments`)
 
-Reads the `installmentsbills` tab. Rows are split into two categories:
+Debt Exit plan WS3. One request, `GET /api/installments-summary?action=page`
+(rules in `api/_lib/bills-page.js`), feeds the whole page:
 
-- **Installments** — have a real payoff date in `Ends`. Broken down by ending
-  month with a running "remaining after" total.
-- **Bills** — recurring items that don't really end, marked in the sheet with
-  a far-future placeholder `Ends` date (year ≥ 2099). Shown as a flat total,
-  no month breakdown.
+- **Left to pay before payroll** (hero) and **This pay cycle**: every bill,
+  installment and card statement due from the last 25th to the next one,
+  marked Paid, Due soon (3 days), Late or Upcoming. A bill is paid when a
+  transaction carries its Bill ID (`Source ID`), isn't Pending, and is dated
+  between the previous and the next due date. A paid amount that differs
+  from the registry is flagged, and so is an auto-inserted row still waiting
+  to be confirmed.
+- **Card statements**: the open one and the two before it, per card, worked
+  out from transactions (see Card statements below).
+- **Running now**: Cash bills, Card bills and Installments (n/total, end
+  month, what's left), from `installmentsbills`' Kind column.
+- **Ending soon**: when rows end and how much each frees up.
+- **Committed as % of salary**: this month and the next 12, using
+  `monthly_salary_rp` from Settings (amounts only if it's blank).
 
-Both only count rows where `is_active` is `TRUE`.
-
-Since WS2 of the Debt Exit plan, a `Kind` column (Cash bill / Card bill /
-Installment) decides which is which, with the 2099 rule only as the
-fallback for a blank Kind, and both cards count only rows whose Starts..Ends
-covers the current month. `?action=committed&from=YYYY-MM&months=N` on
-`/api/installments-summary` returns what's committed in each month, per
-Kind (see `api/_lib/bills.js`).
+The older `?action=committed`, `/api/bills-summary` and
+`/api/installments-by-end-month` still work but the page no longer uses the
+last two.
 
 ### Card statements (worked out, no Diary)
 
