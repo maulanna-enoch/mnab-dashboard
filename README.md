@@ -16,24 +16,29 @@ actually exist in `Diary`) drives three cards:
 
 Each card expands to show the underlying line items.
 
-### Installments & Bills (`/installments`)
+### Bills (`/installments`)
 
-Reads the `installmentsbills` tab. Rows are split into two categories:
+Debt Exit plan WS3. One request, `GET /api/installments-summary?action=page`
+(rules in `api/_lib/bills-page.js`), feeds three tabs, one question each:
 
-- **Installments** — have a real payoff date in `Ends`. Broken down by ending
-  month with a running "remaining after" total.
-- **Bills** — recurring items that don't really end, marked in the sheet with
-  a far-future placeholder `Ends` date (year ≥ 2099). Shown as a flat total,
-  no month breakdown.
+- **This cycle** — what to pay before payroll (the last 25th up to the next
+  one) and what's done. Only money leaving a cash account: bills paid from a
+  cash account, and card statements. Bills and cicilan charged to a card are
+  listed *inside* the statement they land on, never on their own, so the
+  hero total never counts them twice. Late / Due soon (3 days) / Upcoming
+  first, Paid greyed out at the bottom. A cash bill is paid when a
+  non-Pending transaction carries its Bill ID (`Source ID`) between the
+  previous and next due date; amount mismatches and auto-inserted rows still
+  waiting to be confirmed are flagged.
+- **Commitments** — what you're signed up for, by how it's paid: *From
+  cash*, then one card per credit card with its bills and cicilan and its
+  recent statements. A row is "on a card" when its SOF is a credit card
+  account.
+- **Outlook** — committed as % of salary (`monthly_salary_rp` in Settings)
+  for 13 months, and the Ending soon list that explains the drops.
 
-Both only count rows where `is_active` is `TRUE`.
-
-Since WS2 of the Debt Exit plan, a `Kind` column (Cash bill / Card bill /
-Installment) decides which is which, with the 2099 rule only as the
-fallback for a blank Kind, and both cards count only rows whose Starts..Ends
-covers the current month. `?action=committed&from=YYYY-MM&months=N` on
-`/api/installments-summary` returns what's committed in each month, per
-Kind (see `api/_lib/bills.js`).
+A notice lists active `installmentsbills` rows the page can't place (no Day
+of Month, no Kind, an Installment without Starts/Ends).
 
 ### Card statements (worked out, no Diary)
 

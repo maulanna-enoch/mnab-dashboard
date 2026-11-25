@@ -1,4 +1,6 @@
-const { fetchInstallmentRows } = require('./_lib/sheets');
+const { fetchInstallmentRows, fetchTransactionRows, fetchSettings, getSheetsClient } = require('./_lib/sheets');
+const { fetchAccountsForReconcile, todayWIBDate } = require('./_lib/reconcile');
+const { buildBillsPage } = require('./_lib/bills-page');
 const { activeInMonth, committedInMonth, currentJakartaMonth, parseMonth, addMonths, monthOf, isOpenEndDate } = require('./_lib/bills');
 
 // Up to Dec 2030 from late 2026 is ~50 months; 72 leaves headroom.
@@ -55,8 +57,29 @@ async function actionCommitted(req, res) {
   res.status(200).json({ from, months, unsetKinds, updatedAt: new Date().toISOString() });
 }
 
+// GET ?action=page (WS3) -- everything the Bills page shows, in one
+// request: this pay cycle's checklist (bills, installments and card
+// statements, each Paid / Due soon / Late), the per-kind sections, recent
+// card statements, the drop-off timeline and committed-as-%-of-salary.
+// Rules in api/_lib/bills-page.js. Lives here because the 12-function cap
+// is full.
+async function actionPage(res) {
+  const sheets = getSheetsClient();
+  const [registry, txns, { accounts }, settings] = await Promise.all([
+    fetchInstallmentRows(),
+    fetchTransactionRows(),
+    fetchAccountsForReconcile(sheets),
+    fetchSettings(sheets),
+  ]);
+  const salary = settings && settings.values ? settings.values.monthly_salary_rp : null;
+  const page = buildBillsPage({ registry, txns, accounts, salary, today: todayWIBDate() });
+  res.setHeader('Cache-Control', 'no-store');
+  res.status(200).json({ ...page, updatedAt: new Date().toISOString() });
+}
+
 module.exports = async (req, res) => {
   try {
+    if (req.query && req.query.action === 'page') return await actionPage(res);
     if (req.query && req.query.action === 'registry') return await actionRegistry(res);
     if (req.query && req.query.action === 'committed') return await actionCommitted(req, res);
 

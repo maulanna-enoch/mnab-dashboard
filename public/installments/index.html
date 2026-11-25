@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
-<title>Installments & Bills · MNAB</title>
+<title>Bills · MNAB</title>
 <link rel="icon" type="image/png" href="/favicon.png" />
 <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=2" />
@@ -158,30 +158,93 @@
     color: var(--muted);
     margin-top: 8px;
   }
+  .hero-due { font-size: 0.85rem; color: var(--muted); margin-top: 8px; }
+  .notice { width: 100%; max-width: var(--page-max-width); font-size: 0.8rem; color: #fbbf24; background: #2a2316; border-radius: 12px; padding: 10px 14px; margin-bottom: 12px; }
+  .notice summary { cursor: pointer; }
+  .notice ul { margin: 8px 0 0; padding-left: 18px; color: #fde68a; }
+  .tabs { width: 100%; max-width: var(--page-max-width); display: flex; gap: 4px; background: var(--card); border-radius: 999px; padding: 4px; margin-bottom: 16px; }
+  .tabs button { flex: 1; background: none; border: none; color: var(--muted); font: inherit; font-size: 0.85rem; font-weight: 600; padding: 8px 0; border-radius: 999px; cursor: pointer; }
+  .tabs button[aria-selected="true"] { background: #2a2e37; color: var(--text); }
+  .panel { width: 100%; max-width: var(--page-max-width); display: flex; flex-direction: column; align-items: center; }
+  .panel[hidden] { display: none; }
+  .card-title { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+  .card-title .t { font-weight: 700; font-size: 1rem; }
+  .card-title .s { font-size: 0.8rem; color: var(--muted); }
+  .card-sub { font-size: 0.75rem; color: var(--muted); margin-bottom: 8px; }
+  .rows { list-style: none; margin: 0; padding: 0; }
+  .rows > li { padding: 10px 0; border-bottom: 1px solid #2a2e37; }
+  .rows > li:last-child { border-bottom: none; }
+  .row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+  .rows .name { font-weight: 600; font-size: 0.95rem; }
+  .rows .meta { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
+  .rows .flag { font-size: 0.75rem; color: #fbbf24; margin-top: 2px; }
+  .rows .right { text-align: right; white-space: nowrap; }
+  .rows .amt { font-weight: 600; }
+  .rows > li.done { opacity: 0.45; }
+  .divider { font-size: 0.7rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; padding: 14px 0 2px; border-bottom: none !important; }
+  .pill { display: inline-block; font-size: 0.7rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; margin-top: 4px; }
+  .pill.paid, .pill.charged { background: #14532d; color: #86efac; }
+  .pill.due-soon, .pill.billed { background: #422006; color: #fbbf24; }
+  .pill.late { background: #450a0a; color: #fca5a5; }
+  .pill.upcoming, .pill.open, .pill.none, .pill.expected { background: #1f2937; color: var(--muted); }
+  details.inside { margin-top: 8px; }
+  details.inside > summary { font-size: 0.75rem; color: var(--muted); cursor: pointer; list-style: none; }
+  details.inside > summary::-webkit-details-marker { display: none; }
+  details.inside > summary::before { content: '▸ '; }
+  details.inside[open] > summary::before { content: '▾ '; }
+  .sub-rows { list-style: none; margin: 6px 0 0; padding: 0 0 0 10px; border-left: 2px solid #2a2e37; }
+  .sub-rows li { display: flex; justify-content: space-between; gap: 8px; font-size: 0.8rem; padding: 4px 0; }
+  .sub-rows .meta { font-size: 0.7rem; }
+  .bar-row { display: grid; grid-template-columns: 64px 1fr 72px; align-items: center; gap: 8px; font-size: 0.8rem; padding: 4px 0; }
+  .bar-track { background: #2a2e37; border-radius: 999px; height: 8px; overflow: hidden; }
+  .bar-fill { display: block; background: var(--accent); height: 100%; border-radius: 999px; }
+  .bar-row .v { text-align: right; color: var(--text); }
+  .bar-row .m { color: var(--muted); }
+  .empty { font-size: 0.85rem; color: var(--muted); padding: 8px 0; }
 </style>
 </head>
 <body>
-  <h1>Installments & Bills</h1>
+  <h1>Bills</h1>
 
-  <div class="card">
-    <div class="label">Total Active (Installments + Bills)</div>
-    <div class="total" id="hero-total">Loading…</div>
-    <div class="sub" id="hero-meta"></div>
+  <div id="notices" style="width:100%;display:flex;flex-direction:column;align-items:center"></div>
+
+  <div class="tabs" role="tablist">
+    <button role="tab" data-tab="cycle" aria-selected="true">This cycle</button>
+    <button role="tab" data-tab="commitments" aria-selected="false">Commitments</button>
+    <button role="tab" data-tab="outlook" aria-selected="false">Outlook</button>
   </div>
 
-  <div class="card wide">
-    <div class="label">Active Installments</div>
-    <div class="section-total" id="installments-total">Loading…</div>
-    <div class="section-meta" id="installments-meta"></div>
-    <div id="months-list">Loading…</div>
-    <div class="no-end" id="no-end"></div>
-  </div>
+  <!-- This cycle: only money leaving a cash account before payroll. -->
+  <section class="panel" id="panel-cycle">
+    <div class="card">
+      <div class="label" id="hero-label">Left to pay before payroll</div>
+      <div class="total" id="hero-total">Loading…</div>
+      <div class="hero-due" id="hero-meta"></div>
+    </div>
+    <div class="card wide">
+      <div class="card-sub">Cash bills and card statements. Subscriptions and cicilan on a card are inside its statement.</div>
+      <ul class="rows" id="cycle-list"><li class="empty">Loading…</li></ul>
+    </div>
+  </section>
 
-  <div class="card wide">
-    <div class="label">Recurring Bills (active)</div>
-    <div class="section-total" id="bills-total">Loading…</div>
-    <ul class="item-list" id="bills-list"></ul>
-  </div>
+  <!-- Commitments: what you're signed up for, by how it's paid. -->
+  <section class="panel" id="panel-commitments" hidden>
+    <div id="commitments"></div>
+  </section>
+
+  <!-- Outlook: when it gets lighter. -->
+  <section class="panel" id="panel-outlook" hidden>
+    <div class="card wide">
+      <div class="card-title"><span class="t" id="committed-title">Committed each month</span></div>
+      <div class="card-sub">Bills and installments from the registry, this month and the next 12.</div>
+      <div id="committed"><div class="empty">Loading…</div></div>
+    </div>
+    <div class="card wide">
+      <div class="card-title"><span class="t">Ending soon</span></div>
+      <div class="card-sub">Why the bars drop: what ends, and what it frees from the month after.</div>
+      <ul class="rows" id="drop-off"><li class="empty">Loading…</li></ul>
+    </div>
+  </section>
 
   <button class="refresh" onclick="load()">Refresh</button>
 
@@ -194,90 +257,180 @@
     KeyboardNav.mount();
   </script>
   <script>
+    // Debt Exit plan WS3. Everything comes from one request,
+    // /api/installments-summary?action=page (rules in api/_lib/bills-page.js).
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const STATUS_LABEL = {
+      paid: 'Paid', 'due-soon': 'Due soon', late: 'Late', upcoming: 'Upcoming',
+      open: 'Open', billed: 'Unpaid', none: 'Nothing owed', charged: 'Charged', expected: 'Expected',
+    };
+    const TABS = ['cycle', 'commitments', 'outlook'];
+
     function formatIDR(value) {
-      return new Intl.NumberFormat('id-ID', {
-        style: 'currency',
-        currency: 'IDR',
-        maximumFractionDigits: 0,
-      }).format(value);
+      return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(value || 0);
+    }
+    function esc(str) {
+      return String(str == null ? '' : str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+    // dd/mm and "Dec 2026", built from the strings so no time zone shifts them.
+    function dm(isoDate) {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate || '');
+      return m ? `${m[3]}/${m[2]}` : '';
+    }
+    function dayMonth(isoDate) {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDate || '');
+      return m ? `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]}` : '';
+    }
+    function monthLabel(ym) {
+      const m = /^(\d{4})-(\d{2})$/.exec(ym || '');
+      return m ? `${MONTHS[Number(m[2]) - 1]} ${m[1]}` : '';
+    }
+    function pill(status) {
+      return `<span class="pill ${esc(status)}">${esc(STATUS_LABEL[status] || status)}</span>`;
+    }
+    function installmentMeta(i) {
+      return i.installment ? `${i.installment}/${i.totalMonths || '?'}` : '';
     }
 
-    function renderMonths(monthsData) {
-      const monthsEl = document.getElementById('months-list');
-      const noEndEl = document.getElementById('no-end');
+    // ── Tabs (remembered in the URL hash) ──────────────────────────────────
+    function showTab(name) {
+      if (!TABS.includes(name)) name = 'cycle';
+      document.querySelectorAll('.tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === name)));
+      TABS.forEach((t) => { document.getElementById(`panel-${t}`).hidden = t !== name; });
+      if (location.hash !== `#${name}`) history.replaceState(null, '', `#${name}`);
+    }
+    document.querySelectorAll('.tabs button').forEach((b) => b.addEventListener('click', () => showTab(b.dataset.tab)));
+    showTab(location.hash.slice(1));
 
-      if (!monthsData.months.length) {
-        monthsEl.innerHTML = '<div class="sub">No active installments with an end date.</div>';
+    // ── This cycle ─────────────────────────────────────────────────────────
+    function statementContents(items) {
+      if (!items || !items.length) return '';
+      const total = items.reduce((s, i) => s + i.amount, 0);
+      return `<details class="inside"><summary>${items.length} bill(s) on this statement · ${esc(formatIDR(total))}</summary>
+        <ul class="sub-rows">${items.map((i) => {
+          const meta = [`charged ${dm(i.chargeDate)}`, installmentMeta(i)].filter(Boolean).join(' · ');
+          const flag = i.mismatch ? ` · actual ${formatIDR(i.paidAmount)}, registry differs` : '';
+          return `<li><span>${esc(i.name)}<div class="meta">${esc(meta + flag)}</div></span><span class="right">${formatIDR(i.amount)}<br>${pill(i.status)}</span></li>`;
+        }).join('')}</ul></details>`;
+    }
+
+    function cycleRow(i) {
+      const flags = [];
+      let meta;
+      let shown;
+      if (i.type === 'statement') {
+        meta = [`${monthLabel(i.statementMonth)} statement`, i.dueDate ? `due ${dm(i.dueDate)}` : 'no due day set'].join(' · ');
+        if (i.status !== 'paid' && i.paidAmount) flags.push(`${formatIDR(i.paidAmount)} of ${formatIDR(i.amount)} paid so far`);
+        shown = i.status === 'paid' ? i.amount : i.remaining;
       } else {
-        monthsEl.innerHTML = monthsData.months.map((m) => `
-          <details class="month-row">
-            <summary>
-              <span>
-                <span class="month-name">${m.label}</span>
-                <span class="month-count">(${m.count})</span>
-              </span>
-              <span class="month-amount">${formatIDR(m.amountEnding)}</span>
-            </summary>
-            <div class="month-detail">
-              <div class="remaining">Remaining after: ${formatIDR(m.remainingAfter)}</div>
-              <ul class="item-list">
-                ${m.items.map((i) => `<li><span>${i.name}</span><span>${formatIDR(i.amount)}</span></li>`).join('')}
-              </ul>
-            </div>
-          </details>
-        `).join('');
+        meta = [i.sof, `due ${dm(i.dueDate)}`, installmentMeta(i)].filter(Boolean).join(' · ');
+        if (i.mismatch) flags.push(`Paid ${formatIDR(i.paidAmount)}, registry says ${formatIDR(i.amount)}`);
+        if (i.awaitingConfirm) flags.push('Auto-inserted row is waiting for you to confirm it');
+        shown = i.amount;
       }
-
-      noEndEl.textContent = (monthsData.noEndDate && monthsData.noEndDate.count > 0)
-        ? `+ ${monthsData.noEndDate.count} active item(s) with no end date (${formatIDR(monthsData.noEndDate.amount)}) not shown above.`
-        : '';
+      return `<li class="${i.status === 'paid' ? 'done' : ''}">
+        <div class="row">
+          <div><div class="name">${esc(i.name)}</div><div class="meta">${esc(meta)}</div>${flags.map((f) => `<div class="flag">${esc(f)}</div>`).join('')}</div>
+          <div class="right"><div class="amt">${formatIDR(shown)}</div>${pill(i.status)}</div>
+        </div>
+        ${i.type === 'statement' ? statementContents(i.contents) : ''}
+      </li>`;
     }
 
-    function renderBills(billsData) {
-      const totalEl = document.getElementById('bills-total');
-      const listEl = document.getElementById('bills-list');
-      totalEl.textContent = formatIDR(billsData.total);
-      listEl.innerHTML = billsData.count
-        ? billsData.items.map((i) => `<li><span>${i.name}</span><span>${formatIDR(i.amount)}</span></li>`).join('')
-        : '<li><span class="sub">No active bills.</span></li>';
+    function renderCycle(c) {
+      document.getElementById('hero-label').textContent = `Left to pay before ${dayMonth(c.payroll)}`;
+      document.getElementById('hero-total').textContent = formatIDR(c.leftToPay);
+      const bits = [`${c.unpaidCount} to pay`];
+      if (c.lateCount) bits.push(`${c.lateCount} late`);
+      if (c.paidCount) bits.push(`${c.paidCount} paid`);
+      document.getElementById('hero-meta').textContent = `${bits.join(' · ')} · cycle ${dm(c.start)}–${dm(c.payroll)}`;
+      const el = document.getElementById('cycle-list');
+      if (!c.items.length) { el.innerHTML = '<li class="empty">Nothing due this cycle.</li>'; return; }
+      const open = c.items.filter((i) => i.status !== 'paid');
+      const done = c.items.filter((i) => i.status === 'paid');
+      el.innerHTML = open.map(cycleRow).join('')
+        + (done.length ? `<li class="divider">Paid</li>${done.map(cycleRow).join('')}` : '');
+    }
+
+    // ── Commitments ────────────────────────────────────────────────────────
+    function commitmentRow(i) {
+      const meta = [i.dayOfMonth ? `day ${i.dayOfMonth}` : 'no day set', installmentMeta(i),
+        i.endsMonth ? `ends ${monthLabel(i.endsMonth)}` : '',
+        i.remainingTotal !== null && i.remainingTotal !== undefined ? `${formatIDR(i.remainingTotal)} left` : ''].filter(Boolean).join(' · ');
+      return `<li><div class="row"><div><div class="name">${esc(i.name)}</div><div class="meta">${esc(i.kind)} · ${esc(meta)}</div></div>
+        <div class="right"><div class="amt">${formatIDR(i.amount)}</div></div></div></li>`;
+    }
+
+    function statementHistory(list) {
+      if (!list.length) return '';
+      return `<details class="inside"><summary>Recent statements</summary><ul class="sub-rows">${list.map((s) => {
+        const meta = [s.status === 'open' ? `closes ${dm(s.closeDate)}` : `closed ${dm(s.closeDate)}`, s.dueDate ? `due ${dm(s.dueDate)}` : '',
+          s.paid ? `paid ${formatIDR(s.paid)}` : ''].filter(Boolean).join(' · ');
+        return `<li><span>${esc(monthLabel(s.month))}<div class="meta">${esc(meta)}</div></span><span class="right">${formatIDR(s.amount)}<br>${pill(s.isLate ? 'late' : s.status)}</span></li>`;
+      }).join('')}</ul></details>`;
+    }
+
+    function renderCommitments(c) {
+      const cash = `<div class="card wide">
+        <div class="card-title"><span class="t">From cash</span><span class="s">${formatIDR(c.fromCashMonthly)}/mo</span></div>
+        <div class="card-sub">Paid from your bank accounts each month.</div>
+        <ul class="rows">${c.fromCash.length ? c.fromCash.map(commitmentRow).join('') : '<li class="empty">None.</li>'}</ul>
+      </div>`;
+      const cards = c.onCards.map((card) => `<div class="card wide">
+        <div class="card-title"><span class="t">${esc(card.card)}</span><span class="s">${formatIDR(card.monthly)}/mo</span></div>
+        <div class="card-sub">Charged to this card${card.statementDueDay ? `, statement due on the ${card.statementDueDay}` : ''}. Paid when you pay the statement.</div>
+        <ul class="rows">${card.items.length ? card.items.map(commitmentRow).join('') : '<li class="empty">No bills or cicilan on this card.</li>'}</ul>
+        ${statementHistory(card.statements)}
+      </div>`).join('');
+      document.getElementById('commitments').innerHTML = cash + cards;
+    }
+
+    // ── Outlook ────────────────────────────────────────────────────────────
+    function renderOutlook(o, salarySet) {
+      document.getElementById('committed-title').textContent = salarySet ? 'Committed as % of salary' : 'Committed each month';
+      const max = Math.max(1, ...o.committed.map((m) => (salarySet ? m.pctOfSalary : m.total) || 0));
+      document.getElementById('committed').innerHTML = o.committed.map((m) => {
+        const v = salarySet ? m.pctOfSalary : m.total;
+        const width = Math.max(0, Math.min(100, (salarySet ? v : (v / max) * 100) || 0));
+        const label = salarySet ? `${v.toFixed(1)}%` : formatIDR(v);
+        return `<div class="bar-row" title="${esc(formatIDR(m.total))}"><span class="m">${esc(monthLabel(m.month))}</span><span class="bar-track"><span class="bar-fill" style="width:${width}%"></span></span><span class="v">${esc(label)}</span></div>`;
+      }).join('');
+      const el = document.getElementById('drop-off');
+      if (!o.dropOff.length) { el.innerHTML = '<li class="empty">Nothing with an end date.</li>'; return; }
+      el.innerHTML = o.dropOff.map((g) => {
+        const freed = salarySet && g.pctOfSalary !== null ? `${formatIDR(g.amount)} (${g.pctOfSalary.toFixed(1)}%)` : formatIDR(g.amount);
+        return `<li><div class="row">
+          <div><div class="name">From ${esc(monthLabel(g.freedFrom))}</div><div class="meta">${esc(g.items.map((i) => i.name).join(', '))} · last payment ${esc(monthLabel(g.endsMonth))}</div></div>
+          <div class="right"><div class="amt">−${esc(freed)}</div><div class="meta">${formatIDR(g.freedTotal)}/mo freed so far</div></div>
+        </div></li>`;
+      }).join('');
+    }
+
+    function renderNotices(p) {
+      const parts = [];
+      if (p.needsAttention && p.needsAttention.length) {
+        parts.push(`<details class="notice"><summary>${p.needsAttention.length} row(s) in installmentsbills need a fix before they show up properly</summary>
+          <ul>${p.needsAttention.map((r) => `<li><b>${esc(r.name)}</b>${r.id ? ` (${esc(r.id)})` : ''}: ${esc(r.reasons.join('; '))}</li>`).join('')}</ul></details>`);
+      }
+      if (!p.salarySet) parts.push('<div class="notice">Set monthly_salary_rp in the Settings tab to see commitments as % of salary.</div>');
+      document.getElementById('notices').innerHTML = parts.join('');
     }
 
     async function load() {
       const heroTotalEl = document.getElementById('hero-total');
       const heroMetaEl = document.getElementById('hero-meta');
-      const instTotalEl = document.getElementById('installments-total');
-      const instMetaEl = document.getElementById('installments-meta');
-
       heroTotalEl.textContent = 'Loading…';
       heroMetaEl.textContent = '';
-      instTotalEl.textContent = 'Loading…';
-      instMetaEl.textContent = '';
-      document.getElementById('months-list').textContent = 'Loading…';
-      document.getElementById('bills-total').textContent = 'Loading…';
-      document.getElementById('bills-list').innerHTML = '';
-
       try {
-        const [installments, bills, byMonth] = await Promise.all([
-          fetch('/api/installments-summary').then((r) => r.json()),
-          fetch('/api/bills-summary').then((r) => r.json()),
-          fetch('/api/installments-by-end-month').then((r) => r.json()),
-        ]);
-
-        const firstError = installments.error || bills.error || byMonth.error;
-        if (firstError) throw new Error(firstError);
-
-        const heroTotal = installments.total + bills.total;
-        heroTotalEl.textContent = formatIDR(heroTotal);
-        heroMetaEl.textContent = `${installments.activeCount} installments + ${bills.count} bills · updated ${new Date().toLocaleTimeString()}`;
-
-        instTotalEl.textContent = formatIDR(installments.total);
-        instMetaEl.textContent = `${installments.activeCount} active installments`;
-
-        renderMonths(byMonth);
-        renderBills(bills);
+        const p = await fetch('/api/installments-summary?action=page').then((r) => r.json());
+        if (p.error) throw new Error(p.error);
+        renderNotices(p);
+        renderCycle(p.cycle);
+        renderCommitments(p.commitments);
+        renderOutlook(p.outlook, p.salarySet);
       } catch (err) {
         heroTotalEl.textContent = '—';
-        heroMetaEl.innerHTML = `<span class="error">${err.message}</span>`;
+        heroMetaEl.innerHTML = `<span class="error">${esc(err.message)}</span>`;
       }
     }
 
