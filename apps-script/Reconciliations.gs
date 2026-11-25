@@ -72,7 +72,6 @@ function onOpen() {
     .createMenu('Finances')
     .addItem('Reconcile Account…', 'reconcileAccount')
     .addItem('Undo Last Reconciliation…', 'undoLastReconciliation')
-    .addItem('Log Credit Card Payment…', 'logCreditCardPayment')
     .addItem('Copy Installments & Bills to Transactions…', 'copyInstallmentsBillsToTransactions')
     .addItem('Set Up Daily Auto-Copy…', 'setupDailyTrigger')
     .addItem('Remove Daily Auto-Copy…', 'removeDailyTrigger')
