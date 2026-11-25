@@ -46,7 +46,9 @@
   cursor: pointer;
 }
 .knd-chip:hover { color: var(--text, #e5e7eb); }
-.knd-chip[aria-pressed="true"] { color: var(--text, #e5e7eb); border-color: var(--text, #e5e7eb); }
+/* Multi-select: any number of chips can be on; none on = all rows. The
+   tint makes "on" readable even for grey Variable. */
+.knd-chip[aria-pressed="true"] { color: var(--text, #e5e7eb); border-color: var(--text, #e5e7eb); background: rgba(255,255,255,0.07); }
 .knd-chip-variable[aria-pressed="true"] { color: var(--text, #e5e7eb); border-color: var(--muted, #9ca3af); }
 .knd-chip-transfer[aria-pressed="true"] { color: #7dd3fc; border-color: #7dd3fc; }
 .knd-chip-fixed[aria-pressed="true"]    { color: #2dd4bf; border-color: #2dd4bf; }

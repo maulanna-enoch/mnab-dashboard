@@ -11,9 +11,11 @@
  *                                   the row has no Kind, e.g. old API data)
  *   KindUI.describe(txn)         -> { kind, why, counts } plain-text lines
  *                                   for titles / the form
- *   KindUI.filterChipsHTML(id)   -> the All / Variable / Fixed / Transfer /
- *                                   Income chip row, plus KindUI.wireFilter()
- *   KindUI.matches(txn, filter)  -> does this row pass the chip filter
+ *   KindUI.filterChipsHTML(id)   -> the Variable / Fixed / Transfer / Income
+ *                                   chip row, plus KindUI.wireFilter()
+ *   KindUI.matches(txn, kinds)   -> does this row pass the chip filter
+ *                                   (kinds: array of picked Kinds; empty =
+ *                                   every row)
  *   KindUI.bulkAction            -> the "Set kind" entry for BulkSelect's
  *                                   `actions` (a `choices` action, see
  *                                   shared/bulk-actions.js)
@@ -68,46 +70,58 @@
     return `<span class="knd-badge knd-${d.kind.toLowerCase()}" title="${escapeHtml(title)}">${d.kind}${mark}</span>`;
   }
 
-  // '' = all kinds.
-  function matches(txn, filter) {
-    if (!filter) return true;
-    return kindOf(txn) === filter;
+  // kinds: array of picked Kinds. Nothing picked = every row.
+  function matches(txn, kinds) {
+    if (!kinds || !kinds.length) return true;
+    return kinds.includes(kindOf(txn));
   }
 
+  // Turns a ?kind= value ("Variable,Fixed") into a clean, ordered array.
+  function parseKinds(raw) {
+    const picked = String(raw || '').split(',').map((s) => s.trim());
+    return KINDS.filter((k) => picked.includes(k));
+  }
+
+  // Multi-select: each chip toggles on its own; none on = show everything.
   function filterChipsHTML(id) {
-    const chips = [{ value: '', label: 'All' }].concat(KINDS.map((k) => ({ value: k, label: k })));
-    return `<div class="knd-filter" id="${id}" role="group" aria-label="Filter by kind">` +
-      chips.map((c) => `<button type="button" class="knd-chip${c.value ? ' knd-chip-' + c.value.toLowerCase() : ''}" data-kind-filter="${c.value}" aria-pressed="${c.value === '' ? 'true' : 'false'}">${c.label}</button>`).join('') +
+    return `<div class="knd-filter" id="${id}" role="group" aria-label="Filter by kind (pick any; none = all)">` +
+      KINDS.map((k) => `<button type="button" class="knd-chip knd-chip-${k.toLowerCase()}" data-kind-filter="${k}" aria-pressed="false">${k}</button>`).join('') +
       '</div>';
   }
 
-  // Wires a chip row rendered by filterChipsHTML(). `onChange(value)` runs
-  // after the pressed state is updated. Returns a setter so the host can
-  // restore a saved value.
+  // Wires a chip row rendered by filterChipsHTML(). A tap toggles that chip;
+  // `onChange(kinds)` gets the picked Kinds in KINDS order (empty = all).
+  // Returns a setter so the host can restore a saved selection.
   function wireFilter(el, onChange) {
-    function set(value) {
+    function picked() {
+      return KINDS.filter((k) => {
+        const b = el.querySelector(`[data-kind-filter="${k}"]`);
+        return b && b.getAttribute('aria-pressed') === 'true';
+      });
+    }
+    function set(kinds) {
+      const want = kinds || [];
       el.querySelectorAll('[data-kind-filter]').forEach((b) => {
-        b.setAttribute('aria-pressed', b.dataset.kindFilter === value ? 'true' : 'false');
+        b.setAttribute('aria-pressed', want.includes(b.dataset.kindFilter) ? 'true' : 'false');
       });
     }
     el.addEventListener('click', (e) => {
       const btn = e.target.closest('[data-kind-filter]');
       if (!btn) return;
-      set(btn.dataset.kindFilter);
-      onChange(btn.dataset.kindFilter);
+      btn.setAttribute('aria-pressed', btn.getAttribute('aria-pressed') === 'true' ? 'false' : 'true');
+      onChange(picked());
     });
     return set;
   }
 
   // Counts per Kind for the chip labels ("Variable 12").
   function updateCounts(el, list) {
-    const counts = { '': list.length };
+    const counts = {};
     KINDS.forEach((k) => { counts[k] = 0; });
     list.forEach((t) => { const k = kindOf(t); if (k) counts[k] += 1; });
     el.querySelectorAll('[data-kind-filter]').forEach((b) => {
       const v = b.dataset.kindFilter;
-      const label = v || 'All';
-      b.innerHTML = `${label} <span class="knd-chip-count">${counts[v] || 0}</span>`;
+      b.innerHTML = `${v} <span class="knd-chip-count">${counts[v] || 0}</span>`;
     });
   }
 
@@ -149,6 +163,7 @@
     describe,
     badge,
     matches,
+    parseKinds,
     filterChipsHTML,
     wireFilter,
     updateCounts,

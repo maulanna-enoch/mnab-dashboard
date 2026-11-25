@@ -675,12 +675,10 @@
     // issue #49. ?pending=1 opens the page already filtered to rows awaiting
     // review -- it's where a new-transaction push notification lands.
     let showPendingOnly = new URLSearchParams(location.search).get('pending') === '1';
-    // Kind filter ('' = all). Starts from ?kind= so a link (e.g. from Home's
-    // weekly budget) can open just the Variable rows.
-    let kindFilter = (() => {
-      const k = new URLSearchParams(location.search).get('kind') || '';
-      return KindUI.KINDS.includes(k) ? k : '';
-    })();
+    // Kind filter: the picked Kinds, multi-select (empty = all rows).
+    // Starts from ?kind=Variable or ?kind=Variable,Fixed so a link (e.g.
+    // from Home's weekly budget) can open just those rows.
+    let kindFilter = KindUI.parseKinds(new URLSearchParams(location.search).get('kind'));
 
     const upcomingToggleEl = document.getElementById('upcoming-toggle');
     const upcomingSwitchEl = document.getElementById('upcoming-switch');
@@ -690,7 +688,7 @@
       kindFilter = value;
       // Keep the URL in step so a reload / shared link keeps the filter.
       const params = new URLSearchParams(location.search);
-      if (value) params.set('kind', value); else params.delete('kind');
+      if (value.length) params.set('kind', value.join(',')); else params.delete('kind');
       const qs = params.toString();
       history.replaceState(null, '', location.pathname + (qs ? '?' + qs : ''));
       renderList();
@@ -2393,8 +2391,8 @@
       }
 
       if (!visible.length) {
-        listEl.innerHTML = kindFilter
-          ? `<div class="sub">No ${kindFilter} transactions here.</div>`
+        listEl.innerHTML = kindFilter.length
+          ? `<div class="sub">No ${kindFilter.join(' / ')} transactions here.</div>`
           : '<div class="sub">No transactions yet. Tap + to add one.</div>';
         return;
       }
