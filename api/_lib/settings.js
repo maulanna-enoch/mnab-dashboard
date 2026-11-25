@@ -26,6 +26,7 @@ const SETTINGS_SCHEMA = {
   rollover_cap_rp: { type: 'rupiah', default: null, description: 'Max carried over, in Rp (blank = no cap)' },
   monthly_salary_rp: { type: 'rupiah', default: null, description: 'Monthly salary, in Rp' },
   hole_start_date: { type: 'date', default: null, description: 'Date the Steals hole is counted from' },
+  budget_start_date: { type: 'date', default: null, optional: true, description: 'First day the weekly budget counts from; rollover starts that week (blank = oldest week shown)' },
 };
 
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -125,7 +126,7 @@ function parseSettings(rows) {
   }
 
   Object.keys(SETTINGS_SCHEMA).forEach((k) => {
-    if (values[k] === null && k !== 'rollover_cap_rp') warnings.push(`${k} is not set.`);
+    if (values[k] === null && k !== 'rollover_cap_rp' && !SETTINGS_SCHEMA[k].optional) warnings.push(`${k} is not set.`);
   });
 
   values.week_start_index = WEEKDAYS.indexOf(values.week_start_day);

@@ -11,10 +11,18 @@
 //
 // GET ?action=settings        -> the Settings tab, typed and defaulted
 //                                (see api/_lib/settings.js). Lives here
-//                                because the 12-function cap is full and the
-//                                weekly budget (?action=week) will too.
-const { fetchDiaryRows, fetchSettings, monthLabel } = require('./_lib/sheets');
+//                                because the 12-function cap is full.
+//
+// GET ?action=week            -> the weekly budget (Debt Exit WS4): this
+//                                week's Variable spending, allowance +
+//                                rollover, what's left, a per-day hint and
+//                                the last 12 weeks. Rules in api/_lib/week.js.
+//     &date=YYYY-MM-DD        -> as of that day instead of today (Jakarta)
+//     &weeks=N                -> N weeks of history (default 12, max 104)
+//     &transactions=0         -> leave out this week's transaction list
+const { fetchDiaryRows, fetchSettings, fetchClassifiedTransactionRows, monthLabel } = require('./_lib/sheets');
 const { SETTINGS_SCHEMA } = require('./_lib/settings');
+const { computeWeek } = require('./_lib/week');
 
 async function actionMonths(res) {
   const rows = await fetchDiaryRows();
@@ -39,10 +47,41 @@ async function actionSettings(res) {
   res.status(200).json({ settings: values, warnings, tabFound, schema, updatedAt: new Date().toISOString() });
 }
 
+async function actionWeek(req, res) {
+  const q = req.query || {};
+  if (q.date && !/^\d{4}-\d{2}-\d{2}$/.test(String(q.date))) {
+    res.status(400).json({ error: 'Invalid "date" -- expected YYYY-MM-DD' });
+    return;
+  }
+  const [{ values, warnings: settingsWarnings }, rows] = await Promise.all([
+    fetchSettings(),
+    fetchClassifiedTransactionRows(),
+  ]);
+  let result;
+  try {
+    result = computeWeek(rows, values, {
+      asOf: q.date ? String(q.date) : undefined,
+      historyWeeks: q.weeks !== undefined ? parseInt(q.weeks, 10) : undefined,
+      includeTransactions: q.transactions !== '0',
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+    return;
+  }
+  // Same freshness as transactions-list: a new swipe should show at once.
+  res.setHeader('Cache-Control', 'no-store');
+  res.status(200).json({
+    ...result,
+    settingsWarnings,
+    updatedAt: new Date().toISOString(),
+  });
+}
+
 module.exports = async (req, res) => {
   try {
     if (req.query && req.query.action === 'months') return await actionMonths(res);
     if (req.query && req.query.action === 'settings') return await actionSettings(res);
+    if (req.query && req.query.action === 'week') return await actionWeek(req, res);
 
     const month = (req.query && req.query.month) || '';
     if (!month) {

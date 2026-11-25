@@ -115,9 +115,11 @@ mnab-dashboard/
   api/_lib/sheets.js                  Shared: read/write clients, row parsing + classification, buildTransactionRow
   api/_lib/settings.js                Settings tab keys, defaults and value parsing (see "Settings tab" below)
   api/_lib/kinds.js                   Fixed / Variable / Transfer / Income rules (see "Fixed / variable" below)
+  api/_lib/week.js                    Weekly budget engine (see "Weekly budget" below)
   api/cashflow-summary.js             Income/Paid/Budgeted/Left-to-spend for a given ?month=YYYY-MM;
                                       ?action=months lists the Diary months for the dropdown
                                       ?action=settings returns the Settings tab (typed, with defaults)
+                                      ?action=week returns the weekly budget (allowance, left, history)
   api/push.js                         Web Push: device subscriptions + the notify call EmailImport.gs makes
   api/installments-summary.js         Sum of active Installment amounts (excludes Bills);
                                       ?action=registry lists bills with their IB-n IDs
@@ -156,6 +158,7 @@ Rows are read **by key**, so order doesn't matter and extra rows are ignored.
 | `rollover_cap_rp` | Max carried into next week, in Rp | blank = no cap |
 | `monthly_salary_rp` | Monthly salary, in Rp | not set |
 | `hole_start_date` | Date the Steals hole is counted from, `dd/mm/yyyy` | not set |
+| `budget_start_date` | First day of the weekly budget, `dd/mm/yyyy`; rollover counts from that week | blank = oldest week shown (optional) |
 
 Rupiah can be typed as a number or with `.` separators (`5.000.000`). A value
 that can't be read falls back to its default and shows up in `warnings` from
@@ -201,3 +204,28 @@ date, at the cost of tagging each row yourself.
 - New page entirely (e.g. net worth, budget vs. actual): a new folder under
   `public/` with its own `index.html`, plus a link added to `public/index.html`'s
   nav menu.
+
+## Weekly budget (`?action=week`)
+
+`GET /api/cashflow-summary?action=week` is the number that steers day-to-day
+spending. The rules live in `api/_lib/week.js`:
+
+- **The week** runs from `week_start_day` (Wednesday) to the day before the
+  next one. "Today" is the calendar date in Jakarta.
+- **What counts:** only transactions whose Kind is **Variable**, in the week
+  of their Date (card swipes on the day of the swipe). Pending and uncleared
+  rows count. The imported leg of a still-**Proposed** email-import match is
+  left out (so one purchase isn't counted twice) and listed in `excluded`.
+- **Rollover** (`rollover_enabled`): what's left carries into next week,
+  capped at `rollover_cap_rp` if set. Overspend reduces next week, but a week
+  never starts below 0. Rollover counts from `budget_start_date`'s week; set
+  it, or the start shifts with the history window (a warning says so).
+- The current `weekly_allowance_rp` is applied to every week shown.
+
+Query: `&date=YYYY-MM-DD` (as of another day), `&weeks=N` (history length,
+default 12), `&transactions=0` (leave out this week's list).
+
+Response: `week` (`start`, `end`, `allowance`, `carryIn`, `available`,
+`spent`, `left`, `daysLeft`, `perDay`, `transactions`), `history` (completed
+weeks, oldest first, each with `kept`), `streak` (weeks kept in a row),
+`excluded`, `warnings`. All amounts are whole rupiah.
