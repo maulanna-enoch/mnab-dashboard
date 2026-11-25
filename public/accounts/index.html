@@ -3177,7 +3177,7 @@
         const el = document.getElementById('pay-amount');
         el.value = formatAmountDisplay(digitsOnly(String(Math.round(data.amount))));
         resizePayAmountInput();
-        hintEl.textContent = `Pre-filled from ${currentAccount}'s Billed statement for ${monthStr}. Editable.`;
+        hintEl.textContent = `Pre-filled with what's left on ${currentAccount}'s ${monthStr} statement. Editable.`;
       } else {
         hintEl.textContent = ' ';
       }
@@ -3245,7 +3245,7 @@
       });
       paySetBusy(false);
       closePayCard();
-      const flipNote = r.diaryFlipped ? ` ${currentAccount}'s Diary bill for ${monthStr} was marked Paid.` : '';
+      const flipNote = r.statementPaid ? ` ${currentAccount}'s ${monthStr} statement is now paid.` : '';
       showAlert(`Payment logged on both ${currentAccount} and ${cashAccount}.${flipNote}`, 'Payment saved');
       openAccountDetail(currentAccount);
     } catch (err) {
@@ -3302,7 +3302,7 @@
     }
     try {
       const r = await apiPost('/api/reconcile', { action: 'undo-payment', paymentId: txn.paymentId });
-      const flipNote = r.diaryFlipped ? ' Its Diary bill was marked Billed again.' : '';
+      const flipNote = r.statementReopened ? ` The ${r.statement.card} ${r.statement.month} statement is unpaid again.` : '';
       const parts = [];
       if (r.deletedCount) parts.push(`Removed ${r.deletedCount} transaction(s).`);
       if (r.revertedCount) parts.push(`Turned ${r.revertedCount} original transaction(s) back into normal entries.`);

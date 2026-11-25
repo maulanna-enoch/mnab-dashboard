@@ -281,7 +281,8 @@
   // A cash/bank -> credit card conversion is a card payment (this replaces
   // the old "Convert to card payment" link): the Billing month field becomes
   // the card statement being paid (both legs get it, same as Add Payment),
-  // and the card's Diary line is marked Paid when the amount covers it.
+  // and that statement counts as Paid once its card payments cover it
+  // (worked out from transactions, see api/_lib/statements.js).
   function canConvertToTransfer() {
     const txn = state.editingTxn;
     if (!txn || !state.options.supportEditDelete) return false;
@@ -463,8 +464,9 @@
     state.transferHintEl.style.display = 'block';
   }
 
-  // Read-only: for a card payment, shows the card's Diary "Billed" amount
-  // for the statement month next to this row's amount, as a sanity check
+  // Read-only: for a card payment, shows what's still owed on the card's
+  // statement for that month (worked out from transactions, see
+  // api/_lib/statements.js) next to this row's amount, as a sanity check
   // that the right card/month is picked. Same endpoint the Add Payment form
   // pre-fills from. Guarded by a request token so a slow answer for a
   // previous pick is dropped.
@@ -484,19 +486,22 @@
       if (token !== billedRequestToken) return;
       if (data.error) throw new Error(data.error);
       if (!data.found) {
-        el.textContent = `No unpaid ${card} statement found for this month.`;
+        const st = data.statement;
+        if (st && st.status === 'open') el.textContent = `${card}'s ${month} statement is still open (closes ${formatDateDMY(st.closeDate)}).`;
+        else if (st && st.status === 'paid') el.textContent = `${card}'s ${month} statement is already paid.`;
+        else el.textContent = `Nothing owed on ${card}'s ${month} statement.`;
         return;
       }
       const paid = Number(digitsOnly(state.amountInput.value)) || 0;
       const diff = paid - data.amount;
       if (Math.abs(diff) < 0.5) {
-        el.textContent = `Statement billed ${formatRp(data.amount)} — matches, will be marked Paid.`;
+        el.textContent = `Statement has ${formatRp(data.amount)} to pay — matches, it'll count as Paid.`;
         el.classList.add('match');
       } else if (diff > 0) {
-        el.textContent = `Statement billed ${formatRp(data.amount)} — this is ${formatRp(diff)} more; it will be marked Paid.`;
+        el.textContent = `Statement has ${formatRp(data.amount)} to pay — this is ${formatRp(diff)} more; it'll count as Paid.`;
         el.classList.add('match');
       } else {
-        el.textContent = `Statement billed ${formatRp(data.amount)} — this is ${formatRp(diff)} short, so it stays Billed.`;
+        el.textContent = `Statement has ${formatRp(data.amount)} to pay — this is ${formatRp(-diff)} short, so it stays unpaid.`;
         el.classList.add('mismatch');
       }
     } catch (err) {
@@ -603,7 +608,7 @@
       if (data.error) throw new Error(data.error);
       close();
       showToast(data.cardPayment
-        ? (data.diaryFlipped ? 'Card payment saved · statement Paid' : 'Converted to card payment')
+        ? (data.statementPaid ? 'Card payment saved · statement Paid' : 'Converted to card payment')
         : (data.linked ? 'Linked as a transfer' : 'Converted to transfer'));
       if (typeof state.options.onSaved === 'function') state.options.onSaved(payload, true);
     } catch (e) {
@@ -1487,7 +1492,7 @@
 
     // Convert mode: the statement month follows the date until edited by
     // hand; amount/date edits re-query the other-half candidates and the
-    // Diary statement check.
+    // statement check.
     state.monthInput.addEventListener('input', () => {
       if (state.statementMonthApplied) state.statementMonthTouched = true;
       if (isConvertMode()) refreshBilledCheck();

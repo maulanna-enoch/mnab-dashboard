@@ -25,7 +25,7 @@ const {
   findTransferCandidates,
   tryFlipDiaryBilledToPaid,
   tryFlipDiaryPaidToBilled,
-  getDiaryBilledAmount,
+  getCardStatement,
   deletePaymentRows,
   shiftMonth,
   updateAccountLastReconciled,
@@ -42,6 +42,19 @@ const {
   round2,
   RECONCILE_SHEETS,
 } = require('./_lib/reconcile');
+const { statementsFor, STATUS_PAID, STATUS_BILLED, shiftMonthKey } = require('./_lib/statements');
+const { monthKey } = require('./_lib/sheets');
+
+// After a card payment is written or undone: the statement it belongs to,
+// worked out from transactions. Best-effort -- never fails the request.
+async function statementAfterWrite(sheets, cardAccount, month) {
+  try {
+    return await getCardStatement(sheets, { cardAccount, month });
+  } catch (err) {
+    console.error('Statement lookup after write failed (non-fatal):', err);
+    return null;
+  }
+}
 
 // Mirrors Reconcile.gs's rc_getSystemTotal. Read-only.
 async function actionCalculate(body, res) {
@@ -409,7 +422,14 @@ async function actionPayCard(body, res) {
     console.error('Diary Billed->Paid flip failed (non-fatal):', err);
   }
 
-  res.status(200).json({ ok: true, ...result, diaryFlipped: !!diaryFlip.flipped });
+  const statement = await statementAfterWrite(sheets, card.name, month);
+  res.status(200).json({
+    ok: true,
+    ...result,
+    diaryFlipped: !!diaryFlip.flipped,
+    statement,
+    statementPaid: !!statement && statement.status === STATUS_PAID,
+  });
 }
 
 // "Transfer" from the Add transaction sheet: moves money between any two of
@@ -609,6 +629,7 @@ async function actionConvertToTransfer(body, res) {
     }
   }
 
+  const statement = cardPayment ? await statementAfterWrite(sheets, to.name, month) : null;
   res.status(200).json({
     ok: true,
     ...result,
@@ -616,6 +637,8 @@ async function actionConvertToTransfer(body, res) {
     fromAccount: from.name,
     toAccount: to.name,
     diaryFlipped: !!diaryFlip.flipped,
+    statement,
+    statementPaid: !!statement && statement.status === STATUS_PAID,
   });
 }
 
@@ -689,14 +712,24 @@ async function actionUndoPayment(body, res) {
     }
   }
 
-  res.status(200).json({ deletedCount, revertedCount, diaryFlipped: !!diaryFlip.flipped });
+  const statement = cardAccount && month && !isTransferPaymentId(paymentId)
+    ? await statementAfterWrite(sheets, cardAccount, month)
+    : null;
+  res.status(200).json({
+    deletedCount,
+    revertedCount,
+    diaryFlipped: !!diaryFlip.flipped,
+    statement,
+    statementReopened: !!statement && statement.status === STATUS_BILLED,
+  });
 }
 
-// Read-only. Looks up the card's Diary "Billed" line for a given billing
-// month, so the Add Payment form can pre-fill the amount field with what's
-// actually owed instead of starting blank. See getDiaryBilledAmount's own
-// comment for why this stays a separate, non-writing lookup from the
-// pay-card action's own (write-triggering) Diary flip.
+// Read-only. The card's statement for a given month, worked out from
+// transactions (api/_lib/statements.js; no longer the Diary), so the Add
+// Payment form can pre-fill what's still owed and the Convert to card
+// payment check can compare against it. `found` means the statement has
+// closed and isn't covered yet; `amount` is what's left to pay. The full
+// statement comes back as `statement`.
 async function actionBilledAmount(query, res) {
   const cardAccount = query && query.cardAccount;
   const monthStr = query && query.month;
@@ -711,8 +744,45 @@ async function actionBilledAmount(query, res) {
   }
 
   const sheets = getSheetsClient();
-  const result = await getDiaryBilledAmount(sheets, { cardAccount, month });
-  res.status(200).json(result);
+  const statement = await getCardStatement(sheets, { cardAccount, month });
+  if (!statement) {
+    res.status(404).json({ error: `Account "${cardAccount}" not found.` });
+    return;
+  }
+  const found = statement.status === STATUS_BILLED && statement.remaining > 0.5;
+  res.status(200).json({ found, amount: found ? statement.remaining : 0, statement });
+}
+
+// Read-only. GET ?action=statements[&month=YYYY-MM][&months=N][&card=Name]
+// -- every credit card's statements, worked out from transactions, for N
+// months (default 3, max 24) ending at `month` (default: this Jakarta
+// month, i.e. the one still open). For the Bills page's Card statements
+// section (WS3). See api/_lib/statements.js for the rules.
+async function actionStatements(query, res) {
+  const q = query || {};
+  const today = todayWIBDate();
+  let toMonth = monthKey(today);
+  if (q.month) {
+    const m = parseISOMonth(q.month);
+    if (!m) {
+      res.status(400).json({ error: 'Invalid month: use YYYY-MM.' });
+      return;
+    }
+    toMonth = monthKey(m);
+  }
+  const months = q.months === undefined ? 3 : Number(q.months);
+  if (!Number.isInteger(months) || months < 1 || months > 24) {
+    res.status(400).json({ error: 'months must be a whole number from 1 to 24.' });
+    return;
+  }
+  const sheets = getSheetsClient();
+  const [{ accounts }, { rows }] = await Promise.all([
+    fetchAccountsForReconcile(sheets),
+    fetchTransactionsForReconcile(sheets),
+  ]);
+  const statements = statementsFor(rows, accounts, { toMonth, months, today, card: q.card || null });
+  res.setHeader('Cache-Control', 'no-store');
+  res.status(200).json({ toMonth, fromMonth: shiftMonthKey(toMonth, -(months - 1)), statements });
 }
 
 // Read-only. Returns one account's transactions (with reconciled status,
@@ -934,8 +1004,9 @@ module.exports = async (req, res) => {
       if (action === 'last') return await actionLast(req.query, res);
       if (action === 'detail') return await actionDetail(req.query, res);
       if (action === 'billed-amount') return await actionBilledAmount(req.query, res);
+      if (action === 'statements') return await actionStatements(req.query, res);
       if (action === 'transfer-candidates') return await actionTransferCandidates(req.query, res);
-      res.status(400).json({ error: 'Unknown or missing GET action. Use ?action=last, ?action=detail, ?action=billed-amount, or ?action=transfer-candidates.' });
+      res.status(400).json({ error: 'Unknown or missing GET action. Use ?action=last, ?action=detail, ?action=billed-amount, ?action=statements, or ?action=transfer-candidates.' });
       return;
     }
 
