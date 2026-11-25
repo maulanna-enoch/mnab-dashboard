@@ -110,6 +110,16 @@
         <div class="txf-transfer-hint" id="txf-transfer-hint" style="display:none;"></div>
         <div class="txf-billed-check" id="txf-billed-check"></div>
 
+        <div class="txf-kind-group" id="txf-kind-group" style="display:none;">
+          <div class="txf-bill-suggest" id="txf-bill-suggest" style="display:none;"></div>
+          <label class="txf-field-label">Kind</label>
+          <div class="txf-toggle-row txf-kind-toggle" id="txf-kind-toggle">
+            <button type="button" class="txf-toggle-btn" data-kind="Variable">Variable</button>
+            <button type="button" class="txf-toggle-btn" data-kind="Fixed">Fixed</button>
+          </div>
+          <div class="txf-kind-hint" id="txf-kind-hint"></div>
+        </div>
+
         <label class="txf-field-label">Notes (optional)</label>
         <input id="txf-f-notes" class="txf-field" type="text" placeholder="e.g. Aolion Knight Joycon" />
 
@@ -603,6 +613,172 @@
     }
   }
 
+  // ── Fixed / Variable (Debt Exit plan, WS1) ──────────────────────────────
+  // Expense rows only -- Income and Transfer are their own kinds. The server
+  // decides the stored Kind with the rules in api/_lib/kinds.js; this only
+  // previews them, so the toggle shows what will be saved:
+  //   - a hand-picked Kind (Kind Rule "manual") always shows as picked
+  //   - linked to a bill (Bill ID / Source ID, IB-n) or an "Auto-insert"
+  //     row -> Fixed
+  //   - the payee's Kind on the Payees tab -> that
+  //   - otherwise Variable, which is what the weekly allowance counts.
+  // A Kind is only sent when the person touched the toggle (kindTouched),
+  // and a Bill ID only when the link changed -- so an edit that never
+  // looks at either leaves the row's existing choice alone.
+  let billRegistry = []; // [{id, name, amount, isActive}] from ?action=registry
+
+  async function loadBillRegistry() {
+    try {
+      const res = await fetch('/api/installments-summary?action=registry');
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      billRegistry = data.bills || [];
+      if (state.overlay.classList.contains('open')) renderKind();
+    } catch (err) {
+      // Silent -- the suggestion is a nice-to-have; Fixed/Variable still works.
+    }
+  }
+
+  // Same matching as suggestBills() in api/_lib/kinds.js: the payee names
+  // the bill and the amount is within 1% or Rp 1.000.
+  function nameTokens(s) {
+    return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  }
+  function namesMatch(payee, billName) {
+    const p = nameTokens(payee);
+    const b = nameTokens(billName);
+    if (!p || !b) return false;
+    if (p === b) return true;
+    const shorter = p.length <= b.length ? p : b;
+    const longer = p.length <= b.length ? b : p;
+    if (shorter.length < 3) return false;
+    return (' ' + longer + ' ').includes(' ' + shorter + ' ');
+  }
+  function amountsClose(a, b) {
+    const x = Number(a);
+    const y = Number(b);
+    if (!(x > 0) || !(y > 0)) return false;
+    return Math.abs(x - y) <= Math.max(y * 0.01, 1000);
+  }
+  function suggestedBill() {
+    const payee = state.payeeEl.value.trim();
+    const amount = Number(digitsOnly(state.amountInput.value));
+    const hits = billRegistry
+      .filter((b) => b.id && b.isActive && !state.billDismissed.has(b.id) && namesMatch(payee, b.name) && amountsClose(amount, b.amount))
+      .sort((a, b) => Math.abs(a.amount - amount) - Math.abs(b.amount - amount));
+    return hits[0] || null;
+  }
+  function billById(id) {
+    return billRegistry.find((b) => b.id === id) || null;
+  }
+
+  function autoKind() {
+    if (state.billId) return { kind: 'Fixed', rule: 'bill' };
+    if (/^\s*auto-insert\b/i.test(state.notesEl.value)) return { kind: 'Fixed', rule: 'auto-insert' };
+    const key = state.payeeEl.value.trim().toLowerCase();
+    const p = key ? payeeCache.find((x) => x.name.trim().toLowerCase() === key) : null;
+    if (p && (p.kind === 'Fixed' || p.kind === 'Variable')) return { kind: p.kind, rule: 'payee' };
+    return { kind: 'Variable', rule: 'default' };
+  }
+  function effectiveKind() {
+    return state.kindManual ? { kind: state.kindChoice, rule: 'manual' } : autoKind();
+  }
+
+  function renderKind() {
+    if (!state || !state.kindGroup) return;
+    const show = getToggle('txf-type-toggle', 'type') === 'Expense';
+    state.kindGroup.style.display = show ? '' : 'none';
+    if (!show) return;
+    const eff = effectiveKind();
+    setToggle('txf-kind-toggle', 'kind', eff.kind);
+
+    // Bill link line: the linked bill (with Unlink), or a suggestion.
+    const linked = state.billId ? billById(state.billId) : null;
+    const suggestion = state.billId ? null : suggestedBill();
+    if (state.billId) {
+      const label = linked ? `<b>${escapeHtml(linked.name)}</b> (${escapeHtml(state.billId)})` : `<b>${escapeHtml(state.billId)}</b>`;
+      setHtml(state.billSuggestEl, `<span>Linked to bill ${label}</span><button type="button" class="txf-link-btn" data-bill-action="unlink">Unlink</button>`);
+      state.billSuggestEl.style.display = '';
+    } else if (suggestion) {
+      setHtml(state.billSuggestEl, `<span>Looks like bill <b>${escapeHtml(suggestion.name)}</b> (${escapeHtml(suggestion.id)})</span>` +
+        `<button type="button" class="txf-link-btn" data-bill-action="link" data-bill-id="${escapeHtml(suggestion.id)}">Link</button>` +
+        `<button type="button" class="txf-link-btn txf-link-btn-muted" data-bill-action="dismiss" data-bill-id="${escapeHtml(suggestion.id)}">Not this</button>`);
+      state.billSuggestEl.style.display = '';
+    } else {
+      setHtml(state.billSuggestEl, '');
+      state.billSuggestEl.style.display = 'none';
+    }
+
+    const counts = eff.kind === 'Variable' ? 'Counts toward the weekly allowance.' : 'Not counted in the weekly allowance.';
+    const why = {
+      manual: 'Set by you.',
+      bill: 'Fixed because it’s linked to a bill.',
+      'auto-insert': 'Fixed because it’s an auto-inserted bill row.',
+      payee: `Set by this payee’s Kind on the Payees page.`,
+      default: '',
+    }[eff.rule];
+    const reset = eff.rule === 'manual'
+      ? ' <button type="button" class="txf-link-btn" data-kind-action="auto">Use automatic</button>'
+      : '';
+    setHtml(state.kindHintEl, `${why ? why + ' ' : ''}${counts}${reset}`);
+  }
+
+  // Only rewrites when the markup changed. renderKind() runs on the payee
+  // field's 'change' (blur) -- which fires between pointerdown and click on
+  // a Link / Unlink button -- and replacing the button there would eat the
+  // tap.
+  function setHtml(el, html) {
+    if (el.dataset.html !== html) {
+      el.innerHTML = html;
+      el.dataset.html = html;
+    }
+  }
+
+  function onKindClick(e) {
+    const btn = e.target.closest('[data-kind]');
+    if (!btn) return;
+    state.kindManual = true;
+    state.kindTouched = true;
+    state.kindChoice = btn.dataset.kind;
+    renderKind();
+  }
+
+  function onKindHintClick(e) {
+    const btn = e.target.closest('[data-kind-action="auto"]');
+    if (!btn) return;
+    state.kindManual = false;
+    state.kindTouched = true;
+    renderKind();
+  }
+
+  function onBillSuggestClick(e) {
+    const btn = e.target.closest('[data-bill-action]');
+    if (!btn) return;
+    const action = btn.dataset.billAction;
+    if (action === 'link') {
+      state.billId = btn.dataset.billId;
+      // Linking a bill is the point of the tap: drop a hand-set Variable
+      // so the row reads Fixed (a manual Kind would outrank the link).
+      if (state.kindManual) { state.kindManual = false; state.kindTouched = true; }
+    } else if (action === 'unlink') {
+      state.billId = '';
+    } else if (action === 'dismiss') {
+      state.billDismissed.add(btn.dataset.billId);
+    }
+    renderKind();
+  }
+
+  // Adds kind / kindManual / billId to a save payload -- only the parts the
+  // person actually changed (see the section comment above).
+  function addKindToPayload(payload) {
+    if (payload.type !== 'Expense') return;
+    if (state.kindTouched) {
+      payload.kindManual = !!state.kindManual;
+      if (state.kindManual) payload.kind = state.kindChoice;
+    }
+    if (state.billId !== state.billIdOriginal) payload.billId = state.billId || '';
+  }
+
   // ── Transfer between two accounts ───────────────────────────────────────
   // The third Type option, offered on Add only. Moving money between two of
   // your own accounts is written as the same two-leg, Transfer=TRUE shape a
@@ -681,6 +857,7 @@
   // the second select picks the other side.
   function applyTypeMode() {
     const transfer = isTransferMode();
+    renderKind();
     const convert = transfer && isConvertMode();
     state.payeeGroup.style.display = transfer && !convert ? 'none' : '';
     state.transferToGroup.style.display = transfer ? '' : 'none';
@@ -813,6 +990,7 @@
       if (data.error) throw new Error(data.error);
       payeeCache = data.payees || [];
       renderPayeeOptions();
+      if (state.overlay.classList.contains('open')) renderKind(); // payee Kind overrides just arrived
     } catch (err) {
       // Silent -- autocomplete is a nice-to-have, not worth surfacing an error for.
     }
@@ -913,6 +1091,12 @@
     state.linkRow = null;
     state.pairDeclined = new Set();
     state.statementMonthApplied = false;
+    state.billDismissed = new Set();
+    state.kindTouched = false;
+    state.billId = isEditOpen && txn.billId ? txn.billId : '';
+    state.billIdOriginal = state.billId;
+    state.kindManual = !!(isEditOpen && txn.kindRule === 'manual' && (txn.kind === 'Fixed' || txn.kind === 'Variable'));
+    state.kindChoice = state.kindManual ? txn.kind : 'Variable';
     candidatesToken++;
     clearTimeout(candidatesTimer);
     if (isEditOpen) state.transferToEl.value = '';
@@ -988,6 +1172,7 @@
     applyTypeMode();
     updateAmountColor();
     resizeAmountInput();
+    renderKind();
 
     // Autofocus the amount field for a new transaction so typing the amount
     // can start immediately -- but not when editing an existing one, where
@@ -1031,7 +1216,7 @@
     if (existing) {
       if (hasCoords) { existing.lat = lat; existing.lon = lon; }
     } else {
-      payeeCache.push({ name: trimmedName, lat: hasCoords ? lat : null, lon: hasCoords ? lon : null });
+      payeeCache.push({ name: trimmedName, lat: hasCoords ? lat : null, lon: hasCoords ? lon : null, kind: null });
     }
   }
 
@@ -1063,6 +1248,8 @@
     } else {
       payload.updatePayeeLocation = false;
     }
+
+    addKindToPayload(payload);
 
     if (!payload.payee || !payload.sof || !payload.amount || !payload.date || !payload.month) {
       state.formError.textContent = 'Payee, account, amount, date, and month are required.';
@@ -1221,6 +1408,16 @@
       toMonthInput: rootEl.querySelector('#txf-f-to-month'),
       transferHintEl: rootEl.querySelector('#txf-transfer-hint'),
       toMonthTouched: false,
+      kindGroup: rootEl.querySelector('#txf-kind-group'),
+      kindToggle: rootEl.querySelector('#txf-kind-toggle'),
+      kindHintEl: rootEl.querySelector('#txf-kind-hint'),
+      billSuggestEl: rootEl.querySelector('#txf-bill-suggest'),
+      kindManual: false,
+      kindTouched: false,
+      kindChoice: 'Variable',
+      billId: '',
+      billIdOriginal: '',
+      billDismissed: new Set(),
     };
 
     if (options.showFab === false) {
@@ -1309,6 +1506,14 @@
       scheduleCandidates();
     });
 
+    state.kindToggle.addEventListener('click', onKindClick);
+    state.kindHintEl.addEventListener('click', onKindHintClick);
+    state.billSuggestEl.addEventListener('click', onBillSuggestClick);
+    // The preview depends on payee (override, bill match), amount (bill
+    // match) and notes ("Auto-insert").
+    [state.payeeEl, state.amountInput, state.notesEl].forEach((el) => el.addEventListener('input', renderKind));
+    state.payeeEl.addEventListener('change', renderKind);
+
     state.fab.addEventListener('click', () => open(null));
     state.sheetClose.addEventListener('click', close);
     state.overlay.addEventListener('click', (e) => { if (e.target === state.overlay) close(); });
@@ -1340,6 +1545,7 @@
 
     loadAccounts();
     loadPayees();
+    loadBillRegistry();
   }
 
   global.TransactionForm = { mount, open, close, todayISO, guessBillingMonth, isCashAccountType };

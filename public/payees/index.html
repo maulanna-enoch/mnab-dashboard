@@ -108,6 +108,16 @@
   .btn:disabled { opacity: 0.5; cursor: default; }
   .actions-row { display: flex; gap: 8px; margin-top: 16px; }
   .actions-row .btn { flex: 1; }
+  /* Kind override (WS1) */
+  .kind-row { display: flex; gap: 8px; }
+  .kind-btn {
+    flex: 1; padding: 8px; border-radius: 8px; border: 1px solid #374151;
+    background: var(--card); color: var(--muted); font-size: 13px; cursor: pointer;
+  }
+  .kind-btn.active { border-color: var(--accent); color: var(--text); }
+  .kind-btn:disabled { opacity: 0.5; cursor: default; }
+  .kind-tag { color: var(--text); }
+  .section-gap { margin-top: 20px; }
 </style>
 </head>
 <body>
@@ -126,6 +136,24 @@
 <div class="wrap" id="screen-detail" style="display:none;">
   <a class="back-link" onclick="gotoList()">← Payees</a>
   <h1 id="detail-title">Payee</h1>
+
+  <label class="field-label">Kind</label>
+  <div class="kind-row" id="kind-row">
+    <button type="button" class="kind-btn" data-kind="">Automatic</button>
+    <button type="button" class="kind-btn" data-kind="Fixed">Fixed</button>
+    <button type="button" class="kind-btn" data-kind="Variable">Variable</button>
+  </div>
+  <p class="hint">
+    Fixed = a bill or installment, kept out of the weekly allowance.
+    Variable = day-to-day spending, counted in it. Applies to every expense
+    with this payee, unless the transaction is linked to a bill or you set
+    its Kind on the transaction itself. Automatic = no override: expenses
+    count as Variable. Saves as soon as you tap. Past rows in the sheet
+    pick this up the next time you run Finances › Classify Transactions.
+  </p>
+  <div id="kind-error" class="error" style="display:none; margin-top:8px;"></div>
+
+  <div class="section-gap"></div>
 
   <label class="field-label">Latitude</label>
   <input type="text" inputmode="decimal" class="field" id="edit-lat" placeholder="e.g. -6.2088" />
@@ -198,7 +226,7 @@
         <div class="payee-row" data-name="${p.name}">
           <div>
             <div class="payee-name">${p.name}</div>
-            <div class="payee-status"><span class="payee-dot ${hasCoords ? 'set' : ''}"></span>${hasCoords ? 'Location set' : 'No location'}</div>
+            <div class="payee-status"><span class="payee-dot ${hasCoords ? 'set' : ''}"></span>${hasCoords ? 'Location set' : 'No location'}${p.kind ? ` · <span class="kind-tag">${p.kind}</span>` : ''}</div>
           </div>
           <div class="payee-coords">${coordsText}</div>
         </div>
@@ -234,7 +262,36 @@
     document.getElementById('edit-lat').value = currentPayee.lat != null ? currentPayee.lat : '';
     document.getElementById('edit-lon').value = currentPayee.lon != null ? currentPayee.lon : '';
     document.getElementById('detail-error').style.display = 'none';
+    document.getElementById('kind-error').style.display = 'none';
+    renderKind();
     goto('detail');
+  }
+  function renderKind() {
+    const k = (currentPayee && currentPayee.kind) || '';
+    document.querySelectorAll('#kind-row .kind-btn').forEach((b) => {
+      b.classList.toggle('active', b.dataset.kind === k);
+    });
+  }
+  async function setKind(kind) {
+    if (!currentPayee) return;
+    const errorEl = document.getElementById('kind-error');
+    errorEl.style.display = 'none';
+    const prev = currentPayee.kind || '';
+    if (kind === prev) return;
+    currentPayee.kind = kind || null;
+    renderKind();
+    const btns = document.querySelectorAll('#kind-row .kind-btn');
+    btns.forEach((b) => { b.disabled = true; });
+    try {
+      await apiPost('/api/payees-list', { action: 'set-kind', name: currentPayee.name, kind: kind || null });
+    } catch (err) {
+      currentPayee.kind = prev || null;
+      renderKind();
+      errorEl.textContent = err.message;
+      errorEl.style.display = 'block';
+    } finally {
+      btns.forEach((b) => { b.disabled = false; });
+    }
   }
 
   function setDetailBusy(busy) {
@@ -299,6 +356,10 @@
     }
   }
 
+  document.getElementById('kind-row').addEventListener('click', (e) => {
+    const b = e.target.closest('.kind-btn');
+    if (b) setKind(b.dataset.kind);
+  });
   document.getElementById('save-btn').addEventListener('click', saveDetail);
   document.getElementById('clear-btn').addEventListener('click', clearDetail);
   document.getElementById('backfill-btn').addEventListener('click', runBackfill);

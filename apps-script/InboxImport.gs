@@ -16,6 +16,9 @@
  *   Status            "Staged" -> "Imported" (written by this script)
  *   Payee, Income/Expense, SOF, Date, Month, Cleared, Amount, Transfer, Notes
  *                     copied into the same-named transactions columns
+ *   Kind, Bill ID     optional. Kind = Fixed / Variable is kept as a hand-set
+ *                     Kind; Bill ID (an IB-n code) goes into Source ID. With
+ *                     neither, Kind comes from the rules in Kinds.gs.
  *   Expense, Income, Total
  *                     review-only formulas in the inbox; recomputed here
  *                     from Amount and Income/Expense, never copied
@@ -46,7 +49,8 @@
  *     date or amount — e.g. an ID reused after the original row was deleted)
  *     is skipped and kept, so it can't vanish without reaching the ledger.
  *
- * Depends on headerIndexMap(), ensureColumn(), getAccountRows(),
+ * Depends on kinds_classify_() / kinds_payeeKinds_() from Kinds.gs, and on
+ * headerIndexMap(), ensureColumn(), getAccountRows(),
  * payeeHeaderName() and billingMonthForDate() from Reconcile.gs
  * (apps-script/Reconciliations.gs), so it must live in the same Apps Script
  * project. Wired to the Finances menu in that file's onOpen().
@@ -165,6 +169,10 @@ function inbox_import_(ui) {
 
   // ---- existing Inbox IDs already in transactions ----
   const idCol = ensureColumn(txnSheet, INBOX_CONFIG.idColumn);
+  ensureKindColumns_(txnSheet); // Kinds.gs
+  if ('Bill ID' in inCol) ensureColumn(txnSheet, BILL_ID_COLUMN_NAME);
+  resetKindsCache_();
+  const payeeKinds = kinds_payeeKinds_(ss);
   const txCol = headerIndexMap(txnSheet);
   const txLast = txnSheet.getLastRow();
   const existing = {};  // Inbox ID -> { row, sof, date, amount }
@@ -231,6 +239,8 @@ function inbox_import_(ui) {
         amount: Number(r[inCol['Amount']]),
         transfer: 'Transfer' in inCol && r[inCol['Transfer']] === true,
         notes: 'Notes' in inCol ? String(r[inCol['Notes']] || '') : '',
+        kind: 'Kind' in inCol ? String(r[inCol['Kind']] || '').trim() : '',
+        billId: 'Bill ID' in inCol ? String(r[inCol['Bill ID']] || '').trim().toUpperCase() : '',
       },
     });
   });
@@ -296,6 +306,13 @@ function inbox_import_(ui) {
     set('Total', expense - income);
     set('Notes', t.notes);
     if (t.transfer) set('Transfer', true);
+    const kind = kinds_classify_({
+      type: t.type, isTransfer: t.transfer, billId: t.billId, notes: t.notes, payee: t.payee,
+      storedKind: t.kind, storedRule: '', // a Kind staged in the inbox counts as hand-set
+    }, payeeKinds);
+    set(KIND_COLUMN_NAME, kind.kind);
+    set(KIND_RULE_COLUMN_NAME, kind.rule);
+    if (kinds_billId_(t.billId)) set(BILL_ID_COLUMN_NAME, kinds_billId_(t.billId));
     row[idCol] = w.id;
     return row;
   });

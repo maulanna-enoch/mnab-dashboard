@@ -1,5 +1,13 @@
 const { google } = require('googleapis');
 const { SETTINGS_RANGE, parseSettings } = require('./settings');
+const {
+  KIND_COLUMN,
+  KIND_RULE_COLUMN,
+  BILL_ID_COLUMN,
+  classifyKind,
+  payeeKindMap,
+  normalizeSpendingKind,
+} = require('./kinds');
 
 // Bills use a far-future placeholder end date (e.g. Dec 2099) in the sheet to
 // mean "recurring, doesn't really end" -- as opposed to Installments, which
@@ -88,16 +96,22 @@ async function fetchAccountRows() {
 async function fetchInstallmentRows() {
   const sheets = getSheetsClient();
 
-  // Columns: Name, SOF, Amount, is_active, Ends, Starts, Months, Remarks, day of month
+  // Columns: Name, SOF, Amount, is_active, Ends, Starts, Months, Remarks,
+  // day of month -- by position. Plus `ID` (the permanent IB-n code), which
+  // InstallmentsBills.gs self-provisions at the end, so it's found by header
+  // name: the read starts at row 1 for that and is widened past column I.
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId: process.env.SHEET_ID,
-    range: 'installmentsbills!A2:I',
+    range: 'installmentsbills!A1:Z',
     // Without this, Sheets returns the *displayed* text (e.g. "Rp 5.000.000"),
     // which parseFloat can't read. This returns the underlying raw number/boolean.
     valueRenderOption: 'UNFORMATTED_VALUE',
   });
 
-  const rows = response.data.values || [];
+  const all = response.data.values || [];
+  const headers = (all[0] || []).map((h) => String(h || '').trim());
+  const idIdx = headers.indexOf('ID');
+  const rows = all.slice(1);
 
   return rows.map((row) => {
     const name = row[0] || '(unnamed)';
@@ -112,8 +126,9 @@ async function fetchInstallmentRows() {
     const startsSerial = row[5];
     const startDate = typeof startsSerial === 'number' ? serialToDate(startsSerial) : null;
     const dayOfMonth = Number(row[8]) || null;
+    const id = idIdx >= 0 && row[idIdx] ? String(row[idIdx]).trim() : null;
 
-    return { name, sof, amount, isActive, hasEndDate, endDate, startDate, dayOfMonth, isBill };
+    return { id, name, sof, amount, isActive, hasEndDate, endDate, startDate, dayOfMonth, isBill };
   });
 }
 
@@ -232,15 +247,22 @@ async function fetchTransactionRows() {
   // fallback, defaults to "not a payment leg".
   const transferIdx = headerMap['Transfer'];
   const paymentIdIdx = headerMap['Payment ID'];
+  // WS1: Kind / Kind Rule (see api/_lib/kinds.js) and Source ID, the Bill
+  // ID InstallmentsBills.gs stamps on rows it inserts. Same fallback: a
+  // missing column reads as blank.
+  const kindIdx = headerMap[KIND_COLUMN];
+  const kindRuleIdx = headerMap[KIND_RULE_COLUMN];
+  const billIdIdx = headerMap[BILL_ID_COLUMN];
 
   // Columns: Payee, Income/Expense, SOF, Date, Month, Cleared, Amount,
   // Expense, Income, Total, Notes. rowNumber (1-based sheet row, accounting
   // for the header row) is included so edit/delete endpoints know which row
   // to target. Widened from A2:K to A2:Z so self-provisioned trailing
-  // columns like Pending are actually within the fetched range.
+  // columns like Pending are actually within the fetched range, then to
+  // A2:AZ once WS1's Kind columns pushed the header row past column W.
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: 'transactions!A2:Z',
+    range: 'transactions!A2:AZ',
     valueRenderOption: 'UNFORMATTED_VALUE',
   });
 
@@ -269,6 +291,7 @@ async function fetchTransactionRows() {
     const matchStatusRaw = matchStatusIdx !== undefined ? row[matchStatusIdx] : undefined;
     const transferRaw = transferIdx !== undefined ? row[transferIdx] : undefined;
     const paymentIdRaw = paymentIdIdx !== undefined ? row[paymentIdIdx] : undefined;
+    const cell = (idx) => (idx !== undefined && row[idx] !== undefined && row[idx] !== null ? String(row[idx]).trim() : '');
 
     result.push({
       rowNumber: i + 2,
@@ -287,10 +310,90 @@ async function fetchTransactionRows() {
       matchStatus: matchStatusRaw ? String(matchStatusRaw).trim() : null,
       isTransfer: transferRaw === true || transferRaw === 'TRUE' || transferRaw === 'true',
       paymentId: paymentIdRaw ? String(paymentIdRaw).trim() : null,
+      storedKind: cell(kindIdx) || null,
+      storedKindRule: cell(kindRuleIdx) || null,
+      billId: cell(billIdIdx) || null,
     });
   });
 
   return result;
+}
+
+// Adds the effective `kind` / `kindRule` to rows from fetchTransactionRows()
+// (see api/_lib/kinds.js). `payeeKinds` comes from payeeKindMap().
+function classifyTransactionRow(r, payeeKinds) {
+  return classifyKind({
+    type: r.type,
+    isTransfer: r.isTransfer,
+    billId: r.billId,
+    notes: r.notes,
+    payee: r.payee,
+    storedKind: r.storedKind,
+    storedRule: r.storedKindRule,
+  }, payeeKinds);
+}
+
+// fetchTransactionRows() plus each row's effective Kind -- what every
+// fixed/variable consumer (the weekly budget, WS4 onwards) should read.
+// One extra small read for the Payees tab's Kind overrides.
+async function fetchClassifiedTransactionRows() {
+  const [rows, payees] = await Promise.all([fetchTransactionRows(), fetchPayeeRows()]);
+  const payeeKinds = payeeKindMap(payees);
+  rows.forEach((r) => {
+    const { kind, rule } = classifyTransactionRow(r, payeeKinds);
+    r.kind = kind;
+    r.kindRule = rule;
+  });
+  return rows;
+}
+
+// Makes sure every header in `names` exists on the transactions tab,
+// appending missing ones at the end (adding grid columns if the tab is
+// full). Same self-provisioning pattern as getOrCreateTransactionsColumn in
+// api/_lib/reconcile.js. Returns the updated header map.
+async function ensureTransactionsColumns(sheets, headerMap, names) {
+  const missing = names.filter((n) => headerMap[n] === undefined);
+  if (!missing.length) return headerMap;
+  const spreadsheetId = process.env.SHEET_ID;
+  const map = { ...headerMap };
+  let next = Object.keys(map).length ? Math.max(...Object.values(map)) + 1 : 0;
+  const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties' });
+  const tab = (meta.data.sheets || []).find((t) => t.properties.title === 'transactions');
+  if (!tab) throw new Error('Sheet "transactions" not found');
+  const have = (tab.properties.gridProperties && tab.properties.gridProperties.columnCount) || 0;
+  const need = next + missing.length;
+  if (have < need) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: { requests: [{ appendDimension: { sheetId: tab.properties.sheetId, dimension: 'COLUMNS', length: need - have } }] },
+    });
+  }
+  const data = missing.map((name) => {
+    map[name] = next;
+    return { range: `transactions!${columnLetter(next++)}1`, values: [[name]] };
+  });
+  await sheets.spreadsheets.values.batchUpdate({ spreadsheetId, requestBody: { valueInputOption: 'RAW', data } });
+  return map;
+}
+
+// Writes Kind / Kind Rule (and, when `billId` is not undefined, Source ID
+// -- '' clears it) onto one transactions row. Provisions the columns first.
+async function writeTransactionKind(sheets, headerMap, rowNumber, { kind, rule, billId }) {
+  const names = [KIND_COLUMN, KIND_RULE_COLUMN];
+  if (billId !== undefined) names.push(BILL_ID_COLUMN);
+  const map = await ensureTransactionsColumns(sheets, headerMap, names);
+  const data = [
+    { range: `transactions!${columnLetter(map[KIND_COLUMN])}${rowNumber}`, values: [[kind]] },
+    { range: `transactions!${columnLetter(map[KIND_RULE_COLUMN])}${rowNumber}`, values: [[rule]] },
+  ];
+  if (billId !== undefined) {
+    data.push({ range: `transactions!${columnLetter(map[BILL_ID_COLUMN])}${rowNumber}`, values: [[billId || '']] });
+  }
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId: process.env.SHEET_ID,
+    requestBody: { valueInputOption: 'RAW', data },
+  });
+  return map;
 }
 
 // Builds a full A:K row array for the `transactions` tab. Expense/Income/
@@ -313,8 +416,11 @@ function buildTransactionRow({ payee, type, sof, dateSerial, monthSerial, cleare
 // fact in an unpredictable order (see MNAB-project-state.md).
 //
 // Columns: Payee, Lat, Lon, Updated At (Updated At is an audit trail for
-// coordinate edits only -- it's never read back for logic).
-const PAYEES_RANGE = 'Payees!A2:D';
+// coordinate edits only -- it's never read back for logic), and Kind (WS1):
+// an optional Fixed / Variable override for every transaction with this
+// payee -- see api/_lib/kinds.js. Blank = no override.
+const PAYEES_RANGE = 'Payees!A2:E';
+const PAYEES_KIND_HEADER_CELL = 'Payees!E1';
 
 function normalizePayeeName(name) {
   return String(name || '').trim().toLowerCase();
@@ -344,6 +450,7 @@ async function fetchPayeeRows(sheetsClient) {
       lat: Number.isFinite(lat) ? lat : null,
       lon: Number.isFinite(lon) ? lon : null,
       updatedAt: row[3] || '',
+      kind: normalizeSpendingKind(row[4]),
     });
   });
   return result;
@@ -393,6 +500,38 @@ async function upsertPayee(writeSheetsClient, { name, lat, lon }) {
   });
 }
 
+// Payees page "Kind" picker (WS1): sets or clears (kind = null) one payee's
+// Fixed / Variable override, adding the payee row if it isn't there yet and
+// the `Kind` header in E1 the first time.
+async function setPayeeKind(writeSheetsClient, name, kind) {
+  const trimmedName = String(name || '').trim();
+  if (!trimmedName) return;
+  const value = normalizeSpendingKind(kind) || '';
+  const spreadsheetId = process.env.SHEET_ID;
+  const header = await writeSheetsClient.spreadsheets.values.get({ spreadsheetId, range: PAYEES_KIND_HEADER_CELL });
+  if (!((header.data.values || [])[0] || [])[0]) {
+    await writeSheetsClient.spreadsheets.values.update({
+      spreadsheetId,
+      range: PAYEES_KIND_HEADER_CELL,
+      valueInputOption: 'RAW',
+      requestBody: { values: [['Kind']] },
+    });
+  }
+  let existing = findPayeeRow(await fetchPayeeRows(writeSheetsClient), trimmedName);
+  if (!existing) {
+    if (!value) return; // nothing to clear on a payee that doesn't exist
+    await upsertPayee(writeSheetsClient, { name: trimmedName });
+    existing = findPayeeRow(await fetchPayeeRows(writeSheetsClient), trimmedName);
+    if (!existing) throw new Error(`Couldn't add payee "${trimmedName}"`);
+  }
+  await writeSheetsClient.spreadsheets.values.update({
+    spreadsheetId,
+    range: `Payees!E${existing.rowNumber}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[value]] },
+  });
+}
+
 // Manual "Clear location" action on the Payees page. No-op if the payee
 // has no row at all (nothing to clear).
 async function clearPayeeCoords(writeSheetsClient, name) {
@@ -434,11 +573,16 @@ module.exports = {
   fetchDiaryRows,
   fetchAccountRows,
   fetchTransactionRows,
+  fetchClassifiedTransactionRows,
+  classifyTransactionRow,
+  ensureTransactionsColumns,
+  writeTransactionKind,
   buildTransactionRow,
   fetchPayeeRows,
   findPayeeRow,
   upsertPayee,
   clearPayeeCoords,
+  setPayeeKind,
   normalizePayeeName,
   getSheetsClient,
   getWriteSheetsClient,

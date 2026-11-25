@@ -83,6 +83,7 @@ function onOpen() {
     .addItem('Set Up Steals from the Future…', 'setupSteals')
     .addItem('Set Up Payee Rules…', 'setupPayeeRules')
     .addItem('Apply Payee Rules to Pending Rows…', 'applyPayeeRulesToPendingRows')
+    .addItem('Classify Transactions (Fixed / Variable)…', 'classifyTransactionHistory')
     .addToUi();
 }
 

@@ -1,4 +1,47 @@
-const { getWriteSheetsClient, buildTransactionRow, dateToSerial, getHeaderMap, columnLetter, upsertPayee, getSheetGridId } = require('./_lib/sheets');
+const {
+  getWriteSheetsClient,
+  buildTransactionRow,
+  dateToSerial,
+  getHeaderMap,
+  columnLetter,
+  upsertPayee,
+  getSheetGridId,
+  fetchPayeeRows,
+  writeTransactionKind,
+} = require('./_lib/sheets');
+const { kindForSave, payeeKindMap, normalizeBillId, KIND_COLUMN, KIND_RULE_COLUMN, BILL_ID_COLUMN } = require('./_lib/kinds');
+
+// WS1: re-derives and writes Kind / Kind Rule (and Source ID, when the
+// request links or unlinks a bill) for a row that was just saved. Reads the
+// row's current Transfer / Kind / Source ID first, so a hand-set Kind or a
+// bill link survives the many edit paths that never mention them (inline
+// cell edits, swipe-to-clear, bulk actions).
+async function rewriteKind(sheets, spreadsheetId, headerMap, rowNumber, row, body) {
+  const resp = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: `transactions!A${rowNumber}:AZ${rowNumber}`,
+    valueRenderOption: 'UNFORMATTED_VALUE',
+  });
+  const current = (resp.data.values && resp.data.values[0]) || [];
+  const cell = (name) => {
+    const idx = headerMap[name];
+    const v = idx === undefined ? '' : current[idx];
+    return v === undefined || v === null ? '' : v;
+  };
+  const transferRaw = cell('Transfer');
+  const isTransfer = transferRaw === true || transferRaw === 'TRUE' || transferRaw === 'true';
+  const linkRequested = Object.prototype.hasOwnProperty.call(body, 'billId');
+  const billId = linkRequested ? (normalizeBillId(body.billId) || '') : String(cell(BILL_ID_COLUMN)).trim();
+  const payeeKinds = payeeKindMap(await fetchPayeeRows(sheets));
+  const result = kindForSave(
+    { type: row[1], isTransfer, billId, notes: row[10], payee: row[0] },
+    { kind: body.kind, kindManual: body.kindManual },
+    { storedKind: String(cell(KIND_COLUMN)).trim(), storedRule: String(cell(KIND_RULE_COLUMN)).trim() },
+    payeeKinds,
+  );
+  await writeTransactionKind(sheets, headerMap, rowNumber, { ...result, billId: linkRequested ? billId : undefined });
+  return result;
+}
 
 // Issue #51: finds every row on `transactions` currently stamped with
 // `matchId` (self-provisioned "Match ID"/"Match Status" columns -- see
@@ -9,7 +52,7 @@ async function findMatchRows(sheets, spreadsheetId, headerMap, matchId) {
   const matchIdCol = headerMap['Match ID'];
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: 'transactions!A2:Z',
+    range: 'transactions!A2:AZ',
     valueRenderOption: 'UNFORMATTED_VALUE',
   });
   const values = response.data.values || [];
@@ -239,7 +282,15 @@ module.exports = async (req, res) => {
       console.error('Payee registry upsert failed (non-fatal):', payeeErr);
     }
 
-    res.status(200).json({ ok: true, updatedAt: new Date().toISOString() });
+    // WS1 Kind -- best-effort, same as the payee upsert above.
+    let kindResult = null;
+    try {
+      kindResult = await rewriteKind(sheets, spreadsheetId, headerMap, rowNumber, row, req.body || {});
+    } catch (kindErr) {
+      console.error('Kind write failed (non-fatal):', kindErr);
+    }
+
+    res.status(200).json({ ok: true, kind: kindResult && kindResult.kind, kindRule: kindResult && kindResult.rule, updatedAt: new Date().toISOString() });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
