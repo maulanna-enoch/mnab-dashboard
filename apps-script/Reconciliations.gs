@@ -77,6 +77,7 @@ function onOpen() {
     .addItem('Copy Installments & Bills to Transactions…', 'copyInstallmentsBillsToTransactions')
     .addItem('Set Up Daily Auto-Copy…', 'setupDailyTrigger')
     .addItem('Remove Daily Auto-Copy…', 'removeDailyTrigger')
+    .addItem('Set Up Bill Kinds…', 'setupBillKinds')
     .addItem('Import Approved Rows from Inbox…', 'importFromInbox')
     .addItem('Set Up Inbox Auto-Import…', 'setupInboxAutoImport')
     .addItem('Remove Inbox Auto-Import…', 'removeInboxAutoImport')

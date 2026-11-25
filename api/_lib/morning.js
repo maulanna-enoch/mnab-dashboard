@@ -11,6 +11,7 @@
 // toISOString() on a local-time Date (see the timezone gotcha in the
 // project docs).
 const { formatRupiah } = require('./push');
+const { activeInMonth, monthOf } = require('./bills');
 
 const JAKARTA_OFFSET_MS = 7 * 60 * 60 * 1000;
 const PAYROLL_DAY = 25; // same as PAYROLL_DAY in public/index.html
@@ -41,9 +42,9 @@ function sameDay(a, b) {
 
 // Bills and installments due on `today`. Mirrors the rules
 // InstallmentsBills.gs uses when it copies rows into `transactions`:
-// active rows only; due day clamped to the month's length; an installment
-// (Ends before year 2099) only between the month it Starts and the month it
-// Ends. Rows come from fetchInstallmentRows(), whose dates are already
+// active rows only; due day clamped to the month's length; only in months
+// between Starts and Ends (activeInMonth in ./bills -- since WS2 this holds
+// for bills too, not just installments). Rows come from fetchInstallmentRows(), whose dates are already
 // UTC-midnight serial conversions.
 function billsDueOn(rows, today) {
   const y = today.getUTCFullYear();
@@ -52,11 +53,7 @@ function billsDueOn(rows, today) {
     if (!r.isActive || !r.dayOfMonth) return false;
     const day = Math.max(1, Math.min(r.dayOfMonth, 31));
     if (!sameDay(clampedDay(y, m, day), today)) return false;
-    if (r.isBill) return true;
-    if (!r.startDate || !r.endDate) return false;
-    const from = utcDay(r.startDate.getUTCFullYear(), r.startDate.getUTCMonth(), 1);
-    const to = utcDay(r.endDate.getUTCFullYear(), r.endDate.getUTCMonth() + 1, 0);
-    return today >= from && today <= to;
+    return activeInMonth(r, monthOf(today));
   });
 }
 

@@ -59,10 +59,10 @@
  *                     the sheet's "Months" column) by counting calendar
  *                     months from Starts through the computed Date and
  *                     through Ends respectively. Just "Auto-insert" (no
- *                     number) for evergreen bills (Ends >= year 2099, the
- *                     same convention BILL_YEAR_THRESHOLD uses elsewhere
- *                     in this sheet) -- they don't have an installment
- *                     count to show.
+ *                     number) for bills (Kind Cash bill / Card bill, or a
+ *                     blank Kind with Ends >= year 2099 -- see KIND
+ *                     below) -- they don't have an installment count to
+ *                     show.
  *   Source ID      <- the installmentsbills row's ID (e.g. "IB-3"). This
  *                     column is self-provisioned on `transactions` too,
  *                     appended at the end so it doesn't disturb existing
@@ -130,6 +130,22 @@
  * one there to show it to (this is the bug that would otherwise silently
  * kill the daily trigger).
  *
+ * KIND (Debt Exit plan WS2): a self-provisioned "Kind" column on
+ * installmentsbills says what each row is -- "Cash bill" (paid from a cash
+ * account), "Card bill" (charged to a credit card) or "Installment"
+ * (cicilan, numbered NN/MM). Finances > Set Up Bill Kinds… adds the column
+ * with a dropdown and pre-fills blank cells (see setupBillKinds below).
+ * A blank Kind falls back to the old rule: Ends in 2099+ -> bill, anything
+ * else -> installment. The same rule lives in api/_lib/bills.js; change
+ * both together.
+ *
+ * STARTS / ENDS FOR BILLS: since WS2, Starts and Ends are honoured for
+ * bills too, not just installments. A bill whose Ends has passed, or a row
+ * whose Starts is still in the future (e.g. a price increase entered as its
+ * own row), is skipped with a log line. Leave Starts blank for "since
+ * forever" and Ends blank (or in 2099+) for "no end". Bills are never
+ * numbered.
+ *
  * SETUP:
  * 1. Extensions > Apps Script > add a new file (the + next to Files) named
  *    "InstallmentsBills", paste this in.
@@ -156,6 +172,10 @@ const INSTALLMENTS_CONFIG = {
   ID_PREFIX: 'IB-',
   SOURCE_ID_COLUMN_NAME: 'Source ID', // self-provisioned on transactions
   PENDING_COLUMN_NAME: 'Pending', // self-provisioned on transactions -- same column EmailImport.gs uses
+  KIND_COLUMN_NAME: 'Kind',       // self-provisioned on installmentsbills (WS2) by setupBillKinds()
+  KIND_CASH_BILL: 'Cash bill',
+  KIND_CARD_BILL: 'Card bill',
+  KIND_INSTALLMENT: 'Installment',
 
   // installmentsbills column positions (1-indexed) -- unrelated to ID,
   // which is looked up by header name since it's appended dynamically.
@@ -222,6 +242,13 @@ function runInstallmentsBillsCopy_(triggerType) {
   backfillSourceIds_(sourceSheet, idCol, lastRow);
   const idValues = sourceSheet.getRange(2, idCol + 1, lastRow - 1, 1).getValues().map((r) => r[0]);
 
+  // ---- installmentsbills: Kind (WS2) -- optional, read if present ----
+  const sourceCols = headerIndexMap(sourceSheet); // from Reconcile.gs
+  const kindCol = INSTALLMENTS_CONFIG.KIND_COLUMN_NAME in sourceCols ? sourceCols[INSTALLMENTS_CONFIG.KIND_COLUMN_NAME] : -1;
+  const kindValues = kindCol >= 0
+    ? sourceSheet.getRange(2, kindCol + 1, lastRow - 1, 1).getValues().map((r) => r[0])
+    : [];
+
   // ---- transactions: ensure the Source ID and Pending columns exist ----
   ensureColumn(txnSheet, INSTALLMENTS_CONFIG.SOURCE_ID_COLUMN_NAME); // from Reconcile.gs
   ensureColumn(txnSheet, INSTALLMENTS_CONFIG.PENDING_COLUMN_NAME); // from Reconcile.gs -- same self-provisioned column EmailImport.gs uses
@@ -260,7 +287,9 @@ function runInstallmentsBillsCopy_(triggerType) {
 
     const endDate = endsRaw instanceof Date ? endsRaw : null;
     const startDate = startsRaw instanceof Date ? startsRaw : null;
-    const isBill = !!endDate && endDate.getFullYear() >= INSTALLMENTS_CONFIG.BILL_YEAR_THRESHOLD;
+    const kind = resolveBillKind_(kindValues[i], endDate);
+    const isBill = kind !== INSTALLMENTS_CONFIG.KIND_INSTALLMENT;
+    const hasRealEnd = !!endDate && endDate.getFullYear() < INSTALLMENTS_CONFIG.BILL_YEAR_THRESHOLD;
 
     // ---- Date: day-of-month, first occurrence on or after today ----
     const day = Math.max(1, Math.min(Number(dayOfMonth) || 1, 31));
@@ -302,9 +331,19 @@ function runInstallmentsBillsCopy_(triggerType) {
       return;
     }
 
-    // ---- installment numbering (skip for bills -- they're evergreen) ----
+    // ---- installment numbering (skip for bills -- they're never numbered) ----
     let notes = 'Auto-insert';
-    if (!isBill) {
+    if (isBill) {
+      // WS2: a bill only runs between Starts and Ends when they're set.
+      if (startDate && date < startOfMonth(startDate)) {
+        skipped.push(name + ' -- bill starts ' + formatDate(startDate) + ', not yet due (' + formatDate(date) + ').');
+        return;
+      }
+      if (hasRealEnd && date > endOfMonth(endDate)) {
+        skipped.push(name + ' -- bill ended ' + formatDate(endDate) + '; set is_active to FALSE to stop seeing this.');
+        return;
+      }
+    } else {
       if (!startDate || !endDate) {
         skipped.push(name + ' -- missing Starts/Ends, can\'t compute installment number.');
         return;
@@ -487,3 +526,93 @@ function monthDiff(a, b) {
 }
 
 function pad2(n) { return String(n).padStart(2, '0'); }
+
+/**
+ * Canonical Kind for a raw installmentsbills Kind cell, falling back to the
+ * old Ends-year rule when it's blank or unrecognised. Mirrors
+ * normalizeBillKind/resolveKind in api/_lib/bills.js.
+ */
+function resolveBillKind_(raw, endDate) {
+  const s = String(raw || '').trim().toLowerCase().replace(/\s+/g, ' ').replace(/s$/, '');
+  if (s === 'cash bill' || s === 'cash') return INSTALLMENTS_CONFIG.KIND_CASH_BILL;
+  if (s === 'card bill' || s === 'card') return INSTALLMENTS_CONFIG.KIND_CARD_BILL;
+  if (s === 'installment' || s === 'instalment' || s === 'cicilan') return INSTALLMENTS_CONFIG.KIND_INSTALLMENT;
+  const openEnded = endDate instanceof Date && endDate.getFullYear() >= INSTALLMENTS_CONFIG.BILL_YEAR_THRESHOLD;
+  return openEnded ? 'Bill' : INSTALLMENTS_CONFIG.KIND_INSTALLMENT;
+}
+
+/**
+ * Menu entry point: Finances > Set Up Bill Kinds… (WS2). Safe to rerun.
+ *   1. Adds the "Kind" column to installmentsbills if it's missing.
+ *   2. Puts a Cash bill / Card bill / Installment dropdown on it.
+ *   3. Pre-fills BLANK Kind cells only -- a Kind you've set is never
+ *      changed: Ends blank or in 2099+ -> "Card bill" if the SOF is a
+ *      credit card account (Accounts Type contains "credit"), else
+ *      "Cash bill"; a real Ends date -> "Installment".
+ * Shows what it would fill and asks before writing. Check the result:
+ * a bill with a real end date (one that stops) gets pre-filled as an
+ * Installment here, so switch those to Cash bill / Card bill by hand.
+ */
+function setupBillKinds() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+  const sheet = ss.getSheetByName(INSTALLMENTS_CONFIG.SOURCE_SHEET_NAME);
+  if (!sheet) {
+    ui.alert('Couldn\'t find a sheet named "' + INSTALLMENTS_CONFIG.SOURCE_SHEET_NAME + '".');
+    return;
+  }
+
+  const kindCol = ensureColumn(sheet, INSTALLMENTS_CONFIG.KIND_COLUMN_NAME); // from Reconcile.gs, 0-based
+  const lastRow = sheet.getLastRow();
+  const kinds = [INSTALLMENTS_CONFIG.KIND_CASH_BILL, INSTALLMENTS_CONFIG.KIND_CARD_BILL, INSTALLMENTS_CONFIG.KIND_INSTALLMENT];
+  const rule = SpreadsheetApp.newDataValidation().requireValueInList(kinds, true).setAllowInvalid(false).build();
+  sheet.getRange(2, kindCol + 1, Math.max(sheet.getMaxRows() - 1, 1), 1).setDataValidation(rule);
+  if (lastRow < 2) {
+    ui.alert('Kind column is ready. No rows to fill yet.');
+    return;
+  }
+
+  // SOF -> is it a credit card? From the Accounts tab.
+  const creditSof = new Set();
+  const accountsSheet = ss.getSheetByName(RECONCILE_CONFIG.accountsSheet); // from Reconcile.gs
+  if (accountsSheet) {
+    getAccountRows(accountsSheet).forEach((a) => {
+      if (String(a.type || '').toLowerCase().indexOf('credit') >= 0) creditSof.add(a.name.toLowerCase());
+    });
+  }
+
+  const values = sheet.getRange(2, 1, lastRow - 1, INSTALLMENTS_CONFIG.COL_DAY_OF_MONTH).getValues();
+  const kindRange = sheet.getRange(2, kindCol + 1, lastRow - 1, 1);
+  const kindValues = kindRange.getValues();
+  const counts = {};
+  let filled = 0;
+  const updated = kindValues.map((k, i) => {
+    const current = String(k[0] || '').trim();
+    const name = values[i][INSTALLMENTS_CONFIG.COL_NAME - 1];
+    if (current || !name) return [current];
+    const endsRaw = values[i][INSTALLMENTS_CONFIG.COL_ENDS - 1];
+    const sof = String(values[i][INSTALLMENTS_CONFIG.COL_SOF - 1] || '').trim().toLowerCase();
+    const openEnded = !(endsRaw instanceof Date) || endsRaw.getFullYear() >= INSTALLMENTS_CONFIG.BILL_YEAR_THRESHOLD;
+    const kind = !openEnded
+      ? INSTALLMENTS_CONFIG.KIND_INSTALLMENT
+      : (creditSof.has(sof) ? INSTALLMENTS_CONFIG.KIND_CARD_BILL : INSTALLMENTS_CONFIG.KIND_CASH_BILL);
+    counts[kind] = (counts[kind] || 0) + 1;
+    filled += 1;
+    return [kind];
+  });
+
+  if (!filled) {
+    ui.alert('Kind column is ready, and every row already has a Kind. Nothing changed.');
+    return;
+  }
+  const summary = Object.keys(counts).map((k) => counts[k] + ' × ' + k).join(', ');
+  const answer = ui.alert(
+    'Set Up Bill Kinds',
+    'Fill ' + filled + ' blank Kind cell(s): ' + summary + '.\n\n' +
+    'Rows with a real end date are filled as Installment. Change any bill that ends (but isn\'t a cicilan) to Cash bill or Card bill afterwards.\n\nContinue?',
+    ui.ButtonSet.YES_NO
+  );
+  if (answer !== ui.Button.YES) return;
+  kindRange.setValues(updated);
+  ui.alert('Filled ' + filled + ' Kind cell(s). Kinds you had already set were left alone.');
+}
