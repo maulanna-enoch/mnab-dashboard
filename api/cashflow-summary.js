@@ -20,9 +20,30 @@
 //     &date=YYYY-MM-DD        -> as of that day instead of today (Jakarta)
 //     &weeks=N                -> N weeks of history (default 12, max 104)
 //     &transactions=0         -> leave out this week's transaction list
-const { fetchDiaryRows, fetchSettings, fetchClassifiedTransactionRows, monthLabel } = require('./_lib/sheets');
+//
+// GET ?action=debt            -> the actual hole and debt projection (Debt
+//                                Exit WS6): the hole from the Steals log, the
+//                                Payoff-plan projection month by month, the
+//                                debt-free month and estimated date, the same
+//                                at your recent pace, and how far last week
+//                                moved it. Rules in api/_lib/debt.js.
+//     &date=YYYY-MM-DD        -> as of that day instead of today (Jakarta)
+//     &months=N               -> months projected (default 60, max 240)
+//     &pace=N                 -> weeks averaged for "at your pace" (default 4)
+//     &rows=0                 -> leave out the month-by-month table
+const {
+  fetchDiaryRows,
+  fetchSettings,
+  fetchClassifiedTransactionRows,
+  fetchStealsRows,
+  fetchInstallmentRows,
+  fetchAccountRows,
+  monthLabel,
+} = require('./_lib/sheets');
 const { SETTINGS_SCHEMA } = require('./_lib/settings');
-const { computeWeek } = require('./_lib/week');
+const { computeWeek, jakartaToday, isoFromDay } = require('./_lib/week');
+const { projectDebt } = require('./_lib/debt');
+const { KIND_CARD_BILL } = require('./_lib/bills');
 
 async function actionMonths(res) {
   const rows = await fetchDiaryRows();
@@ -77,11 +98,54 @@ async function actionWeek(req, res) {
   });
 }
 
+async function actionDebt(req, res) {
+  const q = req.query || {};
+  if (q.date && !/^\d{4}-\d{2}-\d{2}$/.test(String(q.date))) {
+    res.status(400).json({ error: 'Invalid "date" -- expected YYYY-MM-DD' });
+    return;
+  }
+  const [{ values, warnings: settingsWarnings }, stealsRows, billRows, accounts, txRows] = await Promise.all([
+    fetchSettings(),
+    fetchStealsRows(),
+    fetchInstallmentRows(),
+    fetchAccountRows(),
+    fetchClassifiedTransactionRows(),
+  ]);
+  const today = q.date ? String(q.date) : isoFromDay(jakartaToday());
+
+  // Paid by card: a Card bill, or anything whose SOF is a credit card
+  // account (same "type contains credit" test as everywhere else).
+  const creditNames = new Set(accounts
+    .filter((a) => String(a.type || '').toLowerCase().includes('credit'))
+    .map((a) => String(a.name).trim().toLowerCase()));
+  const isCardRow = (r) => r.kind === KIND_CARD_BILL || creditNames.has(String(r.sof || '').trim().toLowerCase());
+
+  let week = null;
+  try {
+    week = computeWeek(txRows, values, { asOf: today, includeTransactions: false });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+    return;
+  }
+
+  const result = projectDebt(
+    { settings: values, stealsRows, billRows, isCardRow, week, today },
+    {
+      months: q.months !== undefined ? parseInt(q.months, 10) : undefined,
+      paceWeeks: q.pace !== undefined ? parseInt(q.pace, 10) : undefined,
+      includeMonths: q.rows !== '0',
+    },
+  );
+  res.setHeader('Cache-Control', 'no-store');
+  res.status(200).json({ ...result, settingsWarnings, updatedAt: new Date().toISOString() });
+}
+
 module.exports = async (req, res) => {
   try {
     if (req.query && req.query.action === 'months') return await actionMonths(res);
     if (req.query && req.query.action === 'settings') return await actionSettings(res);
     if (req.query && req.query.action === 'week') return await actionWeek(req, res);
+    if (req.query && req.query.action === 'debt') return await actionDebt(req, res);
 
     const month = (req.query && req.query.month) || '';
     if (!month) {

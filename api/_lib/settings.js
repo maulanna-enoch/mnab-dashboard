@@ -27,6 +27,14 @@ const SETTINGS_SCHEMA = {
   monthly_salary_rp: { type: 'rupiah', default: null, description: 'Monthly salary, in Rp' },
   hole_start_date: { type: 'date', default: null, description: 'Date the Steals hole is counted from' },
   budget_start_date: { type: 'date', default: null, optional: true, description: 'First day the weekly budget counts from; rollover starts that week (blank = oldest week shown)' },
+  // Debt projection (WS6). Mirror the Claude Sheet's Assumptions tab.
+  hole_fee_pct: { type: 'percent', default: 0.01, max: 0.1, optional: true, description: 'Lender fee on the hole per 30 days, e.g. 1%' },
+  job_start_date: { type: 'date', default: null, optional: true, description: 'Start date at the current job (for the prorated THR)' },
+  thr_date: { type: 'date', default: null, optional: true, description: 'Date the THR is paid (blank = no THR in the projection)' },
+  thr_rp: { type: 'rupiah', default: null, optional: true, description: 'THR amount in Rp (blank = worked out from job_start_date and salary)' },
+  thr_share_pct: { type: 'percent', default: 1, max: 1, optional: true, description: 'Share of the THR put toward the hole, e.g. 100%' },
+  raise_pct: { type: 'percent', default: 0.02, max: 0.5, optional: true, description: 'Yearly raise, e.g. 2%' },
+  first_raise_date: { type: 'date', default: null, optional: true, description: 'When the first raise takes effect (blank = no raises in the projection)' },
 };
 
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -85,7 +93,28 @@ function parseDate(v) {
   return `${y}-${pad2(m)}-${pad2(d)}`;
 }
 
-const PARSERS = { rupiah: parseRupiah, weekday: parseWeekday, boolean: parseBoolean, date: parseDate };
+// A fraction (0.01 = 1%). Accepts a cell formatted as a percentage (Sheets
+// returns 0.01 for "1%"), text with a % sign ("1%", "1,5%", "2.5 %"), or a
+// bare number: up to 1 is read as a fraction, above 1 as percentage points
+// (so 2 = 2%, but 1 = 100% -- type "1%" for one percent). Negative -> invalid.
+function parsePercent(v) {
+  let n;
+  let isPoints = false;
+  if (typeof v === 'number') {
+    n = v;
+  } else {
+    let s = String(v).trim().replace(/\s+/g, '');
+    if (s.endsWith('%')) { isPoints = true; s = s.slice(0, -1); }
+    s = s.replace(',', '.');
+    if (!/^\d+(\.\d+)?$|^\.\d+$/.test(s)) return undefined;
+    n = Number(s);
+  }
+  if (!Number.isFinite(n) || n < 0) return undefined;
+  if (isPoints || n > 1) n /= 100;
+  return n;
+}
+
+const PARSERS = { rupiah: parseRupiah, weekday: parseWeekday, boolean: parseBoolean, date: parseDate, percent: parsePercent };
 
 function normalizeKey(k) {
   return String(k || '').trim().toLowerCase().replace(/[\s-]+/g, '_');
@@ -121,6 +150,10 @@ function parseSettings(rows) {
         warnings.push(`${key} (row ${rowNumber}): couldn't read "${raw}" as ${spec.type} -- using the default.`);
         return;
       }
+      if (typeof spec.max === 'number' && parsed > spec.max) {
+        warnings.push(`${key} (row ${rowNumber}): "${raw}" is more than ${spec.max * 100}% -- using the default.`);
+        return;
+      }
       values[key] = parsed;
     });
   }
@@ -143,4 +176,5 @@ module.exports = {
   parseWeekday,
   parseBoolean,
   parseDate,
+  parsePercent,
 };
