@@ -15,6 +15,10 @@
 // set (or, by omitting lat/lon, clear) one payee's stored coordinates.
 // Also how a payee with no transactions yet gets pre-seeded.
 //
+// POST action=set-kind: set or clear one payee's Fixed / Variable override
+// (WS1, the "payee rule" step of api/_lib/kinds.js), stored in the Payees
+// tab's Kind column.
+//
 // POST action=backfill: seeds `Payees` (existence-only, no coordinates)
 // from every distinct payee name already in `transactions` history. Needed
 // once after this feature ships, since `Payees` starts empty -- without it
@@ -28,13 +32,15 @@ const {
   fetchPayeeRows,
   upsertPayee,
   clearPayeeCoords,
+  setPayeeKind,
 } = require('./_lib/sheets');
+const { normalizeSpendingKind } = require('./_lib/kinds');
 
 async function actionList(res) {
   const sheets = getSheetsClient();
   const rows = await fetchPayeeRows(sheets);
   const payees = rows
-    .map((r) => ({ name: r.name, lat: r.lat, lon: r.lon }))
+    .map((r) => ({ name: r.name, lat: r.lat, lon: r.lon, kind: r.kind }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
   res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate');
@@ -70,6 +76,25 @@ async function actionSetCoords(body, res) {
 
   await upsertPayee(sheets, { name, lat: numLat, lon: numLon });
   res.status(200).json({ ok: true, cleared: false });
+}
+
+// POST action=set-kind (WS1): a payee's Fixed / Variable override, used by
+// every transaction with that payee that has no Bill ID and no hand-set
+// Kind (see api/_lib/kinds.js). kind: 'Fixed' | 'Variable' | '' / null to
+// clear.
+async function actionSetKind(body, res) {
+  const { name, kind } = body || {};
+  if (!name || !String(name).trim()) {
+    res.status(400).json({ error: 'name is required' });
+    return;
+  }
+  const clearing = kind === null || kind === undefined || kind === '';
+  if (!clearing && !normalizeSpendingKind(kind)) {
+    res.status(400).json({ error: 'kind must be Fixed, Variable, or empty to clear' });
+    return;
+  }
+  await setPayeeKind(getWriteSheetsClient(), name, clearing ? null : kind);
+  res.status(200).json({ ok: true, kind: clearing ? null : normalizeSpendingKind(kind) });
 }
 
 async function actionBackfill(res) {
@@ -120,10 +145,12 @@ module.exports = async (req, res) => {
     switch (action) {
       case 'set-coords':
         return await actionSetCoords(req.body, res);
+      case 'set-kind':
+        return await actionSetKind(req.body, res);
       case 'backfill':
         return await actionBackfill(res);
       default:
-        res.status(400).json({ error: 'Unknown or missing action. Use one of: set-coords, backfill.' });
+        res.status(400).json({ error: 'Unknown or missing action. Use one of: set-coords, set-kind, backfill.' });
     }
   } catch (err) {
     console.error(err);

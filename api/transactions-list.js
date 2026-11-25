@@ -1,8 +1,8 @@
-const { fetchTransactionRows } = require('./_lib/sheets');
+const { fetchClassifiedTransactionRows } = require('./_lib/sheets');
 
 module.exports = async (req, res) => {
   try {
-    const rows = await fetchTransactionRows();
+    const rows = await fetchClassifiedTransactionRows();
 
     const sorted = rows.slice().sort((a, b) => {
       if (!a.date && !b.date) return b.rowNumber - a.rowNumber;
@@ -30,6 +30,11 @@ module.exports = async (req, res) => {
         matchStatus: r.matchStatus,
         transfer: r.isTransfer,
         paymentId: r.paymentId,
+        // WS1: effective Kind (Fixed / Variable / Transfer / Income), the
+        // rule that set it, and the Bill ID (Source ID) if any.
+        kind: r.kind,
+        kindRule: r.kindRule,
+        billId: r.billId,
       })),
       updatedAt: new Date().toISOString(),
     });

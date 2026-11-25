@@ -185,7 +185,7 @@ async function fetchTransactionsForReconcile(sheets) {
 
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${RECONCILE_SHEETS.transactions}!A2:Z`,
+    range: `${RECONCILE_SHEETS.transactions}!A2:AZ`,
     valueRenderOption: 'UNFORMATTED_VALUE',
   });
   const values = response.data.values || [];
@@ -1030,7 +1030,7 @@ async function deletePaymentRows(sheets, paymentId) {
 
   const response = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `${RECONCILE_SHEETS.transactions}!A2:Z`,
+    range: `${RECONCILE_SHEETS.transactions}!A2:AZ`,
     valueRenderOption: 'UNFORMATTED_VALUE',
   });
   const values = response.data.values || [];

@@ -1,4 +1,13 @@
-const { getWriteSheetsClient, buildTransactionRow, dateToSerial, upsertPayee } = require('./_lib/sheets');
+const {
+  getWriteSheetsClient,
+  buildTransactionRow,
+  dateToSerial,
+  upsertPayee,
+  fetchPayeeRows,
+  getHeaderMap,
+  writeTransactionKind,
+} = require('./_lib/sheets');
+const { kindForSave, payeeKindMap, normalizeBillId } = require('./_lib/kinds');
 
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
@@ -7,7 +16,7 @@ module.exports = async (req, res) => {
   }
 
   try {
-    const { payee, type, sof, date, month, cleared, amount, notes, lat, lon, updatePayeeLocation } = req.body || {};
+    const { payee, type, sof, date, month, cleared, amount, notes, lat, lon, updatePayeeLocation, kind, kindManual, billId } = req.body || {};
 
     if (!payee || !type || !sof || !date || !month || !cleared || amount === undefined || amount === null) {
       res.status(400).json({ error: 'Missing required field: payee, type, sof, date, month, cleared, amount are all required' });
@@ -36,13 +45,37 @@ module.exports = async (req, res) => {
     });
 
     const sheets = getWriteSheetsClient();
-    await sheets.spreadsheets.values.append({
+    const appended = await sheets.spreadsheets.values.append({
       spreadsheetId: process.env.SHEET_ID,
       range: 'transactions!A:K',
       valueInputOption: 'RAW',
       insertDataOption: 'INSERT_ROWS',
       requestBody: { values: [row] },
     });
+
+    // WS1: Kind / Kind Rule and the Bill ID (Source ID) -- see
+    // api/_lib/kinds.js. Best-effort like the payee upsert below: readers
+    // recompute Kind anyway, so a failure here can only lose a hand-set
+    // Kind or bill link, never the transaction itself.
+    let kindResult = null;
+    try {
+      const updatedRange = (appended.data && appended.data.updates && appended.data.updates.updatedRange) || '';
+      const m = updatedRange.match(/![A-Z]+(\d+)/);
+      if (!m) throw new Error(`Couldn't read the new row number from "${updatedRange}"`);
+      const rowNumber = Number(m[1]);
+      const link = normalizeBillId(billId);
+      const payeeKinds = payeeKindMap(await fetchPayeeRows(sheets));
+      kindResult = kindForSave(
+        { type: row[1], isTransfer: false, billId: link, notes: row[10], payee },
+        { kind, kindManual },
+        null,
+        payeeKinds,
+      );
+      const headerMap = await getHeaderMap(sheets, process.env.SHEET_ID, 'transactions');
+      await writeTransactionKind(sheets, headerMap, rowNumber, { ...kindResult, billId: link ? link : undefined });
+    } catch (kindErr) {
+      console.error('Kind write failed (non-fatal):', kindErr);
+    }
 
     // Payee registry upsert (see issue #52). Always ensures a `Payees` row
     // exists for this payee; also (over)writes its coordinates, but ONLY
@@ -64,7 +97,7 @@ module.exports = async (req, res) => {
       console.error('Payee registry upsert failed (non-fatal):', payeeErr);
     }
 
-    res.status(200).json({ ok: true, updatedAt: new Date().toISOString() });
+    res.status(200).json({ ok: true, kind: kindResult && kindResult.kind, kindRule: kindResult && kindResult.rule, updatedAt: new Date().toISOString() });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });

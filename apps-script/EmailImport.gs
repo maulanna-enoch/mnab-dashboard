@@ -444,6 +444,7 @@ function runImportPass_(opts) {
 
   importedThisRun_ = [];
   resetPayeeRulesCache_(); // PayeeRules.gs: re-read the PayeeRules tab once per run
+  resetKindsCache_(); // Kinds.gs: re-read the Payees tab's Kind overrides once per run
   var grabThreads = []; // mnab/grab receipts — handled after the bank threads, see GRAB RECEIPTS
   try {
     var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TRANSACTIONS_SHEET_NAME);
@@ -802,6 +803,19 @@ function writeRow_(row, headerMap, dryRun) {
     values['Payment ID'] = row.paymentId || '';
   }
 
+  // Kinds.gs: Fixed / Variable / Transfer / Income, same rules as the
+  // dashboard. An imported row never has a Bill ID, so a bank email is
+  // Fixed only through a payee override on the Payees tab.
+  var kind = kinds_classify_({
+    type: row.type || 'Expense',
+    isTransfer: Boolean(row.transfer),
+    billId: '',
+    notes: row.notes,
+    payee: row.payee
+  }, kinds_payeeKinds_());
+  values['Kind'] = kind.kind;
+  values['Kind Rule'] = kind.rule;
+
   if (dryRun) {
     Logger.log('[DRY RUN] Would append row: ' + JSON.stringify(values));
     return true;
@@ -891,7 +905,9 @@ function testPushNotification() {
 // 'Match ID'/'Match Status' were added for the imported-vs-manual matching
 // feature (see "THIRD KIND OF DUPLICATE" up top).
 // 'Raw Import'/'Payee Rule' belong to the payee rules (PayeeRules.gs).
-var IMPORT_COLUMNS = ['Pending', 'Email Message ID', 'Match ID', 'Match Status', 'Raw Import', 'Payee Rule'];
+// 'Kind'/'Kind Rule' are the fixed / variable classification (Kinds.gs).
+var IMPORT_COLUMNS = ['Pending', 'Email Message ID', 'Match ID', 'Match Status', 'Raw Import', 'Payee Rule',
+  'Kind', 'Kind Rule'];
 
 function ensureImportColumns_(sheet) {
   var lastCol = sheet.getLastColumn();

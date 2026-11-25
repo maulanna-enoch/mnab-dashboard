@@ -114,11 +114,13 @@ second account in the same project doesn't shrink your headroom.
 mnab-dashboard/
   api/_lib/sheets.js                  Shared: read/write clients, row parsing + classification, buildTransactionRow
   api/_lib/settings.js                Settings tab keys, defaults and value parsing (see "Settings tab" below)
+  api/_lib/kinds.js                   Fixed / Variable / Transfer / Income rules (see "Fixed / variable" below)
   api/cashflow-summary.js             Income/Paid/Budgeted/Left-to-spend for a given ?month=YYYY-MM;
                                       ?action=months lists the Diary months for the dropdown
                                       ?action=settings returns the Settings tab (typed, with defaults)
   api/push.js                         Web Push: device subscriptions + the notify call EmailImport.gs makes
-  api/installments-summary.js         Sum of active Installment amounts (excludes Bills)
+  api/installments-summary.js         Sum of active Installment amounts (excludes Bills);
+                                      ?action=registry lists bills with their IB-n IDs
   api/installments-by-end-month.js    Active Installments grouped by ending month, with running remaining total
   api/bills-summary.js                Sum + list of active Bills
   api/accounts-list.js                Account names from the Accounts tab, for the transaction form's dropdown
@@ -160,6 +162,29 @@ that can't be read falls back to its default and shows up in `warnings` from
 `GET /api/cashflow-summary?action=settings`; nothing throws. Server code reads
 settings with `fetchSettings()` from `api/_lib/sheets.js`. Rupiah values stay
 in MNAB -- never copy them into the Claude Sheet.
+
+## Fixed / variable (`Kind`)
+
+Every transaction has a Kind: **Transfer**, **Income**, **Fixed** (bills and
+installments) or **Variable** (day-to-day spending, card swipes included).
+The weekly allowance counts only Variable. The rules are in
+`api/_lib/kinds.js` (and mirrored in `apps-script/Kinds.gs`):
+
+1. Transfer flag → Transfer. 2. Income → Income. 3. Kind set by hand → as
+set. 4. A Bill ID (`Source ID`, the IB-n code) or Notes starting
+`Auto-insert` → Fixed. 5. The payee's Kind on the `Payees` tab → that.
+6. Otherwise → Variable.
+
+`transactions` gets two self-provisioned columns, `Kind` and `Kind Rule`
+(which rule set it; `manual` = set by hand). The Bill ID reuses the existing
+`Source ID` column rather than adding a new one. Server code that needs
+Kind should read rows with `fetchClassifiedTransactionRows()` from
+`api/_lib/sheets.js`, which recomputes Kind from the rules (keeping hand-set
+ones), so it's right even before the backfill has run. The transaction form
+shows a Variable / Fixed toggle on expenses and suggests a bill when the
+payee and amount match one (`GET /api/installments-summary?action=registry`).
+The Payees page sets a payee's Kind (`POST /api/payees-list`,
+`action: 'set-kind'`).
 
 ## Bill vs. Installment classification
 
