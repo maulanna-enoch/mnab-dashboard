@@ -213,17 +213,120 @@
     border-top: none;
     padding-top: 0;
   }
+
+  /* ---- WS5: weekly budget hero, adherence strip, debt card (prefix hm-) ---- */
+  .hm-hint { font-size: 0.95rem; color: var(--text); margin-top: 6px; }
+  .hm-hint strong { font-weight: 600; }
+  .hm-week-range { font-size: 0.8rem; color: var(--muted); margin-top: 10px; }
+  .hm-msg { font-size: 0.85rem; color: var(--muted); }
+  .hm-txns { list-style: none; margin: 8px 0 0; padding: 0; }
+  .hm-txns li { display: flex; justify-content: space-between; gap: 12px; font-size: 0.85rem; padding: 4px 0; }
+  .hm-txns li .hm-txn-payee { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hm-txns li .hm-txn-date { color: var(--muted); font-size: 0.75rem; margin-left: 6px; }
+  .hm-txns li .hm-txn-amt { color: var(--muted); white-space: nowrap; }
+  .card details { margin-top: 12px; }
+
+  .hm-strip-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+  .hm-strip-head .label { margin-bottom: 0; }
+  .hm-streak { font-size: 0.85rem; color: var(--accent); font-weight: 600; }
+  .hm-streak.zero { color: var(--muted); font-weight: 500; }
+  .hm-strip {
+    position: relative;
+    display: flex;
+    align-items: flex-end;
+    gap: 4px;
+    height: 72px;
+    border-bottom: 1px solid #2a2e37;
+  }
+  /* The allowance line: a full bar reaches exactly to it. */
+  .hm-strip::before {
+    content: '';
+    position: absolute;
+    left: 0; right: 0;
+    bottom: calc(72px * 0.66);
+    border-top: 1px dashed #4b5563;
+    pointer-events: none;
+  }
+  .hm-bar { flex: 1; min-width: 0; border-radius: 3px 3px 0 0; background: #374151; }
+  .hm-bar.kept { background: var(--accent); }
+  .hm-bar.over { background: var(--negative); }
+  .hm-bar.current { opacity: 0.55; }
+  .hm-strip-axis { display: flex; justify-content: space-between; font-size: 0.7rem; color: var(--muted); margin-top: 4px; }
+
+  .hm-debt-row { display: flex; justify-content: space-between; gap: 12px; text-align: left; padding: 8px 0; border-top: 1px solid #2a2e37; font-size: 0.9rem; }
+  .hm-debt-row:first-of-type { border-top: none; }
+  .hm-debt-row .hm-k { color: var(--muted); }
+  .hm-debt-row .hm-v { text-align: right; font-weight: 600; }
+  .hm-later { color: var(--negative); }
+  .hm-sooner { color: var(--accent); }
+  .hm-big { font-size: 1.8rem; font-weight: 700; }
+  .hm-sub-pct { font-size: 0.85rem; color: var(--muted); margin-top: 2px; }
+
+  /* Monthly cash flow (Diary): collapsed and loaded on first open. */
+  .hm-cf {
+    width: 100%;
+    max-width: var(--page-max-width);
+    border-top: none;
+    padding-top: 0;
+    margin: 8px 0 12px;
+    /* Block, not flex: Chromium doesn't lay out <details> content as flex
+       items, so cards inside collapsed to their content width. */
+    display: block;
+    text-align: center;
+  }
+  .hm-cf > .card, .hm-cf > select#month { display: block; margin-left: auto; margin-right: auto; }
+  .hm-cf > summary {
+    font-size: 0.85rem;
+    padding: 10px 0;
+    width: 100%;
+    list-style-position: inside;
+  }
+  .hm-cf[open] > summary { margin-bottom: 8px; }
 </style>
 </head>
 <body>
   <div class="app-title">MNAB · Maulanna Needs A Budget</div>
   <div class="home-heading">
-    <h1>Cash Flow</h1>
+    <h1>This week</h1>
     <button type="button" class="psh-bell" id="psh-bell" aria-label="Notifications">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg>
     </button>
   </div>
 
+  <!-- WS5 hero: "Left this week" from GET /api/cashflow-summary?action=week (WS4). -->
+  <div class="card" id="hm-week-card">
+    <div class="label" id="hm-left-label">Left this week</div>
+    <div class="hero-total" id="hm-left">Loading…</div>
+    <div class="hm-hint" id="hm-perday"></div>
+    <div class="hm-week-range" id="hm-week-meta"></div>
+    <details id="hm-week-details" hidden>
+      <summary id="hm-week-summary">This week's spending</summary>
+      <ul class="hm-txns" id="hm-week-txns"></ul>
+    </details>
+  </div>
+
+  <!-- Adherence: the last completed weeks against what was available. -->
+  <div class="card" id="hm-strip-card" hidden>
+    <div class="hm-strip-head">
+      <div class="label">Weeks on budget</div>
+      <div class="hm-streak" id="hm-streak"></div>
+    </div>
+    <div class="hm-strip" id="hm-strip" role="img"></div>
+    <div class="hm-strip-axis"><span id="hm-strip-from"></span><span>this week</span></div>
+    <div class="sub" id="hm-strip-meta"></div>
+  </div>
+
+  <!-- Debt: GET /api/cashflow-summary?action=debt (WS6). -->
+  <div class="card" id="hm-debt-card">
+    <div class="label">Owed to the future</div>
+    <div class="hm-big" id="hm-hole">Loading…</div>
+    <div class="hm-sub-pct" id="hm-hole-pct"></div>
+    <div id="hm-debt-rows" style="margin-top: 12px;"></div>
+    <div class="sub" id="hm-debt-meta"></div>
+  </div>
+
+  <details class="hm-cf" id="hm-cf">
+  <summary>Monthly cash flow (Diary)</summary>
   <select id="month"></select>
 
   <div class="card">
@@ -267,7 +370,9 @@
     </details>
   </div>
 
-  <button class="refresh" onclick="loadSummary(true)">Refresh</button>
+  </details>
+
+  <button class="refresh" onclick="refreshHome()">Refresh</button>
 
   <div id="txf-root"></div>
   <div id="bnv-root"></div>
@@ -461,7 +566,198 @@
     }
 
     document.getElementById('month').addEventListener('change', () => loadSummary());
-    loadMonths();
+
+    // The Diary-based cash flow only loads when its section is first opened.
+    let cashFlowLoaded = false;
+    document.getElementById('hm-cf').addEventListener('toggle', (e) => {
+      if (e.target.open && !cashFlowLoaded) {
+        cashFlowLoaded = true;
+        loadMonths();
+      }
+    });
+
+    // ---- WS5: weekly budget + debt ----
+    // Dates from the API are 'YYYY-MM-DD' calendar dates (Jakarta). Parse
+    // them from their parts, never via new Date('YYYY-MM-DD') (that's UTC
+    // midnight) or toISOString().
+    function parseIsoDay(s) {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || ''));
+      return m ? new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null;
+    }
+    function shortDay(s) {
+      const d = parseIsoDay(s);
+      return d ? d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' }) : '';
+    }
+    function longDay(s) {
+      const d = parseIsoDay(s);
+      return d ? d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '';
+    }
+    function monthName(ym) {
+      const m = /^(\d{4})-(\d{2})$/.exec(String(ym || ''));
+      if (!m) return '';
+      return new Date(Number(m[1]), Number(m[2]) - 1, 1).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' });
+    }
+    function escapeHtml(s) {
+      return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+    function pctLabel(f) {
+      return typeof f === 'number' ? `${(f * 100).toFixed(1)}% of salary` : '';
+    }
+    // "+6 days later" / "4 days sooner" / "no change", with a colour class.
+    function daysMoved(n) {
+      if (typeof n !== 'number') return { text: '—', cls: '' };
+      if (n === 0) return { text: 'no change', cls: '' };
+      const abs = Math.abs(n);
+      const unit = abs === 1 ? 'day' : 'days';
+      return n > 0 ? { text: `+${abs} ${unit} later`, cls: 'hm-later' } : { text: `${abs} ${unit} sooner`, cls: 'hm-sooner' };
+    }
+
+    function renderWeek(data) {
+      const w = data.week;
+      const leftEl = document.getElementById('hm-left');
+      const perDayEl = document.getElementById('hm-perday');
+      const metaEl = document.getElementById('hm-week-meta');
+      const range = `${shortDay(w.start)} – ${shortDay(w.end)}`;
+
+      if (w.left === null || w.left === undefined) {
+        document.getElementById('hm-left-label').textContent = 'Spent this week';
+        leftEl.textContent = formatIDR(w.spent);
+        leftEl.style.color = 'var(--text)';
+        perDayEl.innerHTML = '<span class="hm-msg">Set <code>weekly_allowance_rp</code> in the Settings tab to see what\'s left.</span>';
+        metaEl.textContent = range;
+      } else {
+        document.getElementById('hm-left-label').textContent = 'Left this week';
+        leftEl.textContent = formatIDR(w.left);
+        leftEl.style.color = w.left >= 0 ? 'var(--accent)' : 'var(--negative)';
+        const days = w.daysLeft === 1 ? 'today only' : `${w.daysLeft} days left`;
+        perDayEl.innerHTML = w.left > 0
+          ? `≈ <strong>${formatIDR(w.perDay)}</strong> / day · ${days}`
+          : (w.left === 0 ? `Nothing left · ${days}` : `Over by <strong>${formatIDR(-w.left)}</strong> · ${days}`);
+        const carry = w.carryIn ? ` · ${w.carryIn > 0 ? '+' : '−'}${formatIDR(Math.abs(w.carryIn))} rolled over` : '';
+        metaEl.textContent = `${range} · spent ${formatIDR(w.spent)} of ${formatIDR(w.available)}${carry}`;
+      }
+
+      const txns = w.transactions || [];
+      const det = document.getElementById('hm-week-details');
+      det.hidden = txns.length === 0;
+      document.getElementById('hm-week-summary').textContent =
+        `This week's spending (${txns.length} transaction${txns.length === 1 ? '' : 's'})`;
+      document.getElementById('hm-week-txns').innerHTML = txns.map((t) => `
+        <li><span class="hm-txn-payee">${escapeHtml(t.payee || '(no payee)')}<span class="hm-txn-date">${escapeHtml(shortDay(t.date))}</span></span>
+        <span class="hm-txn-amt">${formatIDR(t.amount)}</span></li>`).join('');
+
+      renderStrip(data);
+    }
+
+    // Last completed weeks (oldest first) plus the current one, as bars of
+    // spent / available. The dashed line is 100% of what was available; a
+    // bar is capped at 1.5x so one bad week doesn't flatten the rest.
+    const STRIP_CAP = 1.5;
+    function renderStrip(data) {
+      const card = document.getElementById('hm-strip-card');
+      const weeks = (data.history || []).filter((h) => !h.beforeBudgetStart && typeof h.available === 'number');
+      if (data.week.available === null || data.week.available === undefined || !weeks.length) {
+        card.hidden = true;
+        return;
+      }
+      card.hidden = false;
+      const all = weeks.concat([{ ...data.week, current: true }]);
+      const strip = document.getElementById('hm-strip');
+      strip.innerHTML = all.map((w) => {
+        const ratio = w.available > 0 ? w.spent / w.available : (w.spent > 0 ? STRIP_CAP : 0);
+        const h = Math.max(3, Math.min(STRIP_CAP, ratio) / STRIP_CAP * 100);
+        const cls = w.current ? (w.left >= 0 ? 'kept current' : 'over current') : (w.kept ? 'kept' : 'over');
+        const title = `${shortDay(w.start)}: spent ${formatIDR(w.spent)} of ${formatIDR(w.available)}${w.current ? ' (so far)' : ''}`;
+        return `<div class="hm-bar ${cls}" style="height:${h.toFixed(1)}%" title="${escapeHtml(title)}"></div>`;
+      }).join('');
+      const keptCount = weeks.filter((w) => w.kept).length;
+      strip.setAttribute('aria-label', `${keptCount} of the last ${weeks.length} weeks kept to budget`);
+      document.getElementById('hm-strip-from').textContent = shortDay(weeks[0].start);
+      const streakEl = document.getElementById('hm-streak');
+      streakEl.textContent = data.streak > 0 ? `${data.streak}-week streak` : 'No streak yet';
+      streakEl.classList.toggle('zero', !(data.streak > 0));
+      document.getElementById('hm-strip-meta').textContent = `${keptCount} of the last ${weeks.length} week${weeks.length === 1 ? '' : 's'} on budget`;
+    }
+
+    function renderDebt(data) {
+      const holeEl = document.getElementById('hm-hole');
+      const pctEl = document.getElementById('hm-hole-pct');
+      const rowsEl = document.getElementById('hm-debt-rows');
+      const metaEl = document.getElementById('hm-debt-meta');
+      const warnings = (data.warnings || []).concat(data.settingsWarnings || []);
+
+      if (!data.hole) {
+        holeEl.textContent = '—';
+        pctEl.textContent = '';
+        rowsEl.innerHTML = '';
+        metaEl.innerHTML = `<span class="hm-msg">${escapeHtml(warnings[0] || 'No Steals data.')}</span>`;
+        return;
+      }
+      holeEl.textContent = formatIDR(data.hole.amount);
+      holeEl.style.color = data.hole.amount > 0 ? 'var(--negative)' : 'var(--accent)';
+      pctEl.textContent = pctLabel(data.hole.pctOfSalary);
+
+      const rows = [];
+      if (data.plan) {
+        const free = data.plan.debtFreeMonth
+          ? (data.hole.amount > 0 && data.plan.estimatedDate ? `~${longDay(data.plan.estimatedDate)}` : monthName(data.plan.debtFreeMonth))
+          : `Not by ${monthName(data.inputs && data.inputs.horizonEnd)}`;
+        rows.push(['Debt-free (on plan)', escapeHtml(free), '']);
+        if (data.lastWeek) {
+          const mv = daysMoved(data.lastWeek.movedDays);
+          const dev = data.lastWeek.deviation;
+          const why = dev > 0 ? `${formatIDR(dev)} over` : (dev < 0 ? `${formatIDR(-dev)} under` : 'on budget');
+          rows.push([`Last week (${why} allowance)`, mv.text, mv.cls]);
+        }
+        if (data.pace && data.pace.weeks) {
+          const mv = daysMoved(data.pace.daysVsPlan);
+          const when = data.pace.debtFreeMonth ? monthName(data.pace.debtFreeMonth) : 'not in sight';
+          rows.push([`At your ${data.pace.weeks}-week pace`, `${escapeHtml(when)}${data.pace.daysVsPlan ? ` <span class="${mv.cls}">(${mv.text})</span>` : ''}`, '']);
+        }
+        if (data.plan.peakAfterThr && data.plan.peakAfterThr.amount > data.hole.amount) {
+          rows.push([`Peaks ${monthName(data.plan.peakAfterThr.month)}`, escapeHtml(pctLabel(data.plan.peakAfterThr.pct) || formatIDR(data.plan.peakAfterThr.amount)), '']);
+        }
+      }
+      rowsEl.innerHTML = rows.map(([k, v, cls]) =>
+        `<div class="hm-debt-row"><span class="hm-k">${escapeHtml(k)}</span><span class="hm-v ${cls}">${v}</span></div>`).join('');
+      metaEl.innerHTML = !data.plan && warnings.length
+        ? `<span class="hm-msg">${escapeHtml(warnings.find((w) => /not set/.test(w)) || warnings[0])}</span>`
+        : '';
+    }
+
+    async function getJson(url) {
+      const res = await fetch(url, { cache: 'no-store' });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+      return data;
+    }
+
+    async function loadWeek() {
+      try {
+        renderWeek(await getJson('/api/cashflow-summary?action=week'));
+      } catch (err) {
+        document.getElementById('hm-left').textContent = '—';
+        document.getElementById('hm-perday').innerHTML = `<span class="error">${escapeHtml(err.message)}</span>`;
+      }
+    }
+
+    async function loadDebt() {
+      try {
+        renderDebt(await getJson('/api/cashflow-summary?action=debt&rows=0'));
+      } catch (err) {
+        document.getElementById('hm-hole').textContent = '—';
+        document.getElementById('hm-debt-meta').innerHTML = `<span class="error">${escapeHtml(err.message)}</span>`;
+      }
+    }
+
+    function refreshHome() {
+      loadWeek();
+      loadDebt();
+      if (cashFlowLoaded) loadSummary(true);
+    }
+
+    loadWeek();
+    loadDebt();
 
     // Add-only here (no edit/delete) -- once a transaction is actually
     // saved, hand off to the Transactions page so it's visible in the feed.
