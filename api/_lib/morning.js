@@ -1,5 +1,5 @@
-// Morning money push: what's due today and how much is left to spend per
-// day, worked out on the server and sent straight to the phone as a Web
+// Morning money push: what's due today and how much of this week's
+// allowance is left per day (the WS4 weekly budget), worked out on the server and sent straight to the phone as a Web
 // Push notification. Nothing leaves MNAB's own stack (Vercel + the Sheet).
 //
 // Used by api/push.js action=morning, which a Vercel cron calls once a day
@@ -14,8 +14,6 @@ const { formatRupiah } = require('./push');
 const { activeInMonth, monthOf } = require('./bills');
 
 const JAKARTA_OFFSET_MS = 7 * 60 * 60 * 1000;
-const PAYROLL_DAY = 25; // same as PAYROLL_DAY in public/index.html
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
 const MAX_BILL_LINES = 4;
 const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
@@ -57,43 +55,29 @@ function billsDueOn(rows, today) {
   });
 }
 
-// The budget month today falls in. Pay lands on the 25th and a cycle is
-// named after the month it starts in (the cash-account rule in the project
-// docs): 1st-24th -> last month, 25th onward -> this month.
-function cycleFor(today) {
-  const y = today.getUTCFullYear();
-  const m = today.getUTCMonth();
-  const start = today.getUTCDate() >= PAYROLL_DAY ? utcDay(y, m, 1) : utcDay(y, m - 1, 1);
-  const month = `${start.getUTCFullYear()}-${String(start.getUTCMonth() + 1).padStart(2, '0')}`;
-  const payroll = utcDay(start.getUTCFullYear(), start.getUTCMonth() + 1, PAYROLL_DAY);
-  const days = Math.max(1, Math.round((payroll - today) / MS_PER_DAY));
-  return { month, payroll, days };
-}
-
-// Same sum as api/cashflow-summary.js: the month's Diary income minus
-// everything Paid, Billed or Unbilled. Returns null when Diary has no rows
-// for that month yet.
-function leftToSpendFor(diaryRows, month) {
-  const rows = diaryRows.filter((r) => r.month === month);
-  if (rows.length === 0) return null;
-  const income = rows.filter((r) => r.type === 'Income').reduce((s, r) => s + r.amount, 0);
-  const outflow = rows.filter((r) => r.type === 'Expense').reduce((s, r) => s + r.amount, 0);
-  return income - outflow;
-}
-
-function shortDate(d) {
-  return `${d.getUTCDate()} ${MONTHS_SHORT[d.getUTCMonth()]}`;
+// 'YYYY-MM-DD' -> "2 Dec", from the string so no time zone shifts it.
+function shortIso(isoDay) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(isoDay || '');
+  return m ? `${Number(m[3])} ${MONTHS_SHORT[Number(m[2]) - 1]}` : '';
 }
 
 // { title, body, url } for sw.js, plus `summary` (the same facts as data)
 // for the dry-run response.
-function composeMorning({ bills, leftToSpend, cycle }) {
-  const perDay = leftToSpend === null ? null : Math.max(0, Math.round(leftToSpend / cycle.days));
+//
+// `week` is computeWeek(...).week from api/_lib/week.js (the WS4 weekly
+// budget): this week's variable spending against the weekly allowance plus
+// rollover, `left`, `perDay` and `daysLeft` (today included). `left` is
+// null when weekly_allowance_rp isn't set in Settings; pass null for `week`
+// when it couldn't be worked out at all. Before the Debt Exit work this
+// came from the Diary tab's monthly left-to-spend.
+function composeMorning({ bills, week }) {
+  const left = week && week.left !== null && week.left !== undefined ? week.left : null;
+  const perDay = left === null ? null : week.perDay;
 
   let title;
-  if (leftToSpend === null) title = 'Good morning';
-  else if (leftToSpend < 0) title = `Over by ${formatRupiah(leftToSpend)} this month`;
-  else title = `${formatRupiah(perDay)}/day left`;
+  if (left === null) title = 'Good morning';
+  else if (left < 0) title = `Over by ${formatRupiah(left)} this week`;
+  else title = `${formatRupiah(perDay)}/day left this week`;
 
   const lines = [];
   if (bills.length === 0) {
@@ -109,10 +93,12 @@ function composeMorning({ bills, leftToSpend, cycle }) {
     if (bills.length > MAX_BILL_LINES) lines.push(`+${bills.length - MAX_BILL_LINES} more`);
   }
 
-  if (leftToSpend === null) {
-    lines.push(`No Diary rows for ${cycle.month} yet, so no daily budget.`);
-  } else if (leftToSpend >= 0) {
-    lines.push(`${formatRupiah(leftToSpend)} over ${cycle.days} day(s) to ${shortDate(cycle.payroll)}`);
+  if (!week) {
+    lines.push("Couldn't work out this week's budget.");
+  } else if (left === null) {
+    lines.push('Set weekly_allowance_rp in Settings to get a daily budget.');
+  } else if (left >= 0) {
+    lines.push(`${formatRupiah(left)} left for ${week.daysLeft} day(s), to ${shortIso(week.end)}`);
   }
 
   return {
@@ -120,10 +106,10 @@ function composeMorning({ bills, leftToSpend, cycle }) {
     body: lines.join('\n'),
     url: '/',
     summary: {
-      cycleMonth: cycle.month,
-      payroll: shortDate(cycle.payroll),
-      days: cycle.days,
-      leftToSpend,
+      weekStart: week ? week.start : null,
+      weekEnd: week ? week.end : null,
+      daysLeft: week ? week.daysLeft : null,
+      left,
       perDay,
       bills: bills.map((b) => ({ name: b.name, sof: b.sof, amount: b.amount })),
     },
@@ -133,7 +119,5 @@ function composeMorning({ bills, leftToSpend, cycle }) {
 module.exports = {
   jakartaToday,
   billsDueOn,
-  cycleFor,
-  leftToSpendFor,
   composeMorning,
 };

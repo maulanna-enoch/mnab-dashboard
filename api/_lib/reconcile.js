@@ -482,16 +482,15 @@ async function getOrCreateTransactionsColumn(sheets, map, headerName) {
 // `prefix` distinguishes HOW a payment's two legs came to exist, which
 // matters only for undo (see deletePaymentRows / actionUndoPayment):
 //   'pay'  = both legs written fresh as a card payment (Add Payment,
-//            EmailImport.gs's Mandiri pair) -- undo deletes both and flips
-//            the card's Diary line back to Billed.
+//            EmailImport.gs's Mandiri pair) -- undo deletes both.
 //   'trf'  = both legs written fresh as a plain account-to-account transfer
-//            (Add transaction's Transfer mode) -- undo deletes both, no Diary.
+//            (Add transaction's Transfer mode) -- undo deletes both.
 //   'cnv'  = legacy "Convert to card payment": the cash Expense leg is a
 //            pre-existing row re-tagged in place, so undo reverts it instead
 //            of deleting it; the appended card leg is deleted.
 //   'cv' + kind + keep  = "Convert to transfer" (convertRowToTransfer):
-//            kind 'p' = card payment (cash -> credit card, Diary flip),
-//                 't' = plain transfer (no Diary);
+//            kind 'p' = card payment (cash -> credit card),
+//                 't' = plain transfer;
 //            keep 'e' = the pre-existing row was the Expense (outgoing) leg,
 //                 'i' = it was the Income (incoming) leg,
 //                 'b' = both legs were pre-existing rows linked together.
@@ -528,8 +527,8 @@ function isConvertedPaymentId(paymentId) {
 }
 
 // True for a plain account-to-account transfer ('trf' or a 'cvt*'
-// conversion) -- NOT a card statement payment, so undo must skip the Diary
-// Paid->Billed flip (actionUndoPayment).
+// conversion) -- NOT a card statement payment, so undo-payment reports no
+// statement for it (actionUndoPayment).
 function isTransferPaymentId(paymentId) {
   return !paymentIdKind(paymentId).cardPayment;
 }
@@ -542,14 +541,14 @@ function shiftMonth(date, deltaMonths) {
 // claude/MNAB-project-state.md): writes TWO Transfer-tagged legs for one
 // card payment -- an Expense on the paying (cash) account and an Income on
 // the card -- so both accounts' balances reflect the payment while the
-// existing Diary SUMIF/reconciliation math still excludes it from
-// spend/income aggregation via the sheet's own "<>TRUE" Transfer criteria,
+// reconciliation math and every spend/income total still exclude it via
+// the "<>TRUE" Transfer criteria,
 // same as a desktop-logged payment. A shared, self-provisioned "Payment ID"
 // column links the two rows so undo-payment can find and delete both later
 // -- transactions have no other reliable shared key once dates/amounts/
-// payees can be edited independently after the fact. Does NOT itself flip
-// the card's Diary "Billed" row to "Paid" -- see tryFlipDiaryBilledToPaid
-// below, called separately by actionPayCard after this succeeds.
+// payees can be edited independently after the fact. The card leg's Month
+// is the statement being paid, which is what makes the payment count
+// towards that statement (api/_lib/statements.js).
 async function appendCardPaymentRows(sheets, { cardAccount, cashAccount, amount, date, month }) {
   const spreadsheetId = process.env.SHEET_ID;
   let map = await getHeaderMap(sheets, spreadsheetId, RECONCILE_SHEETS.transactions);
@@ -622,7 +621,7 @@ async function appendCardPaymentRows(sheets, { cardAccount, cashAccount, amount,
 // may follow different billing-month heuristics). Expense on the "from"
 // account, Income on the "to" account -- with the sheet's Total = Expense -
 // Income convention that moves both balances the right way for every
-// account type. No Diary side effects.
+// account type.
 async function appendTransferRows(sheets, { fromAccount, toAccount, amount, date, fromMonth, toMonth, cleared, notes }) {
   const spreadsheetId = process.env.SHEET_ID;
   let map = await getHeaderMap(sheets, spreadsheetId, RECONCILE_SHEETS.transactions);
@@ -710,8 +709,8 @@ function isTruthyCell(v) {
 //
 // `cardPayment` (cash/bank -> credit card) follows the Add Payment
 // convention: both legs get `month` (the card statement being paid) and
-// payee wording "Payment to/from X"; the caller then does the Diary
-// Billed->Paid flip. Otherwise each leg keeps its own billing month and the
+// payee wording "Payment to/from X". Otherwise each leg keeps its own
+// billing month and the
 // appended leg is worded "Transfer to/from X".
 //
 // rowNumbers are only positions -- they shift whenever anything above them
@@ -888,134 +887,6 @@ function findTransferCandidates(txnRows, { rowNumber, account, otherAccount, typ
     .map(({ row }) => row);
 }
 
-// Shared read of the Diary tab, used by both tryFlipDiaryBilledToPaid (a
-// write) and getDiaryBilledAmount (read-only, for the Add Payment form's
-// amount pre-fill) below. Deliberately just a fetch + light validation, with
-// no matching/write logic of its own, so neither of those two callers ends
-// up routed through the other -- each stays a single, independent read of
-// this same snapshot, avoiding any call-back-into-each-other cycle between
-// the write path and the read-only lookup as this file grows. Returns null
-// (never throws) if the sheet or its required columns aren't there.
-async function fetchDiarySheet(sheets) {
-  const spreadsheetId = process.env.SHEET_ID;
-  const sheetName = 'Diary';
-  let map;
-  try {
-    map = await getHeaderMap(sheets, spreadsheetId, sheetName);
-  } catch (err) {
-    return null;
-  }
-  if (!('Name' in map) || !('Month' in map)) return null;
-
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${sheetName}!A2:Z`,
-    valueRenderOption: 'UNFORMATTED_VALUE',
-  });
-  return { spreadsheetId, sheetName, map, values: response.data.values || [] };
-}
-
-// Pure matcher over a fetchDiarySheet() result -- Name == cardAccount
-// (Diary's bill rows are named after the card, same as any other budget
-// line item there) + Month, and an optional Status filter (case-insensitive).
-function findDiaryRowMatch(diarySheet, { cardAccount, month, status }) {
-  if (!diarySheet) return null;
-  const { map, values } = diarySheet;
-  if (status && !('Status' in map)) return null;
-  const monthSerial = dateToSerial(month);
-
-  for (let i = 0; i < values.length; i++) {
-    const row = values[i];
-    const name = row[map['Name']];
-    if (!name || String(name).trim().toLowerCase() !== cardAccount.trim().toLowerCase()) continue;
-    if (row[map['Month']] !== monthSerial) continue;
-    if (status && String(row[map['Status']] || '').trim().toLowerCase() !== status.toLowerCase()) continue;
-    return { rowNumber: i + 2, row };
-  }
-  return null;
-}
-
-// Best-effort mirror of Payments.gs's other behavior (see
-// claude/MNAB-project-state.md and GitHub issue #8): if this card has a
-// Diary line item for the billing month being paid, currently "Billed", and
-// the payment covers it (amountPaid >= that row's Expense amount - 0.5,
-// matching this project's documented "whole-statement-only" assumption --
-// no partial-payment tracking), flip its Status to "Paid". Matches by Name
-// == cardAccount + Month + Status=Billed (see findDiaryRowMatch above).
-//
-// Deliberately silent/non-fatal on anything that doesn't match cleanly (no
-// Diary sheet, missing columns, no matching row, wrong status) -- this is a
-// nice-to-have convenience, not something a guess-gone-wrong should ever be
-// allowed to block the actual payment write, which already happened by the
-// time this runs. Returns { flipped, reason? } so the caller can surface it.
-async function tryFlipDiaryBilledToPaid(sheets, { cardAccount, month, amountPaid }) {
-  const diarySheet = await fetchDiarySheet(sheets);
-  if (!diarySheet) return { flipped: false, reason: 'no-diary-sheet' };
-  if (!('Status' in diarySheet.map)) return { flipped: false, reason: 'missing-columns' };
-
-  const match = findDiaryRowMatch(diarySheet, { cardAccount, month, status: 'Billed' });
-  if (!match) return { flipped: false, reason: 'no-match' };
-
-  const billedAmount = 'Expense' in diarySheet.map ? Number(match.row[diarySheet.map['Expense']]) || 0 : 0;
-  if (amountPaid < billedAmount - 0.5) return { flipped: false, reason: 'amount-below-billed' };
-
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: diarySheet.spreadsheetId,
-    range: `${diarySheet.sheetName}!${columnLetter(diarySheet.map['Status'])}${match.rowNumber}`,
-    valueInputOption: 'RAW',
-    requestBody: { values: [['Paid']] },
-  });
-  return { flipped: true, rowNumber: match.rowNumber };
-}
-
-// Reverse of tryFlipDiaryBilledToPaid above, for undo-payment (GitHub issue
-// #37): actionPayCard's forward flip marks a Diary "Billed" line "Paid" once
-// a payment covers it, but undoing that payment left the Diary line stuck on
-// "Paid" with no corresponding transaction anymore. Matches by Name ==
-// cardAccount + Month + Status=Paid (mirrors findDiaryRowMatch's other
-// direction) and flips it back to "Billed". No amount check here -- unlike
-// the forward flip, there's no partial-undo case to guard against; if the
-// payment that caused the flip is being removed, the bill is unambiguously
-// billed-but-unpaid again. Same best-effort/non-fatal contract as
-// tryFlipDiaryBilledToPaid: never let a Diary-matching quirk block the
-// undo, which already happened by the time this runs.
-async function tryFlipDiaryPaidToBilled(sheets, { cardAccount, month }) {
-  const diarySheet = await fetchDiarySheet(sheets);
-  if (!diarySheet) return { flipped: false, reason: 'no-diary-sheet' };
-  if (!('Status' in diarySheet.map)) return { flipped: false, reason: 'missing-columns' };
-
-  const match = findDiaryRowMatch(diarySheet, { cardAccount, month, status: 'Paid' });
-  if (!match) return { flipped: false, reason: 'no-match' };
-
-  await sheets.spreadsheets.values.update({
-    spreadsheetId: diarySheet.spreadsheetId,
-    range: `${diarySheet.sheetName}!${columnLetter(diarySheet.map['Status'])}${match.rowNumber}`,
-    valueInputOption: 'RAW',
-    requestBody: { values: [['Billed']] },
-  });
-  return { flipped: true, rowNumber: match.rowNumber };
-}
-
-// Read-only counterpart used by the Add Payment form to pre-fill the amount
-// field with what's actually billed for the selected month, instead of
-// starting blank. Finds the card's Diary "Billed" line for that month and
-// returns its Expense amount. Kept deliberately separate from (not routed
-// through) tryFlipDiaryBilledToPaid above -- this never writes, has no
-// amountPaid/already-covered guard, and can safely be called on every
-// open/month-change without side effects; the two only share the
-// fetch/match helpers, not each other.
-async function getDiaryBilledAmount(sheets, { cardAccount, month }) {
-  const diarySheet = await fetchDiarySheet(sheets);
-  if (!diarySheet) return { found: false };
-  if (!('Expense' in diarySheet.map)) return { found: false };
-
-  const match = findDiaryRowMatch(diarySheet, { cardAccount, month, status: 'Billed' });
-  if (!match) return { found: false };
-
-  const amount = Number(match.row[diarySheet.map['Expense']]) || 0;
-  return { found: true, amount };
-}
-
 // A card's statement for one month, worked out from `transactions` (see
 // api/_lib/statements.js) -- replaces the Diary "Billed" lookup. Read-only.
 // `month` is a UTC first-of-month Date (parseISOMonth). Returns null when
@@ -1038,11 +909,10 @@ async function getCardStatement(sheets, { cardAccount, month }) {
 //
 // Also surfaces `cardAccount`/`month` (read off the Income leg -- see
 // appendCardPaymentRows's buildLeg calls, the card side is always the
-// 'Income' type) before anything is deleted, so the caller can pass them to
-// tryFlipDiaryPaidToBilled (GitHub issue #37) without the client having to
+// 'Income' type) before anything is deleted, so the caller can report that
+// card statement again (GitHub issue #37) without the client having to
 // know or resend them. Both come back null if the Income leg isn't found or
-// the sheet is missing the columns needed to read it -- same
-// silent-degrade contract as the rest of this file's Diary-adjacent code.
+// the sheet is missing the columns needed to read it.
 async function deletePaymentRows(sheets, paymentId) {
   const spreadsheetId = process.env.SHEET_ID;
   const map = await getHeaderMap(sheets, spreadsheetId, RECONCILE_SHEETS.transactions);
@@ -1341,9 +1211,6 @@ module.exports = {
   paymentIdKind,
   isConvertedPaymentId,
   isTransferPaymentId,
-  tryFlipDiaryBilledToPaid,
-  tryFlipDiaryPaidToBilled,
-  getDiaryBilledAmount,
   getCardStatement,
   deletePaymentRows,
   shiftMonth,

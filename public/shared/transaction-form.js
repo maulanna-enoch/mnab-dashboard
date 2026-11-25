@@ -789,10 +789,10 @@
   // your own accounts is written as the same two-leg, Transfer=TRUE shape a
   // card payment uses -- an Expense on the "from" account and an Income on
   // the "to" account, sharing one Payment ID -- so both balances move while
-  // the Diary's "<>TRUE" Transfer criteria keep it out of spend/income. The
+  // the "<>TRUE" Transfer criteria keep it out of spend/income. The
   // Payment ID gets a 'trf_' prefix so the existing undo-payment path
-  // deletes both legs (and skips the card-statement Diary flip, which only
-  // makes sense for a real card payment). See api/reconcile.js's
+  // deletes both legs (and doesn't treat it as a card-statement payment).
+  // See api/reconcile.js's
   // actionTransfer.
   //
   // In this mode the Account (SOF) select is relabelled "From account" and

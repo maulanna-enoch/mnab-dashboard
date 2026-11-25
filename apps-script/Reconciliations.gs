@@ -64,7 +64,7 @@ const RECONCILE_CONFIG = {
 // onOpen() is a simple trigger -- Apps Script only allows ONE function named
 // onOpen per project, so this is the single place the whole "Finances" menu
 // gets built, even for items whose logic lives in another file (e.g.
-// addNextMonthRows() in Templates.gs). If you add more menu-driven scripts
+// copyInstallmentsBillsToTransactions() in InstallmentsBills.gs). If you add more menu-driven scripts
 // later, add their .addItem(...) call here rather than defining another
 // onOpen().
 function onOpen() {
@@ -72,8 +72,6 @@ function onOpen() {
     .createMenu('Finances')
     .addItem('Reconcile Account…', 'reconcileAccount')
     .addItem('Undo Last Reconciliation…', 'undoLastReconciliation')
-    .addItem('Log Credit Card Payment…', 'logCreditCardPayment')
-    .addItem("Add Next Month's Diary Rows…", 'addNextMonthRows')
     .addItem('Copy Installments & Bills to Transactions…', 'copyInstallmentsBillsToTransactions')
     .addItem('Set Up Daily Auto-Copy…', 'setupDailyTrigger')
     .addItem('Remove Daily Auto-Copy…', 'removeDailyTrigger')
