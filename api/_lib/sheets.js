@@ -1,4 +1,5 @@
 const { google } = require('googleapis');
+const { SETTINGS_RANGE, parseSettings } = require('./settings');
 
 // Bills use a far-future placeholder end date (e.g. Dec 2099) in the sheet to
 // mean "recurring, doesn't really end" -- as opposed to Installments, which
@@ -406,7 +407,29 @@ async function clearPayeeCoords(writeSheetsClient, name) {
   });
 }
 
+// Settings tab (WS0) -- key/value list read by key; parsing lives in
+// ./settings.js. A missing tab is not an error: every setting falls back to
+// its default and a warning says so.
+async function fetchSettings(sheetsClient) {
+  const sheets = sheetsClient || getSheetsClient();
+  let rows;
+  try {
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.SHEET_ID,
+      range: SETTINGS_RANGE,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    rows = response.data.values || [];
+  } catch (err) {
+    const msg = String((err && err.message) || '');
+    if (/unable to parse range/i.test(msg)) rows = null;
+    else throw err;
+  }
+  return parseSettings(rows);
+}
+
 module.exports = {
+  fetchSettings,
   fetchInstallmentRows,
   fetchDiaryRows,
   fetchAccountRows,

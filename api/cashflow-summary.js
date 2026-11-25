@@ -8,7 +8,13 @@
 // folded in here to free one of Vercel Hobby's 12 Serverless Function
 // slots for api/push.js. vercel.json rewrites the old /api/cashflow-months
 // URL to ?action=months, so anything still calling it keeps working.
-const { fetchDiaryRows, monthLabel } = require('./_lib/sheets');
+//
+// GET ?action=settings        -> the Settings tab, typed and defaulted
+//                                (see api/_lib/settings.js). Lives here
+//                                because the 12-function cap is full and the
+//                                weekly budget (?action=week) will too.
+const { fetchDiaryRows, fetchSettings, monthLabel } = require('./_lib/sheets');
+const { SETTINGS_SCHEMA } = require('./_lib/settings');
 
 async function actionMonths(res) {
   const rows = await fetchDiaryRows();
@@ -22,9 +28,21 @@ async function actionMonths(res) {
   res.status(200).json({ months, updatedAt: new Date().toISOString() });
 }
 
+async function actionSettings(res) {
+  const { values, warnings, tabFound } = await fetchSettings();
+  const schema = {};
+  Object.keys(SETTINGS_SCHEMA).forEach((k) => {
+    schema[k] = { type: SETTINGS_SCHEMA[k].type, default: SETTINGS_SCHEMA[k].default, description: SETTINGS_SCHEMA[k].description };
+  });
+  // Short cache: an edit in the sheet should show up within a minute.
+  res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate');
+  res.status(200).json({ settings: values, warnings, tabFound, schema, updatedAt: new Date().toISOString() });
+}
+
 module.exports = async (req, res) => {
   try {
     if (req.query && req.query.action === 'months') return await actionMonths(res);
+    if (req.query && req.query.action === 'settings') return await actionSettings(res);
 
     const month = (req.query && req.query.month) || '';
     if (!month) {
