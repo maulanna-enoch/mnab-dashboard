@@ -12,6 +12,8 @@ const {
   ensureTransactionsColumns,
 } = require('./_lib/sheets');
 const { kindForSave, planBulkKind, payeeKindMap, normalizeBillId, KIND_COLUMN, KIND_RULE_COLUMN, BILL_ID_COLUMN } = require('./_lib/kinds');
+// Shared with the browser bulk bar so the confirm text and the server agree.
+const { canMatch, pickKeeper, resultingBillId } = require('../public/shared/txn-match.js');
 
 // Bulk "Set kind" (shared/kind-ui.js): { action: 'setKind', rowNumbers,
 // kind: 'Variable' | 'Fixed' | 'auto' }. Touches only Kind / Kind Rule --
@@ -141,6 +143,118 @@ async function clearMatchColumns(sheets, spreadsheetId, headerMap, rowNumbers) {
   });
 }
 
+
+const truthy = (v) => v === true || v === 'TRUE' || v === 'true';
+
+// See the `matchRows` action below. Returns { status, body }.
+async function matchRows(body) {
+  const nums = Array.isArray(body.rowNumbers) ? body.rowNumbers.map((n) => parseInt(n, 10)) : [];
+  if (nums.length !== 2 || nums.some((n) => !Number.isInteger(n) || n < 2)) {
+    return { status: 400, body: { error: 'rowNumbers must be exactly 2 sheet row numbers.' } };
+  }
+
+  const sheets = getWriteSheetsClient();
+  const spreadsheetId = process.env.SHEET_ID;
+  const headerMap = await getHeaderMap(sheets, spreadsheetId, 'transactions');
+  const resp = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: 'transactions!A2:AZ',
+    valueRenderOption: 'UNFORMATTED_VALUE',
+  });
+  const values = resp.data.values || [];
+  const cellOf = (row, name) => {
+    const idx = headerMap[name];
+    const v = idx === undefined ? undefined : row[idx];
+    return v === undefined || v === null ? '' : v;
+  };
+  const toTxn = (rowNumber) => {
+    const row = values[rowNumber - 2];
+    if (!row || !row[0]) return null;
+    return {
+      rowNumber,
+      raw: row,
+      payee: row[0],
+      type: row[1] === 'Income' ? 'Income' : 'Expense',
+      amount: parseFloat(row[6]) || 0,
+      cleared: String(row[5] || '').trim(),
+      notes: row[10] || '',
+      pending: truthy(cellOf(row, 'Pending')),
+      reconciled: truthy(cellOf(row, 'Reconciled')),
+      billId: String(cellOf(row, BILL_ID_COLUMN)).trim() || null,
+      paymentId: String(cellOf(row, 'Payment ID')).trim() || null,
+      matchId: String(cellOf(row, 'Match ID')).trim() || null,
+    };
+  };
+
+  const a = toTxn(nums[0]);
+  const b = toTxn(nums[1]);
+  if (!a || !b) return { status: 404, body: { error: 'One of those rows no longer exists. Refresh and try again.' } };
+  const check = canMatch(a, b);
+  if (!check.ok) return { status: 400, body: { error: `Can't match: ${check.reason}` } };
+
+  const { keep, drop } = pickKeeper(a, b);
+  if (drop.reconciled) {
+    return { status: 400, body: { error: `Can't match: "${drop.payee}" is already reconciled, so it can't be deleted. Undo that reconciliation first.` } };
+  }
+  if (drop.paymentId) {
+    return { status: 400, body: { error: `Can't match: "${drop.payee}" is one leg of a card payment. Undo the payment first.` } };
+  }
+  const billId = resultingBillId(a, b);
+
+  // 1. The surviving row: reviewed (Pending FALSE), Cleared if either was,
+  //    and no longer part of any proposed import match.
+  const data = [];
+  if (headerMap['Pending'] !== undefined) {
+    data.push({ range: `transactions!${columnLetter(headerMap['Pending'])}${keep.rowNumber}`, values: [[false]] });
+  }
+  if (keep.cleared.toLowerCase() !== 'cleared' && drop.cleared.toLowerCase() === 'cleared') {
+    data.push({ range: `transactions!F${keep.rowNumber}`, values: [['Cleared']] });
+  }
+  if (data.length) {
+    await sheets.spreadsheets.values.batchUpdate({ spreadsheetId, requestBody: { valueInputOption: 'RAW', data } });
+  }
+  const matchIds = [keep.matchId, drop.matchId].filter(Boolean);
+  if (matchIds.length && headerMap['Match ID'] !== undefined) {
+    const linked = [];
+    values.forEach((row, i) => {
+      const id = String(cellOf(row, 'Match ID')).trim();
+      if (id && matchIds.includes(id) && i + 2 !== drop.rowNumber) linked.push(i + 2);
+    });
+    if (linked.length) await clearMatchColumns(sheets, spreadsheetId, headerMap, linked);
+  }
+
+  // 2. Bill link + Kind: a Source ID makes the row Fixed (see kinds.js).
+  const kindResult = await rewriteKind(
+    sheets, spreadsheetId, headerMap, keep.rowNumber, keep.raw,
+    billId ? { billId } : {},
+  );
+
+  // 3. Delete the other row last, so the writes above hit the right rows.
+  const gridId = await getSheetGridId(sheets, spreadsheetId, 'transactions');
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId,
+    requestBody: {
+      requests: [{
+        deleteDimension: {
+          range: { sheetId: gridId, dimension: 'ROWS', startIndex: drop.rowNumber - 1, endIndex: drop.rowNumber },
+        },
+      }],
+    },
+  });
+
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      keptRowNumber: drop.rowNumber < keep.rowNumber ? keep.rowNumber - 1 : keep.rowNumber,
+      deletedRowNumber: drop.rowNumber,
+      billId: billId || null,
+      kind: kindResult.kind,
+      updatedAt: new Date().toISOString(),
+    },
+  };
+}
+
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
     res.status(405).json({ error: 'Use POST' });
@@ -177,6 +291,19 @@ module.exports = async (req, res) => {
         await clearMatchColumns(sheets, spreadsheetId, headerMap, matchRows.map((r) => r.rowNumber));
       }
       res.status(200).json({ ok: true, updatedAt: new Date().toISOString() });
+      return;
+    }
+
+    // Manual match: the user picked two rows in the bulk bar that are the
+    // same real transaction (typically a bank-email import and the bill
+    // row InstallmentsBills.gs auto-inserted for it). Keeps one row, moves
+    // the bill link (Source ID) onto it, marks it reviewed (Pending FALSE),
+    // and deletes the other -- so the Bills page sees the bill as paid.
+    // Which row stays is decided by public/shared/txn-match.js, the same
+    // rule the confirmation dialog used.
+    if (action === 'matchRows') {
+      const result = await matchRows(req.body || {});
+      res.status(result.status).json(result.body);
       return;
     }
 

@@ -261,6 +261,7 @@
 .blk-confirm-message {
   font-size: 0.9rem;
   line-height: 1.5;
+  white-space: pre-line; /* multi-line messages, e.g. Match's Keep/Delete lines */
   margin: 0 0 18px;
 }
 .blk-confirm-actions {
