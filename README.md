@@ -145,6 +145,7 @@ mnab-dashboard/
                                       ?action=months lists the Diary months for the dropdown
                                       ?action=settings returns the Settings tab (typed, with defaults)
                                       ?action=week returns the weekly budget (allowance, left, history)
+                                      ?action=debt returns the actual hole and debt projection
   api/push.js                         Web Push: device subscriptions + the notify call EmailImport.gs makes
   api/installments-summary.js         Sum of active Installment amounts (excludes Bills);
                                       ?action=registry lists bills with their IB-n IDs
@@ -184,8 +185,19 @@ Rows are read **by key**, so order doesn't matter and extra rows are ignored.
 | `monthly_salary_rp` | Monthly salary, in Rp | not set |
 | `hole_start_date` | Date the Steals hole is counted from, `dd/mm/yyyy` | not set |
 | `budget_start_date` | First day of the weekly budget, `dd/mm/yyyy`; rollover counts from that week | blank = oldest week shown (optional) |
+| `hole_fee_pct` | Lender fee on the hole per 30 days, e.g. `1%` | 1% |
+| `job_start_date` | Start date at the current job, `dd/mm/yyyy` (prorates the THR) | blank (optional) |
+| `thr_date` | Date the THR is paid, `dd/mm/yyyy` | blank = no THR in the projection |
+| `thr_rp` | THR amount in Rp, if you know it | blank = months of service ÷ 12 × salary |
+| `thr_share_pct` | Share of the THR put toward the hole | 100% |
+| `raise_pct` | Yearly raise | 2% |
+| `first_raise_date` | When the first raise takes effect, `dd/mm/yyyy` | blank = no raises in the projection |
 
-Rupiah can be typed as a number or with `.` separators (`5.000.000`). A value
+Rupiah can be typed as a number or with `.` separators (`5.000.000`).
+Percentages are best typed with a `%` (`1%`, `1,5%`) or in a cell formatted as
+a percentage; a bare number above 1 is read as percentage points (`2` = 2%),
+but a bare `1` means 100%. The last seven rows only feed the debt projection
+and mirror the Claude Sheet's Assumptions tab. A value
 that can't be read falls back to its default and shows up in `warnings` from
 `GET /api/cashflow-summary?action=settings`; nothing throws. Server code reads
 settings with `fetchSettings()` from `api/_lib/sheets.js`. Rupiah values stay
@@ -254,3 +266,36 @@ Response: `week` (`start`, `end`, `allowance`, `carryIn`, `available`,
 `spent`, `left`, `daysLeft`, `perDay`, `transactions`), `history` (completed
 weeks, oldest first, each with `kept`), `streak` (weeks kept in a row),
 `excluded`, `warnings`. All amounts are whole rupiah.
+
+## Actual hole and debt projection (`?action=debt`)
+
+`GET /api/cashflow-summary?action=debt` answers "am I getting out of debt?".
+The rules live in `api/_lib/debt.js`:
+
+- **The actual hole** comes from the `Steals` log: Steal rows minus Payback
+  rows, counting the reserve types only (Penarikan Reksadana, Pinjaman,
+  Tabungan / Dana Darurat), from `hole_start_date` up to today. It's the
+  same figure as "Owed to future (reserves)" on the Steals Summary tab; card
+  cash advances and paylater are left out.
+- **The projection** is the Claude Sheet's Payoff plan, month by month from
+  next month: hole + fee against salary + THR + raises − bills − day-to-day,
+  where day-to-day is `weekly_allowance_rp` × 52 / 12 and bills come from
+  `installmentsbills`. A bill counts from its Starts month until the sheet's
+  "first statement free" month: Ends month + 1 for cash; for a card (a Card
+  bill, or anything whose SOF is a credit card) + 1 if Ends is on or before
+  the 12th, else + 2. Like the sheet, only the one THR in `thr_date` is
+  modelled. Given the same inputs it matches the sheet month for month.
+- **Debt-free month** is the month after the last month that still has a
+  hole (the sheet's "debt-free for good"). `estimatedDate` places it within
+  that month by how much of the month's room the last of the hole takes.
+- **At your pace** reruns it with day-to-day moved by the average
+  over/under-spend of the last 4 completed budget weeks (`&pace=N`).
+  **Last week** shows how many days last week's over/under-spend moves the
+  estimated date if it lands on the hole (positive = later).
+
+Query: `&date=YYYY-MM-DD`, `&months=N` (default 60), `&pace=N`, `&rows=0`
+(leave out the month-by-month table).
+
+Response: `hole` (`amount`, `pctOfSalary`, `byType`), `inputs`, `plan`
+(`debtFreeMonth`, `estimatedDate`, `peak`, `peakAfterThr`, `months`), `pace`,
+`lastWeek` (`deviation`, `movedDays`), `warnings`. Amounts are whole rupiah.

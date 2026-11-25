@@ -573,7 +573,53 @@ async function fetchSettings(sheetsClient) {
   return parseSettings(rows);
 }
 
+// Steals log (apps-script/Steals.gs) -- the actual hole (WS6). Columns are
+// found by header name (Date, Direction, Type, Source, Amount), so the tab's
+// column order doesn't matter. Returns null when the tab doesn't exist yet.
+// Dates come back as 'YYYY-MM-DD' built from the serial's calendar parts.
+async function fetchStealsRows(sheetsClient) {
+  const sheets = sheetsClient || getSheetsClient();
+  let all;
+  try {
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.SHEET_ID,
+      range: 'Steals!A1:Z',
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    all = response.data.values || [];
+  } catch (err) {
+    const msg = String((err && err.message) || '');
+    if (/unable to parse range/i.test(msg)) return null;
+    throw err;
+  }
+  const headers = (all[0] || []).map((h) => String(h || '').trim().toLowerCase());
+  const idx = (name) => headers.indexOf(name);
+  const col = { date: idx('date'), direction: idx('direction'), type: idx('type'), source: idx('source'), amount: idx('amount') };
+  if (col.date < 0 || col.direction < 0 || col.type < 0 || col.amount < 0) {
+    throw new Error('The "Steals" tab is missing a Date, Direction, Type or Amount column.');
+  }
+  const pad = (n) => String(n).padStart(2, '0');
+  return all.slice(1).map((row, i) => {
+    const raw = row[col.date];
+    let date = null;
+    if (typeof raw === 'number' && raw > 0) {
+      const d = serialToDate(Math.floor(raw));
+      date = `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+    }
+    const amount = typeof row[col.amount] === 'number' ? row[col.amount] : parseFloat(row[col.amount]);
+    return {
+      rowNumber: i + 2,
+      date,
+      direction: String(row[col.direction] || '').trim(),
+      type: String(row[col.type] || '').trim(),
+      source: col.source >= 0 ? String(row[col.source] || '').trim() : '',
+      amount: Number.isFinite(amount) ? amount : 0,
+    };
+  }).filter((r) => r.direction || r.amount);
+}
+
 module.exports = {
+  fetchStealsRows,
   fetchSettings,
   fetchInstallmentRows,
   fetchDiaryRows,
