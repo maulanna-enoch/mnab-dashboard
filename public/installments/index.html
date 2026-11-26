@@ -178,6 +178,9 @@
   .rows .name { font-weight: 600; font-size: 0.95rem; }
   .rows .meta { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
   .rows .flag { font-size: 0.75rem; color: #fbbf24; margin-top: 2px; }
+  .tag { display: inline-block; font-size: 0.65rem; font-weight: 700; letter-spacing: 0.02em; padding: 1px 6px; border-radius: 4px; margin-right: 6px; vertical-align: 1px; }
+  .tag.cc { background: #1e3a8a; color: #bfdbfe; }
+  .tag.cash { background: #3b0764; color: #e9d5ff; }
   .rows .right { text-align: right; white-space: nowrap; }
   .rows .amt { font-weight: 600; }
   .rows > li.done { opacity: 0.45; }
@@ -316,21 +319,23 @@
 
     function cycleRow(i) {
       const flags = [];
-      let meta;
+      let title;
+      let meta = '';
       let shown;
       if (i.type === 'statement') {
-        meta = [`${monthLabel(i.statementMonth)} statement`, i.dueDate ? `due ${dm(i.dueDate)}` : 'no due day set'].join(' · ');
+        // "<card> / <month> - dd/mm"; the due part is left off when no due day is set.
+        title = `${i.sof} / ${monthLabel(i.statementMonth)}${i.dueDate ? ` - ${dm(i.dueDate)}` : ''}`;
         if (i.status !== 'paid' && i.paidAmount) flags.push(`${formatIDR(i.paidAmount)} of ${formatIDR(i.amount)} paid so far`);
         shown = i.status === 'paid' ? i.amount : i.remaining;
       } else {
+        title = i.name;
         meta = [i.sof, `due ${dm(i.dueDate)}`, installmentMeta(i)].filter(Boolean).join(' · ');
         if (i.mismatch) flags.push(`Paid ${formatIDR(i.paidAmount)}, registry says ${formatIDR(i.amount)}`);
-        if (i.awaitingConfirm) flags.push('Auto-inserted row is waiting for you to confirm it');
         shown = i.amount;
       }
       return `<li class="${i.status === 'paid' ? 'done' : ''}">
         <div class="row">
-          <div><div class="name">${esc(i.name)}</div><div class="meta">${esc(meta)}</div>${flags.map((f) => `<div class="flag">${esc(f)}</div>`).join('')}</div>
+          <div><div class="name">${i.type === 'statement' ? '<span class="tag cc">CC</span>' : '<span class="tag cash">Cashbill</span>'}${esc(title)}</div>${meta ? `<div class="meta">${esc(meta)}</div>` : ''}${flags.map((f) => `<div class="flag">${esc(f)}</div>`).join('')}</div>
           <div class="right"><div class="amt">${formatIDR(shown)}</div>${pill(i.status)}</div>
         </div>
         ${i.type === 'statement' ? statementContents(i.contents) : ''}
