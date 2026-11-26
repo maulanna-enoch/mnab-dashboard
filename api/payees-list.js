@@ -67,7 +67,7 @@ async function actionCategories(res) {
     })),
     uncategorised: UNCATEGORISED,
     fromTab,
-    warning: fromTab ? null : 'No Categories tab yet: showing the starter list. Run Finances > Set Up Categories… in the sheet.',
+    warning: fromTab ? null : 'No Categories tab yet: showing the starter list. Run Finances > Setup > Categories… in the sheet.',
     updatedAt: new Date().toISOString(),
   });
 }

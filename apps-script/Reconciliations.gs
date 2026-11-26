@@ -68,22 +68,28 @@ const RECONCILE_CONFIG = {
 // later, add their .addItem(...) call here rather than defining another
 // onOpen().
 function onOpen() {
-  SpreadsheetApp.getUi()
-    .createMenu('Finances')
+  // Everyday actions at the top; automations and one-off setup in
+  // submenus. Every handler lives in its own file, all in one Apps Script
+  // project (one onOpen per project, so the whole menu is wired here).
+  const ui = SpreadsheetApp.getUi();
+  ui.createMenu('Finances')
     .addItem('Reconcile Account…', 'reconcileAccount')
     .addItem('Undo Last Reconciliation…', 'undoLastReconciliation')
-    .addItem('Copy Installments & Bills to Transactions…', 'copyInstallmentsBillsToTransactions')
-    .addItem('Set Up Daily Auto-Copy…', 'setupDailyTrigger')
-    .addItem('Remove Daily Auto-Copy…', 'removeDailyTrigger')
-    .addItem('Set Up Bill Kinds…', 'setupBillKinds')
+    .addSeparator()
     .addItem('Import Approved Rows from Inbox…', 'importFromInbox')
-    .addItem('Set Up Inbox Auto-Import…', 'setupInboxAutoImport')
-    .addItem('Remove Inbox Auto-Import…', 'removeInboxAutoImport')
-    .addItem('Set Up Steals from the Future…', 'setupSteals')
-    .addItem('Set Up Payee Rules…', 'setupPayeeRules')
+    .addItem('Copy Installments & Bills to Transactions…', 'copyInstallmentsBillsToTransactions')
     .addItem('Apply Payee Rules to All Rows…', 'applyPayeeRulesToAllRows')
-    .addItem('Classify Transactions (Fixed / Variable)…', 'classifyTransactionHistory')
-    .addItem('Set Up Categories…', 'setupCategories')
+    .addSeparator()
+    .addSubMenu(ui.createMenu('Automations')
+      .addItem('Daily Bills Auto-Copy (On / Off)…', 'toggleDailyTrigger')
+      .addItem('Inbox Auto-Import (On / Off)…', 'toggleInboxAutoImport'))
+    .addSubMenu(ui.createMenu('Setup')
+      .addItem('Bill Kinds…', 'setupBillKinds')
+      .addItem('Categories…', 'setupCategories')
+      .addItem('Payee Rules…', 'setupPayeeRules')
+      .addItem('Steals from the Future…', 'setupSteals')
+      .addSeparator()
+      .addItem('Classify Transactions (Fixed / Variable)…', 'classifyTransactionHistory'))
     .addToUi();
 }
 

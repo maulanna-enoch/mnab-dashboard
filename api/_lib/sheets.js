@@ -122,7 +122,7 @@ async function fetchInstallmentRows() {
   const headers = (all[0] || []).map((h) => String(h || '').trim());
   const idIdx = headers.indexOf('ID');
   // WS2: Cash bill / Card bill / Installment, self-provisioned by
-  // InstallmentsBills.gs ("Set Up Bill Kinds…"). Blank -> fallback.
+  // InstallmentsBills.gs (Finances > Setup > Bill Kinds…). Blank -> fallback.
   const kindIdx = headers.indexOf('Kind');
   const rows = all.slice(1);
 

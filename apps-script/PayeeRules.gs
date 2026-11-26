@@ -10,7 +10,7 @@
  * written.
  *
  * ── THE TAB ─────────────────────────────────────────────────────────────
- * Finances > Set Up Payee Rules… creates it (and adds starter DANA rules
+ * Finances > Setup > Payee Rules… creates it (and adds starter DANA rules
  * if it's empty). One rule per row. Rules are checked from the lowest
  * Order up, and the FIRST rule that matches wins; nothing after it runs.
  *
@@ -90,7 +90,7 @@
  * Paste this as a NEW script file named `PayeeRules` (Deployer only
  * replaces files that already exist), then paste the updated
  * EmailImport.gs and Reconciliations.gs (menu items). Reload the sheet,
- * then run Finances > Set Up Payee Rules… once.
+ * then run Finances > Setup > Payee Rules… once.
  */
 
 var PAYEE_RULES_SHEET_NAME = 'PayeeRules';
@@ -604,7 +604,7 @@ function ensurePayeeRuleColumns_(sheet, headerMap) {
 
 // ── Setup ────────────────────────────────────────────────────────────────
 
-// Finances > Set Up Payee Rules…  Safe to re-run: fixes headers and
+// Finances > Setup > Payee Rules…  Safe to re-run: fixes headers and
 // dropdowns, adds the starter rules only when the tab has no rules.
 function setupPayeeRules() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();

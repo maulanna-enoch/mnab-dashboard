@@ -59,7 +59,7 @@
  * spreadsheet (it's shared with it as Editor). The first run asks for
  * permission to open other spreadsheets.
  *
- * Automatic import (Finances > Set Up Inbox Auto-Import…):
+ * Automatic import (Finances > Automations > Inbox Auto-Import (On / Off)…):
  *   Installs a time-driven trigger that runs every
  *   INBOX_CONFIG.autoEveryMinutes minutes, but only does anything between
  *   autoStartHour and autoEndHour Jakarta time (12:00–20:59 by default);
@@ -74,7 +74,7 @@
  *       ledger.
  *   Runs that change something, new skip reasons and errors are written to
  *   the "Inbox Import Log" tab; quiet runs write nothing.
- *   Finances > Remove Inbox Auto-Import… undoes it.
+ *   The same menu item turns it off.
  */
 
 const INBOX_CONFIG = {
@@ -363,7 +363,32 @@ function inbox_log_(trigger, text) {
   sheet.appendRow([new Date(), trigger, text]);
 }
 
-/** Menu entry point: install the automatic import trigger. */
+/**
+ * Menu entry point: Finances > Automations > Inbox Auto-Import (On / Off)….
+ * Says whether the automatic import is on and offers to switch it, then
+ * hands off to setupInboxAutoImport() / removeInboxAutoImport().
+ */
+function toggleInboxAutoImport() {
+  const ui = SpreadsheetApp.getUi();
+  const hours = INBOX_CONFIG.autoStartHour + ':00–' + (INBOX_CONFIG.autoEndHour - 1) + ':59';
+  const on = ScriptApp.getProjectTriggers().some(function (t) {
+    return t.getHandlerFunction() === INBOX_CONFIG.autoHandler;
+  });
+  const answer = ui.alert(
+    'Inbox Auto-Import',
+    on
+      ? 'Inbox Auto-Import is ON: every ' + INBOX_CONFIG.autoEveryMinutes + ' minutes between ' + hours +
+        ' (Jakarta) it imports approved inbox rows without asking.\n\nTurn it off?'
+      : 'Inbox Auto-Import is OFF: inbox rows are only imported when you run ' +
+        'Finances > Import Approved Rows from Inbox….\n\nTurn it on (every ' + INBOX_CONFIG.autoEveryMinutes +
+        ' minutes, ' + hours + ')?',
+    ui.ButtonSet.YES_NO
+  );
+  if (answer !== ui.Button.YES) return;
+  if (on) removeInboxAutoImport(); else setupInboxAutoImport();
+}
+
+/** Installs the automatic import trigger. Called from toggleInboxAutoImport(). */
 function setupInboxAutoImport() {
   const ui = SpreadsheetApp.getUi();
   const hours = INBOX_CONFIG.autoStartHour + ':00–' + (INBOX_CONFIG.autoEndHour - 1) + ':59';
@@ -386,7 +411,7 @@ function setupInboxAutoImport() {
     INBOX_CONFIG.logSheet + '" tab.');
 }
 
-/** Menu entry point: undo setupInboxAutoImport(). */
+/** Undo setupInboxAutoImport(). Called from toggleInboxAutoImport(). */
 function removeInboxAutoImport() {
   const ui = SpreadsheetApp.getUi();
   const triggers = ScriptApp.getProjectTriggers().filter(function (t) {

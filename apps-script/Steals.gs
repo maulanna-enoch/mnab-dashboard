@@ -1,5 +1,5 @@
 /**
- * Steals.gs — "Set Up Steals from the Future…"
+ * Steals.gs — Finances › Setup › "Steals from the Future…"
  *
  * Tracks money borrowed from your future self: cash advances on a credit
  * card (penarikan dana CC), selling mutual funds (penarikan reksadana),
