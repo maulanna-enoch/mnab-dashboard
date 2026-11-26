@@ -1,0 +1,125 @@
+/* Category chip, filter and picker (see shared/category-ui.js). Prefix ctg-.
+ *
+ * A category's colour comes from the Categories tab (--ctg, set inline per
+ * chip); it tints the dot and the chip's border. Uncategorised is a dashed
+ * grey outline, so the rows that still need a category stand out.
+ */
+.ctg-chip {
+  --ctg: #9ca3af;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  font-size: 0.68rem;
+  line-height: 1;
+  padding: 3px 7px 3px 6px;
+  border-radius: 999px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+  color: var(--text, #e5e7eb);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid color-mix(in srgb, var(--ctg) 45%, transparent);
+}
+.ctg-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ctg, #9ca3af);
+}
+.ctg-chip.ctg-none { color: var(--muted, #9ca3af); border: 1px dashed rgba(156, 163, 175, 0.55); background: transparent; }
+.ctg-manual { font-size: 0.62rem; opacity: 0.85; }
+
+/* Wide table column. The cell is a button-like target: tap to change. */
+.ctg-cell { white-space: nowrap; overflow: hidden; cursor: pointer; }
+.ctg-cell:hover .ctg-chip { border-color: var(--text, #e5e7eb); }
+.ctg-cell-empty { color: var(--muted, #9ca3af); font-size: 0.7rem; }
+
+/* Filter select, next to the Kind chips. */
+.ctg-filter {
+  background: var(--card, #1a1d24);
+  color: var(--text, #e5e7eb);
+  border: 1px solid #2a2e37;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 0.75rem;
+  font-family: inherit;
+  max-width: 100%;
+  margin: 0 0 12px;
+}
+.ctg-filter.ctg-filter-on { border-color: var(--text, #e5e7eb); }
+
+/* Picker: a bottom sheet above everything, the transaction form included
+   (.txf-overlay is z-index 12). */
+.ctg-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  display: none;
+  align-items: flex-end;
+  justify-content: center;
+  z-index: 20;
+}
+.ctg-overlay.open { display: flex; }
+.ctg-sheet {
+  width: 100%;
+  max-width: 420px;
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--card, #1a1d24);
+  border-radius: 16px 16px 0 0;
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+}
+@media (min-width: 768px) {
+  .ctg-overlay { align-items: center; }
+  .ctg-sheet { border-radius: 16px; max-height: 70vh; }
+}
+.ctg-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.ctg-title { font-size: 15px; font-weight: 600; }
+.ctg-close { color: var(--muted, #9ca3af); font-size: 18px; background: none; border: none; cursor: pointer; padding: 4px; line-height: 1; font-family: inherit; }
+.ctg-search {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--bg, #0f1115);
+  color: var(--text, #e5e7eb);
+  border: 1px solid #2a2e37;
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 16px; /* no iOS zoom-on-focus */
+  font-family: inherit;
+  margin-bottom: 8px;
+}
+.ctg-list { overflow-y: auto; -webkit-overflow-scrolling: touch; }
+.ctg-group {
+  font-size: 11px;
+  color: var(--muted, #9ca3af);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 12px 4px 4px;
+}
+.ctg-option {
+  --ctg: #9ca3af;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  background: none;
+  border: none;
+  border-radius: 8px;
+  color: var(--text, #e5e7eb);
+  font-size: 14px;
+  font-family: inherit;
+  text-align: left;
+  padding: 0 8px;
+  cursor: pointer;
+}
+.ctg-option:hover, .ctg-option:focus-visible { background: rgba(255, 255, 255, 0.06); outline: none; }
+.ctg-option .ctg-dot { width: 10px; height: 10px; }
+.ctg-current { font-weight: 600; }
+.ctg-check { margin-left: auto; color: var(--accent, #22c55e); }
+.ctg-auto { color: var(--muted, #9ca3af); font-style: italic; }
+.ctg-empty { color: var(--muted, #9ca3af); font-size: 13px; padding: 16px 4px; }

@@ -323,3 +323,38 @@
 }
 .txf-link-btn-muted { color: var(--muted); }
 .txf-kind-group > .txf-field-label { display: block; margin-bottom: 4px; }
+
+/* Category (Category system C3): a button showing the category chip from
+   shared/category-ui.css; tapping opens CategoryUI's picker. */
+.txf-cat-group { margin-bottom: 12px; }
+.txf-cat-group > .txf-field-label { display: block; margin-bottom: 4px; }
+.txf-cat-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 42px;
+  background: var(--bg, #0f1115);
+  border: 1px solid #2a2e37;
+  border-radius: 10px;
+  padding: 8px 12px;
+  margin-bottom: 4px;
+  font-family: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.txf-cat-btn:focus-visible { outline: 2px solid var(--accent, #22c55e); outline-offset: 2px; }
+.txf-cat-btn .ctg-chip { font-size: 0.8rem; padding: 5px 9px 5px 8px; }
+.txf-cat-change { font-size: 12px; color: var(--accent); flex: none; }
+.txf-cat-none { font-size: 13px; color: var(--muted); }
+.txf-cat-remember {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 12.5px;
+  color: var(--text);
+  cursor: pointer;
+}
+.txf-cat-remember input { width: 16px; height: 16px; accent-color: var(--accent, #22c55e); }

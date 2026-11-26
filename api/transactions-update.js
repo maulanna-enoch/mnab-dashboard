@@ -10,7 +10,10 @@ const {
   writeTransactionKind,
   fetchTransactionRows,
   ensureTransactionsColumns,
+  fetchCategoryContext,
+  writeTransactionCategory,
 } = require('./_lib/sheets');
+const { categoryForSave, categoryCells, planBulkCategory, CATEGORY_COLUMN, CATEGORY_RULE_COLUMN } = require('./_lib/categories');
 const { kindForSave, planBulkKind, payeeKindMap, normalizeBillId, KIND_COLUMN, KIND_RULE_COLUMN, BILL_ID_COLUMN } = require('./_lib/kinds');
 // Shared with the browser bulk bar so the confirm text and the server agree.
 const { canMatch, pickKeeper, resultingBillId } = require('../public/shared/txn-match.js');
@@ -63,6 +66,96 @@ async function setKindBulk(body) {
     rows: plan.writes,
     updatedAt: new Date().toISOString(),
   };
+}
+
+// Bulk "Set category" (shared/category-ui.js): { action: 'setCategory',
+// rowNumbers, category: '<name>' | 'auto' }. Touches only Category /
+// Category Rule -- no other cell, no Pending flip. Transfers and rows the
+// category doesn't fit (an expense category on income) are skipped and
+// counted, see planBulkCategory().
+async function setCategoryBulk(body) {
+  const rowNumbers = Array.isArray(body.rowNumbers) ? body.rowNumbers : [];
+  if (!rowNumbers.length) {
+    const err = new Error('Missing required field: rowNumbers');
+    err.status = 400;
+    throw err;
+  }
+  const sheets = getWriteSheetsClient();
+  const spreadsheetId = process.env.SHEET_ID;
+  const [rows, ctx, headerMap] = await Promise.all([
+    fetchTransactionRows(),
+    fetchCategoryContext(sheets),
+    getHeaderMap(sheets, spreadsheetId, 'transactions'),
+  ]);
+  let plan;
+  try {
+    plan = planBulkCategory(rows, rowNumbers, body.category, ctx);
+  } catch (e) {
+    e.status = 400;
+    throw e;
+  }
+  if (plan.writes.length) {
+    const map = await ensureTransactionsColumns(sheets, headerMap, [CATEGORY_COLUMN, CATEGORY_RULE_COLUMN]);
+    const catCol = columnLetter(map[CATEGORY_COLUMN]);
+    const ruleCol = columnLetter(map[CATEGORY_RULE_COLUMN]);
+    const data = [];
+    plan.writes.forEach((w) => {
+      data.push({ range: `transactions!${catCol}${w.rowNumber}`, values: [[w.category]] });
+      data.push({ range: `transactions!${ruleCol}${w.rowNumber}`, values: [[w.rule]] });
+    });
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId,
+      requestBody: { valueInputOption: 'RAW', data },
+    });
+  }
+  return {
+    ok: true,
+    updated: plan.writes.length,
+    skipped: plan.skipped.length,
+    missing: plan.missing.length,
+    rows: plan.writes,
+    updatedAt: new Date().toISOString(),
+  };
+}
+
+// Category system C3: re-derives Category / Category Rule for a row that
+// was just saved. Like rewriteKind() it reads the row's current Transfer,
+// Source ID and stored category first, so a hand-set category survives the
+// edit paths that never mention it (inline cell edits, swipe-to-clear,
+// bulk actions); categoryManual true / false in the body sets / clears it.
+// Only writes when the cells would change.
+async function rewriteCategory(sheets, spreadsheetId, headerMap, rowNumber, row, body) {
+  const [resp, ctx] = await Promise.all([
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `transactions!A${rowNumber}:AZ${rowNumber}`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    }),
+    fetchCategoryContext(sheets),
+  ]);
+  const current = (resp.data.values && resp.data.values[0]) || [];
+  const cell = (name) => {
+    const idx = headerMap[name];
+    const v = idx === undefined ? '' : current[idx];
+    return v === undefined || v === null ? '' : v;
+  };
+  const transferRaw = cell('Transfer');
+  const isTransfer = transferRaw === true || transferRaw === 'TRUE' || transferRaw === 'true';
+  const billId = Object.prototype.hasOwnProperty.call(body, 'billId')
+    ? (normalizeBillId(body.billId) || '')
+    : String(cell(BILL_ID_COLUMN)).trim();
+  const stored = { storedCategory: String(cell(CATEGORY_COLUMN)).trim(), storedCategoryRule: String(cell(CATEGORY_RULE_COLUMN)).trim() };
+  const result = categoryForSave(
+    { type: row[1], isTransfer, billId, notes: row[10], payee: row[0] },
+    { category: body.category, categoryManual: body.categoryManual },
+    stored,
+    ctx,
+  );
+  const cells = categoryCells(result);
+  const unchanged = headerMap[CATEGORY_COLUMN] !== undefined && headerMap[CATEGORY_RULE_COLUMN] !== undefined &&
+    stored.storedCategory === cells.category && stored.storedCategoryRule === cells.rule;
+  if (!unchanged) await writeTransactionCategory(sheets, headerMap, rowNumber, cells);
+  return result;
 }
 
 // WS1: re-derives and writes Kind / Kind Rule (and Source ID, when the
@@ -273,6 +366,15 @@ module.exports = async (req, res) => {
       return;
     }
 
+    if (action === 'setCategory') {
+      try {
+        res.status(200).json(await setCategoryBulk(req.body || {}));
+      } catch (e) {
+        res.status(e.status || 500).json({ error: e.message });
+      }
+      return;
+    }
+
     // Issue #51: user declines a proposed match ("not the same transaction")
     // -- clears the Match ID/Status off every row sharing it (normally the
     // imported leg and the manual leg), leaving both rows otherwise
@@ -470,15 +572,27 @@ module.exports = async (req, res) => {
       console.error('Payee registry upsert failed (non-fatal):', payeeErr);
     }
 
-    // WS1 Kind -- best-effort, same as the payee upsert above.
+    // WS1 Kind and C3 Category -- best-effort, same as the payee upsert
+    // above; the two are independent, so they run side by side.
     let kindResult = null;
-    try {
-      kindResult = await rewriteKind(sheets, spreadsheetId, headerMap, rowNumber, row, req.body || {});
-    } catch (kindErr) {
-      console.error('Kind write failed (non-fatal):', kindErr);
-    }
+    let categoryResult = null;
+    await Promise.all([
+      rewriteKind(sheets, spreadsheetId, headerMap, rowNumber, row, req.body || {})
+        .then((r) => { kindResult = r; })
+        .catch((kindErr) => console.error('Kind write failed (non-fatal):', kindErr)),
+      rewriteCategory(sheets, spreadsheetId, headerMap, rowNumber, row, req.body || {})
+        .then((r) => { categoryResult = r; })
+        .catch((catErr) => console.error('Category write failed (non-fatal):', catErr)),
+    ]);
 
-    res.status(200).json({ ok: true, kind: kindResult && kindResult.kind, kindRule: kindResult && kindResult.rule, updatedAt: new Date().toISOString() });
+    res.status(200).json({
+      ok: true,
+      kind: kindResult && kindResult.kind,
+      kindRule: kindResult && kindResult.rule,
+      category: categoryResult && categoryResult.category,
+      categoryRule: categoryResult && categoryResult.rule,
+      updatedAt: new Date().toISOString(),
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });

@@ -17,6 +17,7 @@ const {
   parseCategoryRows,
   buildCategoryContext,
   classifyCategory,
+  normalizeCategoryName,
 } = require('./categories');
 
 // BILL_YEAR_THRESHOLD (from ./bills): a far-future Ends (e.g. Dec 2099)
@@ -401,6 +402,35 @@ async function ensureTransactionsColumns(sheets, headerMap, names) {
   return map;
 }
 
+// Everything classifyCategory() needs, read fresh for a write: the
+// Categories tab, payee defaults and bill categories, in parallel.
+async function fetchCategoryContext(sheetsClient) {
+  const sheets = sheetsClient || getSheetsClient();
+  const [cats, payees, bills] = await Promise.all([
+    fetchCategoryRows(sheets),
+    fetchPayeeRows(sheets),
+    fetchInstallmentRows(),
+  ]);
+  return buildCategoryContext(cats.categories, payees, billCategoryMap(bills));
+}
+
+// Writes one row's Category / Category Rule (categoryCells() output),
+// adding the two columns if this sheet doesn't have them yet.
+async function writeTransactionCategory(sheets, headerMap, rowNumber, { category, rule }) {
+  const map = await ensureTransactionsColumns(sheets, headerMap, [CATEGORY_COLUMN, CATEGORY_RULE_COLUMN]);
+  await sheets.spreadsheets.values.batchUpdate({
+    spreadsheetId: process.env.SHEET_ID,
+    requestBody: {
+      valueInputOption: 'RAW',
+      data: [
+        { range: `transactions!${columnLetter(map[CATEGORY_COLUMN])}${rowNumber}`, values: [[category || '']] },
+        { range: `transactions!${columnLetter(map[CATEGORY_RULE_COLUMN])}${rowNumber}`, values: [[rule || '']] },
+      ],
+    },
+  });
+  return map;
+}
+
 // Writes Kind / Kind Rule (and, when `billId` is not undefined, Source ID
 // -- '' clears it) onto one transactions row. Provisions the columns first.
 async function writeTransactionKind(sheets, headerMap, rowNumber, { kind, rule, billId }) {
@@ -448,6 +478,7 @@ function buildTransactionRow({ payee, type, sof, dateSerial, monthSerial, cleare
 // api/_lib/categories.js. Blank = none.
 const PAYEES_RANGE = 'Payees!A2:F';
 const PAYEES_KIND_HEADER_CELL = 'Payees!E1';
+const PAYEES_CATEGORY_HEADER_CELL = 'Payees!F1';
 
 function normalizePayeeName(name) {
   return String(name || '').trim().toLowerCase();
@@ -560,6 +591,38 @@ async function setPayeeKind(writeSheetsClient, name, kind) {
   });
 }
 
+// A payee's default category (Category system C3), Payees column F. A
+// blank / null category clears it. Adds the payee row if it's missing and a
+// category is being set; puts the F1 header in if it isn't there yet.
+async function setPayeeCategory(writeSheetsClient, name, category) {
+  const trimmedName = String(name || '').trim();
+  if (!trimmedName) return;
+  const value = normalizeCategoryName(category);
+  const spreadsheetId = process.env.SHEET_ID;
+  const header = await writeSheetsClient.spreadsheets.values.get({ spreadsheetId, range: PAYEES_CATEGORY_HEADER_CELL });
+  if (!((header.data.values || [])[0] || [])[0]) {
+    await writeSheetsClient.spreadsheets.values.update({
+      spreadsheetId,
+      range: PAYEES_CATEGORY_HEADER_CELL,
+      valueInputOption: 'RAW',
+      requestBody: { values: [['Category']] },
+    });
+  }
+  let existing = findPayeeRow(await fetchPayeeRows(writeSheetsClient), trimmedName);
+  if (!existing) {
+    if (!value) return;
+    await upsertPayee(writeSheetsClient, { name: trimmedName });
+    existing = findPayeeRow(await fetchPayeeRows(writeSheetsClient), trimmedName);
+    if (!existing) throw new Error(`Couldn't add payee "${trimmedName}"`);
+  }
+  await writeSheetsClient.spreadsheets.values.update({
+    spreadsheetId,
+    range: `Payees!F${existing.rowNumber}`,
+    valueInputOption: 'RAW',
+    requestBody: { values: [[value]] },
+  });
+}
+
 // Manual "Clear location" action on the Payees page. No-op if the payee
 // has no row at all (nothing to clear).
 async function clearPayeeCoords(writeSheetsClient, name) {
@@ -654,6 +717,9 @@ module.exports = {
   classifyTransactionCategory,
   billCategoryMap,
   fetchCategoryRows,
+  fetchCategoryContext,
+  writeTransactionCategory,
+  setPayeeCategory,
   ensureTransactionsColumns,
   writeTransactionKind,
   buildTransactionRow,
