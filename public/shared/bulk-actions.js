@@ -26,6 +26,12 @@
  *       // closes it. Used by shared/kind-ui.js's "Set kind".
  *       { key: 'setKind', label: 'Set kind', hotkey: 'k',
  *         choices: [{ value: 'Variable', label: 'Variable', hotkey: 'v' }, ...] },
+ *       // A `pick` action opens the host's own picker (e.g. the category
+ *       // list in shared/category-ui.js, too long for a button row):
+ *       // pick(selectedTxns) returns a Promise of the value for onAction,
+ *       // or null/undefined if the person backed out.
+ *       { key: 'setCategory', label: 'Set category', hotkey: 'y',
+ *         pick: (txns) => CategoryUI.pick({ ... }) },
  *       // Optional per action: `when(txns)` -- only offered (button shown,
  *       // hotkey live) while it returns true for the selected rows; and
  *       // `confirm(txns)` -- a message string to confirm first (verb from
@@ -347,11 +353,7 @@
       btn.className = 'blk-action-btn' + (action.danger ? ' danger' : '');
       btn.dataset.action = action.key;
       btn.innerHTML = actionButtonLabel(action);
-      btn.addEventListener('click', () => {
-        if (action.choices) openChoiceRow(action);
-        else if (action.input) openInputRow(action);
-        else runAction(action.key, null);
-      });
+      btn.addEventListener('click', () => startAction(action));
       state.actionsRow.appendChild(btn);
     });
   }
@@ -540,10 +542,28 @@
     const action = state.options.actions.find((a) => hotkeyMatches(a.hotkey, e) && isAvailable(a));
     if (!action) return;
     e.preventDefault();
+    startAction(action);
+  });
+
+  // One entry point for a tap or a hotkey on an action button.
+  function startAction(action) {
     if (action.choices) openChoiceRow(action);
     else if (action.input) openInputRow(action);
+    else if (typeof action.pick === 'function') runPicked(action);
     else runAction(action.key, null);
-  });
+  }
+
+  async function runPicked(action) {
+    let value;
+    try {
+      value = await action.pick(selectedTxns());
+    } catch (err) {
+      alert(err.message);
+      return;
+    }
+    if (value === null || value === undefined) return;
+    runAction(action.key, value);
+  }
 
   global.BulkSelect = {
     mount,

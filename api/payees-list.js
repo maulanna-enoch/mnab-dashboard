@@ -20,6 +20,10 @@
 // set (or, by omitting lat/lon, clear) one payee's stored coordinates.
 // Also how a payee with no transactions yet gets pre-seeded.
 //
+// POST action=set-category (Category system C3): set or clear one payee's
+// default category (Payees column F). category: a name from the Categories
+// tab, or '' / null to clear.
+//
 // POST action=set-kind: set or clear one payee's Fixed / Variable override
 // (WS1, the "payee rule" step of api/_lib/kinds.js), stored in the Payees
 // tab's Kind column.
@@ -39,9 +43,10 @@ const {
   upsertPayee,
   clearPayeeCoords,
   setPayeeKind,
+  setPayeeCategory,
 } = require('./_lib/sheets');
 const { normalizeSpendingKind } = require('./_lib/kinds');
-const { sortCategories, UNCATEGORISED } = require('./_lib/categories');
+const { sortCategories, UNCATEGORISED, normalizeCategoryName } = require('./_lib/categories');
 
 async function actionList(res) {
   const sheets = getSheetsClient();
@@ -107,6 +112,27 @@ async function actionSetCoords(body, res) {
 // every transaction with that payee that has no Bill ID and no hand-set
 // Kind (see api/_lib/kinds.js). kind: 'Fixed' | 'Variable' | '' / null to
 // clear.
+async function actionSetCategory(body, res) {
+  const { name, category } = body || {};
+  if (!name || !String(name).trim()) {
+    res.status(400).json({ error: 'name is required' });
+    return;
+  }
+  const wanted = normalizeCategoryName(category);
+  let canonical = '';
+  if (wanted) {
+    const { categories } = await fetchCategoryRows(getSheetsClient());
+    const hit = categories.find((c) => c.name.toLowerCase() === wanted.toLowerCase());
+    if (!hit || wanted.toLowerCase() === UNCATEGORISED.toLowerCase()) {
+      res.status(400).json({ error: `"${wanted}" is not a category on the Categories tab` });
+      return;
+    }
+    canonical = hit.name;
+  }
+  await setPayeeCategory(getWriteSheetsClient(), name, canonical || null);
+  res.status(200).json({ ok: true, category: canonical || null });
+}
+
 async function actionSetKind(body, res) {
   const { name, kind } = body || {};
   if (!name || !String(name).trim()) {
@@ -173,10 +199,12 @@ module.exports = async (req, res) => {
         return await actionSetCoords(req.body, res);
       case 'set-kind':
         return await actionSetKind(req.body, res);
+      case 'set-category':
+        return await actionSetCategory(req.body, res);
       case 'backfill':
         return await actionBackfill(res);
       default:
-        res.status(400).json({ error: 'Unknown or missing action. Use one of: set-coords, set-kind, backfill.' });
+        res.status(400).json({ error: 'Unknown or missing action. Use one of: set-coords, set-kind, set-category, backfill.' });
     }
   } catch (err) {
     console.error(err);

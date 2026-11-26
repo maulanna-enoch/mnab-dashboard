@@ -15,6 +15,7 @@
 <script src="/shared/pwa.js"></script>
 <link rel="stylesheet" href="/shared/responsive.css" />
 <link rel="stylesheet" href="/shared/bottom-nav.css" />
+<link rel="stylesheet" href="/shared/category-ui.css" />
 <style>
   :root {
     color-scheme: light dark;
@@ -118,6 +119,33 @@
   .kind-btn:disabled { opacity: 0.5; cursor: default; }
   .kind-tag { color: var(--text); }
   .section-gap { margin-top: 20px; }
+
+  /* Category (C3): the payee's default category, and the list of payees
+     whose spending is still Uncategorised, biggest first. */
+  .cat-pick-btn {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    width: 100%; min-height: 42px; box-sizing: border-box;
+    background: var(--card); border: 1px solid #2a2e37; border-radius: 10px;
+    padding: 8px 12px; font-family: inherit; cursor: pointer; text-align: left; color: var(--text);
+  }
+  .cat-pick-btn .ctg-chip { font-size: 0.8rem; padding: 5px 9px 5px 8px; }
+  .cat-pick-change { font-size: 12px; color: var(--accent); flex: none; }
+  .cat-none { font-size: 13px; color: var(--muted); }
+  .uncat-wrap { margin: 18px 0 22px; }
+  .uncat-title { font-size: 13px; font-weight: 600; margin: 0 0 2px; }
+  .uncat-sub { font-size: 12px; color: var(--muted); margin: 0 0 8px; line-height: 1.4; }
+  .uncat-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 10px 12px; background: var(--card); border-radius: 10px; margin-bottom: 6px;
+  }
+  .uncat-name { font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .uncat-meta { font-size: 12px; color: var(--muted); margin-top: 2px; font-variant-numeric: tabular-nums; }
+  .uncat-btn {
+    flex: none; background: none; border: 1px solid #2a2e37; border-radius: 999px;
+    color: var(--accent); font: inherit; font-size: 12px; padding: 6px 11px; cursor: pointer;
+  }
+  .uncat-btn:disabled { opacity: 0.5; cursor: default; }
+  .uncat-done { font-size: 12px; color: var(--muted); padding: 6px 0; }
 </style>
 </head>
 <body>
@@ -127,6 +155,12 @@
   <h1>Payees</h1>
   <button class="backfill-btn" id="backfill-btn">Import payees from transaction history</button>
   <p class="backfill-hint">Adds any payee from your past transactions that isn't listed below yet. Safe to run again any time -- never touches a payee that already has a row.</p>
+
+  <div class="uncat-wrap" id="uncat-wrap" style="display:none;">
+    <p class="uncat-title">Uncategorised spending, by payee</p>
+    <p class="uncat-sub" id="uncat-sub"></p>
+    <div id="uncat-list"></div>
+  </div>
 
   <div id="payees-loading" class="loading">Loading…</div>
   <div id="payees-error" class="error" style="display:none;"></div>
@@ -152,6 +186,18 @@
     pick this up the next time you run Finances › Setup › Classify Transactions.
   </p>
   <div id="kind-error" class="error" style="display:none; margin-top:8px;"></div>
+
+  <div class="section-gap"></div>
+
+  <label class="field-label">Default category</label>
+  <button type="button" class="cat-pick-btn" id="cat-pick-btn"></button>
+  <p class="hint">
+    Every transaction with this payee gets this category, unless it's linked
+    to a bill with its own category, a payee rule sets one, or you picked one
+    on the transaction itself. Saves as soon as you pick. Past transactions
+    follow right away in the app.
+  </p>
+  <div id="cat-error" class="error" style="display:none; margin-top:8px;"></div>
 
   <div class="section-gap"></div>
 
@@ -183,6 +229,8 @@
 
 <script src="/shared/bottom-nav.js"></script>
 <script src="/shared/keyboard-nav.js"></script>
+<script src="/shared/modal-a11y.js"></script>
+<script src="/shared/category-ui.js"></script>
 <script>
   async function apiGet(url) {
     const res = await fetch(url);
@@ -226,7 +274,7 @@
         <div class="payee-row" data-name="${p.name}">
           <div>
             <div class="payee-name">${p.name}</div>
-            <div class="payee-status"><span class="payee-dot ${hasCoords ? 'set' : ''}"></span>${hasCoords ? 'Location set' : 'No location'}${p.kind ? ` · <span class="kind-tag">${p.kind}</span>` : ''}</div>
+            <div class="payee-status"><span class="payee-dot ${hasCoords ? 'set' : ''}"></span>${hasCoords ? 'Location set' : 'No location'}${p.kind ? ` · <span class="kind-tag">${p.kind}</span>` : ''}${p.category ? ` · ${CategoryUI.nameChip(p.category)}` : ''}</div>
           </div>
           <div class="payee-coords">${coordsText}</div>
         </div>
@@ -263,8 +311,143 @@
     document.getElementById('edit-lon').value = currentPayee.lon != null ? currentPayee.lon : '';
     document.getElementById('detail-error').style.display = 'none';
     document.getElementById('kind-error').style.display = 'none';
+    document.getElementById('cat-error').style.display = 'none';
     renderKind();
+    renderCategory();
     goto('detail');
+  }
+
+  // ── Default category (C3) ──────────────────────────────────────────────
+  function renderCategory() {
+    const c = currentPayee && currentPayee.category;
+    document.getElementById('cat-pick-btn').innerHTML =
+      (c ? CategoryUI.nameChip(c) : '<span class="cat-none">None</span>') + '<span class="cat-pick-change">Change</span>';
+  }
+
+  // Sets (or clears, with null) one payee's default category. Returns true
+  // on success. Updates the local list so the page reflects it.
+  async function savePayeeCategory(name, category) {
+    await CategoryUI.setPayeeDefault(name, category);
+    const p = payees.find((x) => x.name === name);
+    if (p) p.category = category || null;
+  }
+
+  async function pickPayeeCategory() {
+    if (!currentPayee) return;
+    const errorEl = document.getElementById('cat-error');
+    errorEl.style.display = 'none';
+    let choice;
+    try {
+      choice = await CategoryUI.pick({
+        title: 'Default category · ' + currentPayee.name,
+        current: currentPayee.category,
+        type: 'any',
+        allowAuto: true,
+        autoLabel: 'None (no default)',
+      });
+    } catch (err) {
+      errorEl.textContent = 'Couldn’t load categories: ' + err.message;
+      errorEl.style.display = 'block';
+      return;
+    }
+    if (!choice) return;
+    const value = choice === 'auto' ? null : choice;
+    const btn = document.getElementById('cat-pick-btn');
+    btn.disabled = true;
+    try {
+      await savePayeeCategory(currentPayee.name, value);
+      renderCategory();
+    } catch (err) {
+      errorEl.textContent = err.message;
+      errorEl.style.display = 'block';
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // ── Uncategorised spending, by payee (C3) ───────────────────────────────
+  // Expenses from the last 90 days whose category is still Uncategorised,
+  // added up per payee, biggest first: giving the top few a default
+  // category is the quickest way to categorise most of your spending.
+  const UNCAT_DAYS = 90;
+  const UNCAT_MAX = 12;
+  let uncatRows = [];
+
+  function formatIDR(n) {
+    return 'Rp ' + Math.round(Number(n) || 0).toLocaleString('id-ID');
+  }
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  async function loadUncategorised() {
+    try {
+      const data = await apiGet('/api/transactions-list');
+      const since = new Date();
+      since.setDate(since.getDate() - UNCAT_DAYS);
+      const p2 = (n) => String(n).padStart(2, '0');
+      const sinceStr = `${since.getFullYear()}-${p2(since.getMonth() + 1)}-${p2(since.getDate())}`;
+      const byPayee = new Map();
+      (data.transactions || []).forEach((t) => {
+        if (t.type !== 'Expense' || t.transfer || t.category !== CategoryUI.UNCATEGORISED) return;
+        if (!t.date || t.date < sinceStr) return;
+        const key = String(t.payee || '').trim();
+        if (!key) return;
+        const e = byPayee.get(key.toLowerCase()) || { name: key, total: 0, count: 0 };
+        e.total += Number(t.amount) || 0;
+        e.count += 1;
+        byPayee.set(key.toLowerCase(), e);
+      });
+      uncatRows = Array.from(byPayee.values()).sort((a, b) => b.total - a.total);
+      renderUncategorised();
+    } catch (err) {
+      // Nice-to-have: the payee list still works without it.
+    }
+  }
+
+  function renderUncategorised() {
+    const wrap = document.getElementById('uncat-wrap');
+    if (!uncatRows.length) { wrap.style.display = 'none'; return; }
+    wrap.style.display = '';
+    const total = uncatRows.reduce((s, r) => s + r.total, 0);
+    document.getElementById('uncat-sub').textContent =
+      `${formatIDR(total)} across ${uncatRows.length} payee${uncatRows.length === 1 ? '' : 's'} in the last ${UNCAT_DAYS} days. ` +
+      'Give a payee a default category and its past and future rows follow.';
+    const shown = uncatRows.slice(0, UNCAT_MAX);
+    document.getElementById('uncat-list').innerHTML = shown.map((r, i) => `
+      <div class="uncat-row">
+        <div style="min-width:0">
+          <div class="uncat-name">${escapeHtml(r.name)}</div>
+          <div class="uncat-meta">${formatIDR(r.total)} · ${r.count} transaction${r.count === 1 ? '' : 's'}</div>
+        </div>
+        <button type="button" class="uncat-btn" data-uncat="${i}">Set category</button>
+      </div>`).join('') +
+      (uncatRows.length > UNCAT_MAX ? `<div class="uncat-done">…and ${uncatRows.length - UNCAT_MAX} more.</div>` : '');
+  }
+
+  async function onUncatClick(e) {
+    const btn = e.target.closest('[data-uncat]');
+    if (!btn) return;
+    const row = uncatRows[Number(btn.dataset.uncat)];
+    if (!row) return;
+    let choice;
+    try {
+      choice = await CategoryUI.pick({ title: 'Default category · ' + row.name, type: 'Expense' });
+    } catch (err) {
+      alert('Couldn’t load categories: ' + err.message);
+      return;
+    }
+    if (!choice || choice === 'auto') return;
+    btn.disabled = true;
+    try {
+      await savePayeeCategory(row.name, choice);
+      uncatRows = uncatRows.filter((r) => r !== row);
+      renderUncategorised();
+      renderList();
+    } catch (err) {
+      btn.disabled = false;
+      alert(err.message);
+    }
   }
   function renderKind() {
     const k = (currentPayee && currentPayee.kind) || '';
@@ -356,6 +539,8 @@
     }
   }
 
+  document.getElementById('cat-pick-btn').addEventListener('click', pickPayeeCategory);
+  document.getElementById('uncat-list').addEventListener('click', onUncatClick);
   document.getElementById('kind-row').addEventListener('click', (e) => {
     const b = e.target.closest('.kind-btn');
     if (b) setKind(b.dataset.kind);
@@ -371,6 +556,9 @@
   KeyboardNav.mount();
 
   loadPayees();
+  loadUncategorised();
+  // Chip colours: re-draw the list once the category list arrives.
+  CategoryUI.load().then(() => { if (payees.length) renderList(); }).catch(() => {});
 </script>
 </body>
 </html>

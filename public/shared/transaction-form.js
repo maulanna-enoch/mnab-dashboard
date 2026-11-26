@@ -121,6 +121,16 @@
           <div class="txf-kind-hint" id="txf-kind-hint"></div>
         </div>
 
+        <div class="txf-cat-group" id="txf-cat-group" style="display:none;">
+          <label class="txf-field-label" for="txf-cat-btn">Category</label>
+          <button type="button" class="txf-cat-btn" id="txf-cat-btn" aria-haspopup="dialog"></button>
+          <div class="txf-kind-hint" id="txf-cat-hint"></div>
+          <label class="txf-cat-remember" id="txf-cat-remember" style="display:none;">
+            <input type="checkbox" id="txf-cat-remember-cb" />
+            <span id="txf-cat-remember-text"></span>
+          </label>
+        </div>
+
         <label class="txf-field-label">Notes (optional)</label>
         <input id="txf-f-notes" class="txf-field" type="text" placeholder="e.g. Aolion Knight Joycon" />
 
@@ -711,6 +721,7 @@
 
   function renderKind() {
     if (!state || !state.kindGroup) return;
+    renderCategory();
     state.kindGroup.style.display = '';
     const fixedKind = staticKind();
     state.kindToggle.style.display = fixedKind ? 'none' : '';
@@ -799,6 +810,152 @@
       state.billDismissed.add(btn.dataset.billId);
     }
     renderKind();
+  }
+
+  // ── Category (Category system C3) ───────────────────────────────────────
+  // What the money was for, next to Kind -- see api/_lib/categories.js and
+  // shared/category-ui.js. The server decides the stored category; this
+  // previews the rules so the button shows what will be saved:
+  //   - a category you picked (Category Rule "manual") shows as picked
+  //   - linked to a bill with a category -> the bill's
+  //   - the payee's default category (Payees page) -> that
+  //   - an edit whose category came from a payee rule or the bank's label,
+  //     with the payee unchanged -> what it already has
+  //   - otherwise Uncategorised (expenses) / none (income).
+  // A category is only sent when the person picked one or reset it
+  // (catTouched). Picking one for a payee with a different default offers
+  // "Always use … for <payee>", which sets the payee's default after the
+  // save. Hidden for transfers, and when shared/category-ui.js isn't loaded.
+  function payeeEntry() {
+    const key = state.payeeEl.value.trim().toLowerCase();
+    return key ? payeeCache.find((x) => x.name.trim().toLowerCase() === key) || null : null;
+  }
+
+  function categoryType() {
+    return getToggle('txf-type-toggle', 'type') === 'Income' ? 'Income' : 'Expense';
+  }
+
+  function fitsType(name) {
+    const c = global.CategoryUI && global.CategoryUI.lookup(name);
+    if (!c) return false;
+    return (c.group === 'Income') === (categoryType() === 'Income');
+  }
+
+  function autoCategory() {
+    const bill = state.billId ? billById(state.billId) : null;
+    if (bill && bill.category && fitsType(bill.category)) return { category: bill.category, rule: 'bill' };
+    const p = payeeEntry();
+    if (p && p.category && fitsType(p.category)) return { category: p.category, rule: 'payee' };
+    const o = state.catOriginal;
+    if (o && o.category && o.category !== 'Uncategorised' && (o.rule === 'bank-label' || /^rule\b/i.test(o.rule || '')) &&
+        o.payee.trim().toLowerCase() === state.payeeEl.value.trim().toLowerCase() && fitsType(o.category)) {
+      return { category: o.category, rule: o.rule };
+    }
+    return categoryType() === 'Income' ? { category: null, rule: 'default' } : { category: 'Uncategorised', rule: 'default' };
+  }
+
+  function effectiveCategory() {
+    if (state.catManual && state.catChoice && fitsType(state.catChoice)) return { category: state.catChoice, rule: 'manual' };
+    return autoCategory();
+  }
+
+  function renderCategory() {
+    if (!state.catGroup) return;
+    const CUI = global.CategoryUI;
+    const kindNow = staticKind();
+    if (!CUI || (kindNow && kindNow.kind === 'Transfer')) {
+      state.catGroup.style.display = 'none';
+      return;
+    }
+    state.catGroup.style.display = '';
+    const eff = effectiveCategory();
+    const label = eff.category ? CUI.nameChip(eff.category, { manual: eff.rule === 'manual' }) : '<span class="txf-cat-none">None</span>';
+    setHtml(state.catBtn, `${label}<span class="txf-cat-change">Change</span>`);
+    const why = {
+      manual: 'Picked by you.',
+      bill: 'From the linked bill.',
+      payee: 'This payee’s default (Payees page).',
+      'bank-label': 'From the bank’s own label.',
+      default: eff.category ? 'No rule matched yet. Pick one, or set a default for this payee.' : '',
+    }[eff.rule] || (/^rule\b/i.test(eff.rule) ? `From payee rule ${eff.rule.replace(/^rule\s*/i, '')}.` : '');
+    const reset = eff.rule === 'manual'
+      ? ' <button type="button" class="txf-link-btn" data-cat-action="auto">Use automatic</button>'
+      : '';
+    setHtml(state.catHintEl, `${why}${reset}`);
+
+    // "Always use X for <payee>": only for a picked category the payee
+    // doesn't already default to.
+    const p = payeeEntry();
+    const payee = state.payeeEl.value.trim();
+    const offer = eff.rule === 'manual' && payee && !(p && p.category && p.category.toLowerCase() === eff.category.toLowerCase());
+    state.catRememberEl.style.display = offer ? '' : 'none';
+    if (offer) {
+      state.catRememberText.textContent = `Always use ${eff.category} for ${payee}`;
+    } else {
+      state.catRememberCb.checked = false;
+    }
+  }
+
+  async function onCategoryClick() {
+    if (!global.CategoryUI) return;
+    const eff = effectiveCategory();
+    let value;
+    try {
+      value = await global.CategoryUI.pick({
+        title: 'Category',
+        current: eff.category,
+        type: categoryType(),
+        allowAuto: true,
+        autoLabel: 'Automatic',
+      });
+    } catch (err) {
+      showToast('Couldn’t load categories: ' + err.message);
+      return;
+    }
+    if (value === null || value === undefined) return;
+    state.catTouched = true;
+    if (value === 'auto') {
+      state.catManual = false;
+      state.catChoice = '';
+    } else {
+      state.catManual = true;
+      state.catChoice = value;
+    }
+    renderCategory();
+  }
+
+  function onCategoryHintClick(e) {
+    if (!e.target.closest('[data-cat-action="auto"]')) return;
+    state.catManual = false;
+    state.catChoice = '';
+    state.catTouched = true;
+    renderCategory();
+  }
+
+  // Adds category / categoryManual to a save payload -- only when the
+  // person picked or reset it. Transfers never carry one.
+  function addCategoryToPayload(payload) {
+    if (!state.catTouched || payload.type === 'Transfer') return;
+    const manual = !!(state.catManual && state.catChoice && fitsType(state.catChoice));
+    payload.categoryManual = manual;
+    if (manual) payload.category = state.catChoice;
+  }
+
+  // After a successful save: "Always use X for <payee>" sets the payee's
+  // default (Payees column F). Best-effort; the transaction is saved either
+  // way.
+  function rememberPayeeCategory(payload) {
+    if (!state.catRememberCb.checked || !payload.categoryManual || !payload.category || !payload.payee) return;
+    const name = payload.payee;
+    const category = payload.category;
+    global.CategoryUI.setPayeeDefault(name, category).then(() => {
+      const key = name.toLowerCase();
+      const p = payeeCache.find((x) => x.name.trim().toLowerCase() === key);
+      if (p) p.category = category;
+      showToast(`${name} now defaults to ${category}`);
+    }).catch((err) => {
+      showToast('Saved, but couldn’t set the payee’s category: ' + err.message);
+    });
   }
 
   // Adds kind / kindManual / billId to a save payload -- only the parts the
@@ -1130,6 +1287,11 @@
     state.billIdOriginal = state.billId;
     state.kindManual = !!(isEditOpen && txn.kindRule === 'manual' && (txn.kind === 'Fixed' || txn.kind === 'Variable'));
     state.kindChoice = state.kindManual ? txn.kind : 'Variable';
+    state.catTouched = false;
+    state.catManual = !!(isEditOpen && txn.categoryRule === 'manual' && txn.category);
+    state.catChoice = state.catManual ? txn.category : '';
+    state.catOriginal = isEditOpen ? { category: txn.category || null, rule: txn.categoryRule || '', payee: txn.payee || '' } : null;
+    if (state.catRememberCb) state.catRememberCb.checked = false;
     candidatesToken++;
     clearTimeout(candidatesTimer);
     if (isEditOpen) state.transferToEl.value = '';
@@ -1249,7 +1411,7 @@
     if (existing) {
       if (hasCoords) { existing.lat = lat; existing.lon = lon; }
     } else {
-      payeeCache.push({ name: trimmedName, lat: hasCoords ? lat : null, lon: hasCoords ? lon : null, kind: null });
+      payeeCache.push({ name: trimmedName, lat: hasCoords ? lat : null, lon: hasCoords ? lon : null, kind: null, category: null });
     }
   }
 
@@ -1283,6 +1445,7 @@
     }
 
     addKindToPayload(payload);
+    addCategoryToPayload(payload);
 
     if (!payload.payee || !payload.sof || !payload.amount || !payload.date || !payload.month) {
       state.formError.textContent = 'Payee, account, amount, date, and month are required.';
@@ -1306,6 +1469,7 @@
       renderPayeeOptions();
       close();
       showToast('Saved');
+      rememberPayeeCategory(payload);
       requestBudgetCheck();
       if (typeof state.options.onSaved === 'function') state.options.onSaved(payload, isEdit);
     } catch (err) {
@@ -1463,6 +1627,16 @@
       kindStaticEl: rootEl.querySelector('#txf-kind-static'),
       kindHintEl: rootEl.querySelector('#txf-kind-hint'),
       billSuggestEl: rootEl.querySelector('#txf-bill-suggest'),
+      catGroup: rootEl.querySelector('#txf-cat-group'),
+      catBtn: rootEl.querySelector('#txf-cat-btn'),
+      catHintEl: rootEl.querySelector('#txf-cat-hint'),
+      catRememberEl: rootEl.querySelector('#txf-cat-remember'),
+      catRememberCb: rootEl.querySelector('#txf-cat-remember-cb'),
+      catRememberText: rootEl.querySelector('#txf-cat-remember-text'),
+      catManual: false,
+      catTouched: false,
+      catChoice: '',
+      catOriginal: null,
       kindManual: false,
       kindTouched: false,
       kindChoice: 'Variable',
@@ -1560,6 +1734,14 @@
     state.kindToggle.addEventListener('click', onKindClick);
     state.kindHintEl.addEventListener('click', onKindHintClick);
     state.billSuggestEl.addEventListener('click', onBillSuggestClick);
+    state.catBtn.addEventListener('click', onCategoryClick);
+    state.catHintEl.addEventListener('click', onCategoryHintClick);
+    // Category names and colours for the button; re-render once they land.
+    if (global.CategoryUI) {
+      global.CategoryUI.load().then(() => {
+        if (state.overlay.classList.contains('open')) renderCategory();
+      }).catch(() => {});
+    }
     // The preview depends on payee (override, bill match), amount (bill
     // match) and notes ("Auto-insert").
     [state.payeeEl, state.amountInput, state.notesEl].forEach((el) => el.addEventListener('input', renderKind));

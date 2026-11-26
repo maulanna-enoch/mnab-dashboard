@@ -6,8 +6,11 @@ const {
   fetchPayeeRows,
   getHeaderMap,
   writeTransactionKind,
+  fetchCategoryContext,
+  writeTransactionCategory,
 } = require('./_lib/sheets');
 const { kindForSave, payeeKindMap, normalizeBillId } = require('./_lib/kinds');
+const { categoryForSave, categoryCells } = require('./_lib/categories');
 
 module.exports = async (req, res) => {
   if (req.method !== 'POST') {
@@ -16,7 +19,7 @@ module.exports = async (req, res) => {
   }
 
   try {
-    const { payee, type, sof, date, month, cleared, amount, notes, lat, lon, updatePayeeLocation, kind, kindManual, billId } = req.body || {};
+    const { payee, type, sof, date, month, cleared, amount, notes, lat, lon, updatePayeeLocation, kind, kindManual, billId, category, categoryManual } = req.body || {};
 
     if (!payee || !type || !sof || !date || !month || !cleared || amount === undefined || amount === null) {
       res.status(400).json({ error: 'Missing required field: payee, type, sof, date, month, cleared, amount are all required' });
@@ -58,12 +61,15 @@ module.exports = async (req, res) => {
     // recompute Kind anyway, so a failure here can only lose a hand-set
     // Kind or bill link, never the transaction itself.
     let kindResult = null;
+    let categoryResult = null;
+    let rowNumber = null;
+    let headerMap = null;
+    const link = normalizeBillId(billId);
     try {
       const updatedRange = (appended.data && appended.data.updates && appended.data.updates.updatedRange) || '';
       const m = updatedRange.match(/![A-Z]+(\d+)/);
       if (!m) throw new Error(`Couldn't read the new row number from "${updatedRange}"`);
-      const rowNumber = Number(m[1]);
-      const link = normalizeBillId(billId);
+      rowNumber = Number(m[1]);
       const payeeKinds = payeeKindMap(await fetchPayeeRows(sheets));
       kindResult = kindForSave(
         { type: row[1], isTransfer: false, billId: link, notes: row[10], payee },
@@ -71,10 +77,30 @@ module.exports = async (req, res) => {
         null,
         payeeKinds,
       );
-      const headerMap = await getHeaderMap(sheets, process.env.SHEET_ID, 'transactions');
+      headerMap = await getHeaderMap(sheets, process.env.SHEET_ID, 'transactions');
       await writeTransactionKind(sheets, headerMap, rowNumber, { ...kindResult, billId: link ? link : undefined });
     } catch (kindErr) {
       console.error('Kind write failed (non-fatal):', kindErr);
+    }
+
+    // Category system C3: Category / Category Rule -- see
+    // api/_lib/categories.js. categoryManual true + category = picked in
+    // the form; otherwise the rules decide (bill, payee default, bank
+    // label). Best-effort like Kind: readers recompute it anyway.
+    if (rowNumber) {
+      try {
+        const ctx = await fetchCategoryContext(sheets);
+        categoryResult = categoryForSave(
+          { type: row[1], isTransfer: false, billId: link, notes: row[10], payee },
+          { category, categoryManual },
+          null,
+          ctx,
+        );
+        if (!headerMap) headerMap = await getHeaderMap(sheets, process.env.SHEET_ID, 'transactions');
+        await writeTransactionCategory(sheets, headerMap, rowNumber, categoryCells(categoryResult));
+      } catch (catErr) {
+        console.error('Category write failed (non-fatal):', catErr);
+      }
     }
 
     // Payee registry upsert (see issue #52). Always ensures a `Payees` row
@@ -97,7 +123,14 @@ module.exports = async (req, res) => {
       console.error('Payee registry upsert failed (non-fatal):', payeeErr);
     }
 
-    res.status(200).json({ ok: true, kind: kindResult && kindResult.kind, kindRule: kindResult && kindResult.rule, updatedAt: new Date().toISOString() });
+    res.status(200).json({
+      ok: true,
+      kind: kindResult && kindResult.kind,
+      kindRule: kindResult && kindResult.rule,
+      category: categoryResult && categoryResult.category,
+      categoryRule: categoryResult && categoryResult.rule,
+      updatedAt: new Date().toISOString(),
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });

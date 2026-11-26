@@ -126,6 +126,11 @@ function normKey(s) {
   return String(s == null ? '' : s).trim().replace(/\s+/g, ' ').toLowerCase();
 }
 
+// A category name as typed: trimmed, inner spaces collapsed ('' if blank).
+function normalizeCategoryName(s) {
+  return String(s == null ? '' : s).trim().replace(/\s+/g, ' ');
+}
+
 // Bank Labels cell: several labels separated by ";" or new lines.
 function splitBankLabels(v) {
   return String(v == null ? '' : v)
@@ -292,6 +297,53 @@ function categoryForSave(fields, request, existing, ctx) {
   return classifyCategory({ ...fields, storedCategory, storedCategoryRule }, ctx);
 }
 
+// The Category / Category Rule cells to store for a classifyCategory()
+// result -- same as categories_cellsFor_() in apps-script/Categories.gs.
+// A transfer gets a blank Category with rule "transfer"; an Income row
+// nothing matched gets both blank.
+function categoryCells(result) {
+  const r = result || {};
+  if (r.category) return { category: r.category, rule: r.rule };
+  return { category: '', rule: r.rule === 'transfer' ? 'transfer' : '' };
+}
+
+// Bulk "Set category" (shared/category-ui.js -> transactions-update
+// { action: 'setCategory' }). choice: a category name, or 'auto' to drop
+// a hand-set category and let the rules decide again. rows:
+// fetchTransactionRows() output. Transfers, and rows the named category
+// doesn't fit (an expense category on an Income row or the reverse), are
+// skipped and counted. Returns { writes: [{rowNumber, category, rule}],
+// skipped, missing }.
+function planBulkCategory(rows, rowNumbers, choice, ctx) {
+  const auto = choice === 'auto';
+  let picked = null;
+  if (!auto) {
+    picked = (ctx && ctx.byKey[normKey(choice)]) || null;
+    if (!picked || normKey(choice) === normKey(UNCATEGORISED)) {
+      throw new Error(`"${choice}" is not a category on the Categories tab. Pick one from the list, or "auto".`);
+    }
+  }
+  const byRow = new Map((rows || []).map((r) => [r.rowNumber, r]));
+  const writes = [];
+  const skipped = [];
+  const missing = [];
+  const seen = new Set();
+  (rowNumbers || []).forEach((raw) => {
+    const n = Number(raw);
+    if (!Number.isInteger(n) || seen.has(n)) return;
+    seen.add(n);
+    const r = byRow.get(n);
+    if (!r) { missing.push(n); return; }
+    if (r.isTransfer) { skipped.push(n); return; }
+    const fields = { type: r.type, isTransfer: r.isTransfer, billId: r.billId, notes: r.notes, payee: r.payee };
+    const request = auto ? { categoryManual: false } : { categoryManual: true, category: picked.name };
+    const result = categoryForSave(fields, request, { storedCategory: r.storedCategory, storedCategoryRule: r.storedCategoryRule }, ctx);
+    if (!auto && result.rule !== 'manual') { skipped.push(n); return; } // didn't fit the row's type
+    writes.push({ rowNumber: n, ...categoryCells(result) });
+  });
+  return { writes, skipped, missing };
+}
+
 // The list for pickers, by Order (blank Order last, ties in sheet order).
 // Inactive categories stay in the list with active false: pickers hide
 // them, but rows already using one still show its name and colour.
@@ -317,9 +369,12 @@ module.exports = {
   DEFAULT_CATEGORY_LIST,
   DEFAULT_CATEGORIES,
   splitBankLabels,
+  normalizeCategoryName,
   parseCategoryRows,
   buildCategoryContext,
   classifyCategory,
   categoryForSave,
+  categoryCells,
+  planBulkCategory,
   sortCategories,
 };

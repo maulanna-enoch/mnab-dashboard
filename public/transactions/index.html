@@ -14,6 +14,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black" />
 <script src="/shared/pwa.js"></script>
 <link rel="stylesheet" href="/shared/transaction-form.css" />
+<link rel="stylesheet" href="/shared/category-ui.css" />
 <link rel="stylesheet" href="/shared/swipe-actions.css" />
 <link rel="stylesheet" href="/shared/bulk-actions.css" />
 <link rel="stylesheet" href="/shared/kind-ui.css" />
@@ -541,6 +542,14 @@
          opens the page already filtered. -->
     <div id="kind-filter-slot"></div>
 
+    <!-- Category filter (Category system C3, shared/category-ui.js): All /
+         Uncategorised / a whole group / one category. Same scope as the Kind
+         chips. ?category=Groceries, ?category=__uncat or
+         ?category=g:Transport opens the page already filtered. -->
+    <select id="cat-filter" class="ctg-filter" aria-label="Filter by category">
+      <option value="">All categories</option>
+    </select>
+
     <div class="txt-filters" id="txt-filters">
       <input type="search" id="txt-f-search" placeholder="Search payee or notes" />
       <select id="txt-f-sof"><option value="">All accounts</option></select>
@@ -599,6 +608,7 @@
           <col data-col="sof" style="width: 140px" />  <!-- Account -->
           <col data-col="amount" style="width: 110px" />  <!-- Amount -->
           <col data-col="kind" style="width: 92px" />  <!-- Kind (Variable / Fixed / Transfer / Income) -->
+          <col data-col="category" style="width: 140px" />  <!-- Category (C3): tap to change -->
           <col data-col="cleared" style="width: 34px" />   <!-- Status (C) -->
           <col data-col="pending" style="width: 78px" />  <!-- Pending / Confirm (issue #49) -- not part of the issue #79 show/hide+resize picker: see COLUMNS comment below -->
           <col data-col="notes" />                        <!-- Notes: takes the rest -->
@@ -612,6 +622,7 @@
             <th data-sort="sof" data-col="sof">Account <span class="txt-sort-arrow"></span></th>
             <th data-sort="amount" data-col="amount">Amount <span class="txt-sort-arrow"></span></th>
             <th data-sort="kind" data-col="kind">Kind <span class="txt-sort-arrow"></span></th>
+            <th data-sort="category" data-col="category">Category <span class="txt-sort-arrow"></span></th>
             <th data-sort="cleared" data-col="cleared" class="txt-status-col" title="Cleared">C <span class="txt-sort-arrow"></span></th>
             <th data-sort="pending" data-col="pending" class="txt-pending-col" title="Pending">Pending <span class="txt-sort-arrow"></span></th>
             <th data-col="notes" class="txt-truncate">Notes</th>
@@ -640,6 +651,7 @@
   </div>
 
   <script src="/shared/modal-a11y.js"></script>
+  <script src="/shared/category-ui.js"></script>
   <script src="/shared/transaction-form.js"></script>
   <script src="/shared/swipe-actions.js"></script>
   <script src="/shared/bulk-actions.js"></script>
@@ -680,6 +692,54 @@
     // Starts from ?kind=Variable or ?kind=Variable,Fixed so a link (e.g.
     // from Home's weekly budget) can open just those rows.
     let kindFilter = KindUI.parseKinds(new URLSearchParams(location.search).get('kind'));
+    // Category filter (C3): '' = all, see CategoryUI.matches().
+    let categoryFilter = new URLSearchParams(location.search).get('category') || '';
+    const catFilterEl = document.getElementById('cat-filter');
+    function syncCategoryFilterLook() { catFilterEl.classList.toggle('ctg-filter-on', !!categoryFilter); }
+    CategoryUI.load().then(() => {
+      CategoryUI.fillFilter(catFilterEl, categoryFilter);
+      syncCategoryFilterLook();
+      if (transactions.length) renderList(); // chip colours just arrived
+    }).catch(() => { catFilterEl.style.display = 'none'; });
+    catFilterEl.addEventListener('change', () => {
+      categoryFilter = catFilterEl.value;
+      syncCategoryFilterLook();
+      const params = new URLSearchParams(location.search);
+      if (categoryFilter) params.set('category', categoryFilter); else params.delete('category');
+      const qs = params.toString();
+      history.replaceState(null, '', location.pathname + (qs ? '?' + qs : ''));
+      renderList();
+    });
+
+    // Picks a category for these rows and saves it in one request (the
+    // table cell, and the bulk bar's Set category). Returns after reloading.
+    async function setCategoryForRows(rows) {
+      const live = rows.filter((t) => !t.transfer);
+      if (!live.length) { TransactionForm.toast('Transfers have no category.', 2500); return; }
+      const current = live.length === 1 && live[0].categoryRule === 'manual' ? live[0].category : null;
+      let choice;
+      try {
+        choice = await CategoryUI.pick({
+          title: live.length === 1 ? `Category · ${live[0].payee}` : `Category for ${live.length} transactions`,
+          current: current || (live.length === 1 ? live[0].category : null),
+          type: CategoryUI.typeFor(live),
+          allowAuto: true,
+          autoLabel: 'Automatic (drop what you set)',
+        });
+      } catch (err) {
+        alert('Couldn’t load categories: ' + err.message);
+        return;
+      }
+      if (!choice) return;
+      try {
+        const result = await CategoryUI.applyBulk(live.map((t) => t.rowNumber), choice);
+        await loadTransactions();
+        const note = CategoryUI.bulkSummary(result);
+        if (note) TransactionForm.toast(note, 3500);
+      } catch (err) {
+        alert(err.message);
+      }
+    }
 
     const upcomingToggleEl = document.getElementById('upcoming-toggle');
     const upcomingSwitchEl = document.getElementById('upcoming-switch');
@@ -740,6 +800,7 @@
       { key: 'sof', label: 'Account', defaultWidth: 140, minWidth: 80, resizable: true },
       { key: 'amount', label: 'Amount', defaultWidth: 110, minWidth: 70, resizable: true },
       { key: 'kind', label: 'Kind', defaultWidth: 92, minWidth: 70, resizable: true },
+      { key: 'category', label: 'Category', defaultWidth: 140, minWidth: 80, resizable: true },
       { key: 'cleared', label: 'Cleared', defaultWidth: 34, minWidth: 34, resizable: false },
       { key: 'notes', label: 'Notes', defaultWidth: null, minWidth: 80, resizable: false },
     ];
@@ -832,6 +893,7 @@
       { key: 'sof', label: 'Account' },
       { key: 'amount', label: 'Amount' },
       { key: 'kind', label: 'Kind' },
+      { key: 'category', label: 'Category' },
       { key: 'cleared', label: 'Cleared' },
     ];
 
@@ -1107,6 +1169,7 @@
             <td class="txt-editable" data-field="sof">${t.sof || ''}</td>
             <td class="txt-amount txt-editable ${isIncome ? 'income' : ''}" data-field="amount">${amountText}</td>
             <td class="knd-cell" data-field="kind">${KindUI.badge(t)}</td>
+            <td class="ctg-cell" data-field="category" title="Tap to change the category">${CategoryUI.chip(t) || (t.transfer ? '' : '<span class="ctg-cell-empty">—</span>')}</td>
             <td class="txt-status-col" data-field="cleared">${statusHtml}</td>
             <td class="txt-pending-col">${pendingHtml}</td>
             <td class="txt-truncate txt-editable" data-field="notes" title="${notes.replace(/"/g, '&quot;')}">${notes}</td>
@@ -1160,6 +1223,12 @@
         row.querySelector('.txt-open-btn').addEventListener('click', (e) => {
           e.stopPropagation();
           TransactionForm.open(txn);
+        });
+
+        // Category (C3): tap the cell to pick one for just this row.
+        row.querySelector('td.ctg-cell').addEventListener('click', (e) => {
+          e.stopPropagation();
+          setCategoryForRows([txn]);
         });
 
         const confirmBtn = row.querySelector('.txt-confirm-btn');
@@ -2239,6 +2308,15 @@
         for (const txn of rows) {
           await bulkUpdateRow(txn, { month: inputValue });
         }
+      } else if (key === 'setCategory') {
+        // One request for the whole selection (only Category / Category
+        // Rule change). Transfers and type mismatches are skipped
+        // server-side. inputValue is what CategoryUI's picker returned.
+        const result = await CategoryUI.applyBulk(rows.map((t) => t.rowNumber), inputValue);
+        await loadTransactions();
+        const note = CategoryUI.bulkSummary(result);
+        if (note) TransactionForm.toast(note, 3500);
+        return;
       } else if (key === 'setKind') {
         // One request for the whole selection (only Kind / Kind Rule
         // change). Income / Transfer rows are skipped server-side.
@@ -2281,6 +2359,7 @@
         { key: 'changeDate', label: 'Change date', input: 'date', hotkey: 'h' },
         { key: 'changeBillingMonth', label: 'Change month', input: 'month', hotkey: 'm' },
         KindUI.bulkAction,
+        CategoryUI.bulkAction,
         TxnMatch.bulkAction(formatIDR),
       ],
       onAction: bulkOnAction,
@@ -2381,6 +2460,7 @@
       // number is what that chip would show.
       KindUI.updateCounts(document.getElementById('kind-filter'), visible);
       visible = visible.filter((t) => KindUI.matches(t, kindFilter));
+      visible = visible.filter((t) => CategoryUI.matches(t, categoryFilter));
 
       // Wide-viewport table (issue #65) renders from the same
       // upcoming-filtered list as the mobile cards, then applies its own
@@ -2443,7 +2523,7 @@
             <div class="txn-row-main">
               <div>
                 <div class="txn-name">${t.payee}</div>
-                <div class="txn-meta">${KindUI.badge(t)} ${metaBits.join(' &middot; ')}</div>
+                <div class="txn-meta">${KindUI.badge(t)} ${CategoryUI.chip(t)} ${metaBits.join(' &middot; ')}</div>
               </div>
               <div class="txn-amount-block">
                 <div class="txn-amount ${isIncome ? 'income' : ''}">${amountText}</div>
