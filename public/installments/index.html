@@ -15,6 +15,7 @@
 <script src="/shared/pwa.js"></script>
 <link rel="stylesheet" href="/shared/responsive.css" />
 <link rel="stylesheet" href="/shared/bottom-nav.css" />
+<link rel="stylesheet" href="/shared/transaction-form.css" />
 <style>
   :root {
     color-scheme: light dark;
@@ -204,6 +205,8 @@
   .bar-row .v { text-align: right; color: var(--text); }
   .bar-row .m { color: var(--muted); }
   .empty { font-size: 0.85rem; color: var(--muted); padding: 8px 0; }
+  .pay-btn { display: block; margin: 6px 0 0 auto; background: var(--accent); color: #052e16; border: none; border-radius: 999px; font: inherit; font-size: 0.75rem; font-weight: 700; padding: 4px 14px; cursor: pointer; }
+  .pay-btn:active { opacity: 0.8; }
 </style>
 </head>
 <body>
@@ -251,8 +254,11 @@
 
   <button class="refresh" onclick="load()">Refresh</button>
 
+  <div id="txf-root"></div>
   <div id="bnv-root"></div>
 
+  <script src="/shared/modal-a11y.js"></script>
+  <script src="/shared/transaction-form.js"></script>
   <script src="/shared/bottom-nav.js"></script>
   <script src="/shared/keyboard-nav.js"></script>
   <script>
@@ -337,13 +343,41 @@
       return `<li class="${i.status === 'paid' ? 'done' : ''}">
         <div class="row">
           <div><div class="name">${i.type === 'statement' ? '<span class="tag cc">CC</span>' : '<span class="tag cash">Cashbill</span>'}${esc(title)}</div>${meta ? `<div class="meta">${esc(meta)}</div>` : ''}${flags.map((f) => `<div class="flag">${esc(f)}</div>`).join('')}</div>
-          <div class="right"><div class="amt">${formatIDR(shown)}</div>${pill(i.status)}</div>
+          <div class="right"><div class="amt">${formatIDR(shown)}</div>${pill(i.status)}${payButton(i)}</div>
         </div>
         ${i.type === 'statement' ? statementContents(i.contents) : ''}
       </li>`;
     }
 
+    // ── Pay ────────────────────────────────────────────────────────────────
+    // An unpaid cash bill gets a Pay button. When its auto-insert row is
+    // already there (still Pending, often dated ahead), Pay opens that row
+    // dated today, so saving it records the payment without a duplicate --
+    // and InstallmentsBills.gs's duplicate protection then sees the cycle
+    // as covered. Otherwise Pay opens a new transaction linked to the bill.
+    // Card statements are paid with Add Payment on the card's account page.
+    let cycleItems = [];
+    function payButton(i) {
+      if (i.type !== 'bill' || i.status === 'paid') return '';
+      const idx = cycleItems.indexOf(i);
+      return `<button type="button" class="pay-btn" data-pay="${idx}" aria-label="Pay ${esc(i.name)}">Pay</button>`;
+    }
+    function payBill(i) {
+      if (i.payTxn) {
+        TransactionForm.open(i.payTxn, { payNow: true });
+      } else {
+        TransactionForm.open(null, { prefill: { payee: i.name, sof: i.sof, amount: i.amount, billId: i.id } });
+      }
+    }
+    document.getElementById('cycle-list').addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-pay]');
+      if (!btn) return;
+      const i = cycleItems[Number(btn.dataset.pay)];
+      if (i) payBill(i);
+    });
+
     function renderCycle(c) {
+      cycleItems = c.items || [];
       document.getElementById('hero-label').textContent = `Left to pay before ${dayMonth(c.payroll)}`;
       document.getElementById('hero-total').textContent = formatIDR(c.leftToPay);
       const bits = [`${c.unpaidCount} to pay`];
@@ -439,6 +473,14 @@
         heroMetaEl.innerHTML = `<span class="error">${esc(err.message)}</span>`;
       }
     }
+
+    TransactionForm.mount(document.getElementById('txf-root'), {
+      supportEditDelete: true,
+      showFab: false,
+      onSaved: () => load(),
+      onDeleted: () => load(),
+      onMatchResolved: () => load(),
+    });
 
     load();
   </script>

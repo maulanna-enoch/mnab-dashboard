@@ -35,6 +35,11 @@
 // "charged" by the same test around its charge date. Card statements come
 // from api/_lib/statements.js.
 //
+// An unpaid cash bill also carries `payTxn` when that window holds a still-
+// Pending auto-insert row: the page's Pay button opens that row (dated
+// today) instead of adding a second one, so paying before the due date
+// never leaves the auto-insert behind as a duplicate.
+//
 // Every date out of here is 'YYYY-MM-DD'; every month is 'YYYY-MM'.
 
 const { activeInMonth, committedInMonth, isOpenEndDate, monthOf, addMonths, totalMonths, installmentNumber,
@@ -137,7 +142,32 @@ function matchAround(txnsByBill, r, date) {
   const prev = clampedDay(date.getUTCFullYear(), date.getUTCMonth() - 1, r.dayOfMonth);
   const next = clampedDay(date.getUTCFullYear(), date.getUTCMonth() + 1, r.dayOfMonth);
   const around = list.filter((t) => t.date > prev && t.date < next);
-  return { done: around.filter((t) => !t.isPending), pending: around.some((t) => t.isPending) };
+  const pendingRows = around.filter((t) => t.isPending).sort((a, b) => b.date - a.date);
+  return { done: around.filter((t) => !t.isPending), pending: pendingRows.length > 0, pendingRows };
+}
+
+// A Pending row in the shape /api/transactions-list returns, so the page can
+// hand it straight to TransactionForm.open() as an edit.
+function editableTxn(t) {
+  return {
+    rowNumber: t.rowNumber,
+    payee: t.payee,
+    type: t.type,
+    sof: t.sof,
+    date: t.date ? iso(t.date) : null,
+    month: t.month,
+    cleared: t.isCleared ? 'Cleared' : 'Uncleared',
+    amount: t.amount,
+    notes: t.notes,
+    pending: true,
+    matchId: t.matchId,
+    matchStatus: t.matchStatus,
+    transfer: t.isTransfer,
+    paymentId: t.paymentId,
+    kind: t.storedKind,
+    kindRule: t.storedKindRule,
+    billId: t.billId,
+  };
 }
 
 // What every view says about a registry row, whatever the date.
@@ -169,6 +199,7 @@ function withPayment(item, r, match) {
     item.mismatch = Math.abs(paid - r.amount) >= MISMATCH_TOLERANCE;
   } else {
     item.awaitingConfirm = match.pending;
+    if (match.pendingRows && match.pendingRows.length) item.payTxn = editableTxn(match.pendingRows[0]);
   }
   return item;
 }
@@ -193,6 +224,7 @@ function statementContents(cardRows, month, ctx) {
     const charge = chargeDateForStatement(r.dayOfMonth, month);
     if (!activeInMonth(r, monthOf(charge))) return;
     const item = withPayment(baseItem(r, monthOf(charge)), r, matchAround(ctx.txnsByBill, r, charge));
+    delete item.payTxn; // charged to the card -- nothing to pay from here
     item.chargeDate = iso(charge);
     item.status = item.paidAmount !== undefined ? STATUS_CHARGED : STATUS_EXPECTED;
     items.push(item);
