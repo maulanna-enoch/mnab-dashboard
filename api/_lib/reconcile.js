@@ -135,6 +135,32 @@ async function getHeaderMap(sheets, spreadsheetId, sheetName) {
   return map;
 }
 
+// Header row and data rows from ONE read (row 1 onwards), instead of a
+// getHeaderMap() read followed by a data read: one fewer request against the
+// 60/min/user Sheets quota, and both halves come from the same snapshot.
+// `lastCol` matches the data range each caller used to read (Z / AZ).
+// With `missingOk`, a tab that doesn't exist returns null instead of
+// throwing (replaces a separate spreadsheets.get existence check).
+async function readTabWithHeader(sheets, spreadsheetId, sheetName, lastCol, { missingOk = false } = {}) {
+  let response;
+  try {
+    response = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `${sheetName}!A1:${lastCol}`,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+  } catch (err) {
+    if (missingOk && /unable to parse range/i.test(String((err && err.message) || ''))) return null;
+    throw err;
+  }
+  const all = response.data.values || [];
+  const map = {};
+  (all[0] || []).forEach((h, i) => {
+    if (h !== undefined && h !== null && h !== '') map[String(h).trim()] = i;
+  });
+  return { map, values: all.slice(1) };
+}
+
 function requireColumns(map, sheetLabel, headers) {
   headers.forEach((h) => {
     if (!(h in map)) throw new Error(`${sheetLabel} tab is missing a "${h}" column.`);
@@ -143,15 +169,9 @@ function requireColumns(map, sheetLabel, headers) {
 
 async function fetchAccountsForReconcile(sheets) {
   const spreadsheetId = process.env.SHEET_ID;
-  const map = await getHeaderMap(sheets, spreadsheetId, RECONCILE_SHEETS.accounts);
+  const { map, values: rows } = await readTabWithHeader(sheets, spreadsheetId, RECONCILE_SHEETS.accounts, 'Z');
   requireColumns(map, 'Accounts', ['Name']);
 
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${RECONCILE_SHEETS.accounts}!A2:Z`,
-    valueRenderOption: 'UNFORMATTED_VALUE',
-  });
-  const rows = response.data.values || [];
   // Optional, typed by hand: the day of month a card's statement is due
   // (see api/_lib/statements.js). Header matched case-insensitively.
   const dueDayHeader = Object.keys(map).find((h) => h.toLowerCase() === 'statement due day');
@@ -192,18 +212,11 @@ function cellText(row, idx) {
 
 async function fetchTransactionsForReconcile(sheets) {
   const spreadsheetId = process.env.SHEET_ID;
-  const map = await getHeaderMap(sheets, spreadsheetId, RECONCILE_SHEETS.transactions);
+  const { map, values } = await readTabWithHeader(sheets, spreadsheetId, RECONCILE_SHEETS.transactions, 'AZ');
   requireColumns(map, 'transactions', ['SOF', 'Date', 'Cleared', 'Reconciled', 'Reconciled Date']);
   const amountHeader = 'Total' in map ? 'Total' : 'Amount';
   if (!(amountHeader in map)) throw new Error('transactions tab needs a "Total" or "Amount" column.');
   const payeeHeader = 'Payee' in map ? 'Payee' : ('Name' in map ? 'Name' : null);
-
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${RECONCILE_SHEETS.transactions}!A2:AZ`,
-    valueRenderOption: 'UNFORMATTED_VALUE',
-  });
-  const values = response.data.values || [];
 
   const rows = values.map((row, i) => {
     const sofRaw = row[map['SOF']];
@@ -930,15 +943,9 @@ async function getCardStatement(sheets, { cardAccount, month }) {
 // the sheet is missing the columns needed to read it.
 async function deletePaymentRows(sheets, paymentId) {
   const spreadsheetId = process.env.SHEET_ID;
-  const map = await getHeaderMap(sheets, spreadsheetId, RECONCILE_SHEETS.transactions);
+  const { map, values } = await readTabWithHeader(sheets, spreadsheetId, RECONCILE_SHEETS.transactions, 'AZ');
   if (!('Payment ID' in map)) return { deletedCount: 0, cardAccount: null, month: null };
 
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${RECONCILE_SHEETS.transactions}!A2:AZ`,
-    valueRenderOption: 'UNFORMATTED_VALUE',
-  });
-  const values = response.data.values || [];
   const paymentIdCol = map['Payment ID'];
   const keepTypes = paymentIdKind(paymentId).keepTypes;
   const rowNumbers = [];
@@ -1103,17 +1110,9 @@ async function logReconciliation(sheets, entry) {
 
 async function getReconciliationLogRows(sheets, accountName) {
   const spreadsheetId = process.env.SHEET_ID;
-  const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties' });
-  const sheetExists = (meta.data.sheets || []).some((s) => s.properties.title === RECONCILE_SHEETS.log);
-  if (!sheetExists) return { map: null, rows: [] };
-
-  const map = await getHeaderMap(sheets, spreadsheetId, RECONCILE_SHEETS.log);
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${RECONCILE_SHEETS.log}!A2:Z`,
-    valueRenderOption: 'UNFORMATTED_VALUE',
-  });
-  const values = response.data.values || [];
+  const log = await readTabWithHeader(sheets, spreadsheetId, RECONCILE_SHEETS.log, 'Z', { missingOk: true });
+  if (!log) return { map: null, rows: [] };
+  const { map, values } = log;
 
   const rows = [];
   values.forEach((row, i) => {
@@ -1152,19 +1151,10 @@ async function getReconciliationLogRows(sheets, accountName) {
 // bookkeeping needed.
 async function getLastReconciledTimestamps(sheets) {
   const spreadsheetId = process.env.SHEET_ID;
-  const meta = await sheets.spreadsheets.get({ spreadsheetId, fields: 'sheets.properties' });
-  const sheetExists = (meta.data.sheets || []).some((s) => s.properties.title === RECONCILE_SHEETS.log);
-  if (!sheetExists) return {};
-
-  const map = await getHeaderMap(sheets, spreadsheetId, RECONCILE_SHEETS.log);
+  const log = await readTabWithHeader(sheets, spreadsheetId, RECONCILE_SHEETS.log, 'Z', { missingOk: true });
+  if (!log) return {};
+  const { map, values } = log;
   if (!('Account' in map) || !('Timestamp' in map)) return {};
-
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: `${RECONCILE_SHEETS.log}!A2:Z`,
-    valueRenderOption: 'UNFORMATTED_VALUE',
-  });
-  const values = response.data.values || [];
 
   const latestSerial = {};
   values.forEach((row) => {

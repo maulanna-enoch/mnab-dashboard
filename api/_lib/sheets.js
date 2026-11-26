@@ -1,4 +1,5 @@
 const { google } = require('googleapis');
+const { wrapClient } = require('./read-batcher');
 const { SETTINGS_RANGE, parseSettings } = require('./settings');
 const {
   KIND_COLUMN,
@@ -61,7 +62,15 @@ function monthLabel(key) {
   return `${MONTH_NAMES[parseInt(m, 10) - 1]} ${y}`;
 }
 
+// Both clients are built once per warm function instance and shared, so
+// every helper that calls getSheetsClient() on its own still goes through the
+// same read batcher (./read-batcher.js): concurrent values.get calls become
+// one values.batchGet, i.e. one read against the 60/min/user Sheets quota.
+let readClient = null;
+let writeClient = null;
+
 function getSheetsClient() {
+  if (readClient) return readClient;
   const auth = new google.auth.GoogleAuth({
     credentials: {
       client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
@@ -69,13 +78,15 @@ function getSheetsClient() {
     },
     scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
   });
-  return google.sheets({ version: 'v4', auth });
+  readClient = wrapClient(google.sheets({ version: 'v4', auth }));
+  return readClient;
 }
 
 // Separate write-capable client (Editor access, full spreadsheets scope) --
 // only ever used by the transaction-write endpoints. Every other endpoint in
 // this app uses getSheetsClient() above and can never write.
 function getWriteSheetsClient() {
+  if (writeClient) return writeClient;
   const auth = new google.auth.GoogleAuth({
     credentials: {
       client_email: process.env.GOOGLE_WRITE_SERVICE_ACCOUNT_EMAIL,
@@ -83,7 +94,8 @@ function getWriteSheetsClient() {
     },
     scopes: ['https://www.googleapis.com/auth/spreadsheets'],
   });
-  return google.sheets({ version: 'v4', auth });
+  writeClient = wrapClient(google.sheets({ version: 'v4', auth }));
+  return writeClient;
 }
 
 async function fetchAccountRows() {
@@ -160,9 +172,12 @@ async function getHeaderMap(sheets, spreadsheetId, sheetName) {
     range: `${sheetName}!1:1`,
     valueRenderOption: 'UNFORMATTED_VALUE',
   });
-  const headers = (response.data.values && response.data.values[0]) || [];
+  return headerMapFromRow(response.data.values && response.data.values[0]);
+}
+
+function headerMapFromRow(headers) {
   const map = {};
-  headers.forEach((h, i) => {
+  (headers || []).forEach((h, i) => {
     if (h !== undefined && h !== null && h !== '') map[String(h).trim()] = i;
   });
   return map;
@@ -189,7 +204,18 @@ async function fetchTransactionRows() {
   // columns below -- read by header name and defaulted to "not pending"
   // when missing, same graceful-fallback convention as Reconciled/Transfer
   // elsewhere in this app.
-  const headerMap = await getHeaderMap(sheets, spreadsheetId, 'transactions');
+  //
+  // Header and data come from one read (row 1 onwards) rather than a header
+  // read followed by a data read: one fewer request against the Sheets
+  // quota, and nothing is awaited before the read, so it batches with
+  // whatever the caller fires alongside it (see ./read-batcher.js).
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId,
+    range: 'transactions!A1:AZ',
+    valueRenderOption: 'UNFORMATTED_VALUE',
+  });
+  const all = response.data.values || [];
+  const headerMap = headerMapFromRow(all[0]);
   const pendingIdx = headerMap['Pending'];
   const hasPendingColumn = pendingIdx !== undefined;
   // Match ID / Match Status: self-provisioned by EmailImport.gs (issue #51)
@@ -218,14 +244,9 @@ async function fetchTransactionRows() {
   // for the header row) is included so edit/delete endpoints know which row
   // to target. Widened from A2:K to A2:Z so self-provisioned trailing
   // columns like Pending are actually within the fetched range, then to
-  // A2:AZ once WS1's Kind columns pushed the header row past column W.
-  const response = await sheets.spreadsheets.values.get({
-    spreadsheetId,
-    range: 'transactions!A2:AZ',
-    valueRenderOption: 'UNFORMATTED_VALUE',
-  });
-
-  const rows = response.data.values || [];
+  // A:AZ once WS1's Kind columns pushed the header row past column W. The
+  // read itself is at the top of this function, from row 1.
+  const rows = all.slice(1);
   const result = [];
 
   rows.forEach((row, i) => {
