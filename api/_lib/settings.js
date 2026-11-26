@@ -37,6 +37,8 @@ const SETTINGS_SCHEMA = {
   first_raise_date: { type: 'date', default: null, optional: true, description: 'When the first raise takes effect (blank = no raises in the projection)' },
   // Push notifications (WS8).
   push_budget_warn_pct: { type: 'percent', default: 0.7, max: 0.99, optional: true, description: "Push a warning once this share of the week's budget is used, e.g. 70%" },
+  // Payday screen (WS8).
+  payday_day_of_month: { type: 'dayOfMonth', default: 25, optional: true, description: 'Day of the month salary is paid (1-31); the payday screen prefers the actual salary date' },
 };
 
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -116,7 +118,13 @@ function parsePercent(v) {
   return n;
 }
 
-const PARSERS = { rupiah: parseRupiah, weekday: parseWeekday, boolean: parseBoolean, date: parseDate, percent: parsePercent };
+// A day of the month, 1-31 (a number, or text like "25").
+function parseDayOfMonth(v) {
+  const n = typeof v === 'number' ? v : (/^\s*\d{1,2}\s*$/.test(String(v)) ? Number(v) : NaN);
+  return Number.isInteger(n) && n >= 1 && n <= 31 ? n : undefined;
+}
+
+const PARSERS = { rupiah: parseRupiah, weekday: parseWeekday, boolean: parseBoolean, date: parseDate, percent: parsePercent, dayOfMonth: parseDayOfMonth };
 
 function normalizeKey(k) {
   return String(k || '').trim().toLowerCase().replace(/[\s-]+/g, '_');

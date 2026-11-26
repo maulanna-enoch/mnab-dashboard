@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>Payday · MNAB</title>
+<link rel="icon" type="image/png" href="/favicon.png" />
+<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=2" />
+<meta name="theme-color" content="#0f1115" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="MNAB" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black" />
+<script src="/shared/pwa.js"></script>
+<link rel="stylesheet" href="/shared/responsive.css" />
+<link rel="stylesheet" href="/shared/bottom-nav.css" />
+<link rel="stylesheet" href="/shared/transaction-form.css" />
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0f1115;
+    --card: #1a1d24;
+    --text: #f4f4f5;
+    --muted: #9ca3af;
+    --line: #2a2e37;
+    --good: #22c55e;
+    --bad: #fb923c;
+    /* Split colours: told apart by lightness as well as hue. */
+    --c-bills: #60a5fa;
+    --c-cards: #2dd4bf;
+    --c-steals: #a78bfa;
+    --c-allow: #fbbf24;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px calc(140px + env(safe-area-inset-bottom));
+  }
+  .num { font-variant-numeric: tabular-nums; }
+  header.top { width: 100%; max-width: var(--page-max-width); text-align: center; margin-bottom: 16px; }
+  header.top h1 { font-size: 1.1rem; font-weight: 500; color: var(--muted); margin: 0 0 4px; }
+  header.top .period { font-size: 0.85rem; color: var(--muted); }
+  .card { width: 100%; max-width: var(--page-max-width); background: var(--card); border-radius: 16px; padding: 20px; margin-bottom: 12px; }
+  .label { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .hero-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .hero-amount { font-size: 2rem; font-weight: 700; margin: 6px 0 2px; word-break: break-word; }
+  .hero-meta { font-size: 0.8rem; color: var(--muted); }
+  .extra-list { list-style: none; margin: 10px 0 0; padding: 0; }
+  .extra-list li { display: flex; justify-content: space-between; gap: 8px; font-size: 0.85rem; padding: 3px 0; }
+  .extra-list .plus { color: var(--good); font-weight: 600; }
+  .extra-list .meta { font-size: 0.7rem; color: var(--muted); }
+  .total-in { display: flex; justify-content: space-between; border-top: 1px solid var(--line); margin-top: 8px; padding-top: 8px; font-size: 0.85rem; font-weight: 600; }
+  .btn { font: inherit; font-size: 0.85rem; font-weight: 600; border-radius: 999px; padding: 10px 16px; min-height: 44px; cursor: pointer; }
+  .btn.ghost { background: none; border: 1px solid #374151; color: var(--text); }
+  .btn.add { margin-top: 14px; width: 100%; background: #14532d; border: 1px solid #166534; color: #bbf7d0; }
+
+  .split { margin-top: 18px; }
+  .bar-labels { position: relative; height: 16px; font-size: 0.7rem; color: var(--muted); }
+  .bar-labels span { position: absolute; transform: translateX(-100%); padding-right: 4px; white-space: nowrap; }
+  .bar { position: relative; display: flex; gap: 2px; height: 22px; border-radius: 8px; overflow: hidden; background: #111318; }
+  .bar .seg { height: 100%; min-width: 0; }
+  .bar .over { position: absolute; top: 0; bottom: 0; right: 0;
+    background: repeating-linear-gradient(135deg, rgba(15,17,21,0.7) 0 4px, rgba(15,17,21,0) 4px 9px);
+    border-left: 2px solid var(--text); }
+  .bar .spare { height: 100%; background: repeating-linear-gradient(135deg, rgba(34,197,94,0.35) 0 4px, rgba(34,197,94,0.12) 4px 9px); }
+  .bar-foot { display: flex; justify-content: flex-end; margin-top: 4px; }
+  .bar-foot span { font-size: 0.7rem; font-weight: 700; text-align: center; padding-top: 3px; border-top: 2px solid; }
+  .bar-foot .short { color: var(--bad); border-color: var(--bad); }
+  .bar-foot .left { color: var(--good); border-color: var(--good); }
+  .legend { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 12px; margin-top: 12px; font-size: 0.75rem; color: #d1d5db; }
+  .legend span { display: flex; align-items: center; gap: 6px; }
+  .sw { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+
+  .left-card.neg { background: #2a1a10; border: 1px solid #7c2d12; }
+  .left-card.pos { background: #10241a; border: 1px solid #14532d; }
+  .left-row { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .left-title { font-weight: 600; }
+  .left-amt { font-size: 1.5rem; font-weight: 700; }
+  .neg .left-amt { color: var(--bad); }
+  .pos .left-amt { color: var(--good); }
+  .left-note { font-size: 0.85rem; line-height: 1.45; margin: 8px 0 0; color: #e5e7eb; }
+  .why { display: flex; gap: 8px; align-items: flex-start; font-size: 0.8rem; line-height: 1.4; margin-top: 10px; padding: 8px 10px; border-radius: 10px; background: rgba(0,0,0,0.25); color: #fde68a; }
+
+  .preview .seg-toggle { display: flex; gap: 4px; background: #111318; border-radius: 999px; padding: 4px; margin: 10px 0; }
+  .preview .seg-toggle button { flex: 1; min-height: 40px; background: none; border: 0; border-radius: 999px; color: var(--muted); font: inherit; font-size: 0.8rem; font-weight: 600; cursor: pointer; }
+  .preview .seg-toggle button[aria-pressed="true"] { background: var(--line); color: var(--text); }
+  .kv { display: flex; justify-content: space-between; gap: 8px; font-size: 0.85rem; padding: 4px 0; }
+  .kv .k { color: var(--muted); }
+  .preview .hint { font-size: 0.75rem; color: var(--muted); margin-top: 6px; }
+
+  a.sum-row { display: flex; align-items: center; gap: 12px; text-decoration: none; color: inherit; min-height: 44px; }
+  .stripe { width: 6px; align-self: stretch; border-radius: 3px; flex: none; }
+  .sum-main { flex: 1; min-width: 0; }
+  .sum-title { font-weight: 600; }
+  .sum-sub { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
+  .sum-right { text-align: right; white-space: nowrap; }
+  .sum-amt { font-weight: 700; }
+  .sum-pct { font-size: 0.75rem; color: var(--muted); }
+  .chev { color: var(--muted); flex: none; }
+
+  .sec-head { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+  .rows { list-style: none; margin: 0; padding: 0; }
+  .rows li { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+  .rows .name { font-weight: 600; font-size: 0.9rem; }
+  .rows .meta { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
+  .rows .right { text-align: right; white-space: nowrap; }
+  .rows .amt { font-weight: 600; }
+  .rows li.past { opacity: 0.5; }
+  .pill { display: inline-block; font-size: 0.7rem; font-weight: 600; padding: 2px 8px; border-radius: 999px; margin-top: 4px; }
+  .pill.now { background: #14532d; color: #86efac; }
+  .pill.soon, .pill.extra { background: #422006; color: #fbbf24; }
+  .pill.later, .pill.past { background: #1f2937; color: var(--muted); }
+  .flag { font-size: 0.8rem; color: #fbbf24; margin: 4px 0 6px; }
+  .empty { font-size: 0.85rem; color: var(--muted); padding: 8px 0; border-top: 1px solid var(--line); }
+
+  .totals .kv.final { border-top: 1px solid var(--line); margin-top: 6px; padding-top: 10px; font-size: 1rem; font-weight: 700; }
+  .totals .good { color: var(--good); }
+  .totals .bad { color: var(--bad); }
+  .notice { width: 100%; max-width: var(--page-max-width); font-size: 0.8rem; color: #fbbf24; background: #2a2316; border-radius: 12px; padding: 10px 14px; margin-bottom: 12px; }
+  .notice summary { cursor: pointer; }
+  .notice ul { margin: 8px 0 0; padding-left: 18px; color: #fde68a; }
+  .error { color: #f87171; font-size: 0.9rem; }
+
+  @media (min-width: 1024px) {
+    /* Two columns on a laptop: the hero + what's left on the left, the
+       breakdown on the right. */
+    main.grid { width: 100%; max-width: var(--page-max-width); display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 16px; align-items: start; }
+    main.grid .col { display: flex; flex-direction: column; }
+  }
+  main.grid { width: 100%; max-width: var(--page-max-width); }
+  main.grid .col .card, main.grid .col .notice { max-width: none; }
+</style>
+</head>
+<body>
+  <header class="top">
+    <h1>Payday</h1>
+    <div class="period" id="period">Loading…</div>
+  </header>
+
+  <div id="notices" style="width:100%;display:flex;flex-direction:column;align-items:center"></div>
+
+  <main class="grid">
+    <div class="col">
+      <section class="card" aria-labelledby="hero-label">
+        <div class="hero-top">
+          <span class="label" id="hero-label">Salary received</span>
+          <span class="hero-meta" id="hero-src"></span>
+        </div>
+        <div class="hero-amount num" id="hero-amount">Loading…</div>
+        <div class="hero-meta" id="hero-meta"></div>
+        <ul class="extra-list" id="extra-list"></ul>
+        <div class="total-in num" id="total-in" hidden></div>
+        <div class="split" id="split"></div>
+        <button type="button" class="btn add" id="add-extra">+ Add extra income</button>
+      </section>
+
+      <section class="card left-card" id="left-card" aria-live="polite"></section>
+      <section class="card preview" id="preview" hidden></section>
+    </div>
+
+    <div class="col">
+      <section class="card"><a class="sum-row" id="sum-bills" href="/installments/#cycle"></a></section>
+      <section class="card"><a class="sum-row" id="sum-cards" href="/installments/#cycle"></a></section>
+      <section class="card" id="steals"></section>
+      <section class="card" id="allowances"></section>
+      <section class="card totals" id="totals"></section>
+    </div>
+  </main>
+
+  <button class="btn ghost" onclick="load()">Refresh</button>
+
+  <div id="txf-root"></div>
+  <div id="bnv-root"></div>
+
+  <script src="/shared/modal-a11y.js"></script>
+  <script src="/shared/transaction-form.js"></script>
+  <script src="/shared/bottom-nav.js"></script>
+  <script src="/shared/keyboard-nav.js"></script>
+  <script>
+    // Debt Exit plan WS8: the payday screen. Everything comes from one
+    // request, /api/cashflow-summary?action=payday (rules in
+    // api/_lib/payday.js). Dates are 'YYYY-MM-DD' calendar days (Jakarta):
+    // parsed from their parts here, never new Date('YYYY-MM-DD') or
+    // toISOString().
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const COLORS = { bills: 'var(--c-bills)', cards: 'var(--c-cards)', steals: 'var(--c-steals)', allow: 'var(--c-allow)' };
+    let data = null;
+    let allocation = 'hole'; // extra income preview: 'hole' | 'buffer' (client-side only)
+
+    function formatIDR(value) {
+      return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(value || 0);
+    }
+    function signedIDR(value) {
+      return (value < 0 ? '−' : '') + formatIDR(Math.abs(value || 0));
+    }
+    function esc(str) {
+      return String(str == null ? '' : str).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+    function parts(iso) {
+      const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso || '');
+      return m ? { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) } : null;
+    }
+    function dayMonth(iso) {
+      const p = parts(iso);
+      return p ? `${p.d} ${MONTHS[p.m - 1]}` : '';
+    }
+    function weekdayDayMonth(iso) {
+      const p = parts(iso);
+      if (!p) return '';
+      const wd = new Date(Date.UTC(p.y, p.m - 1, p.d)).getUTCDay();
+      return `${DAYS[wd]} ${p.d} ${MONTHS[p.m - 1]}`;
+    }
+    function pct(n) {
+      return typeof n === 'number' ? `${n.toFixed(1)}%` : '—';
+    }
+    const plural = (n, one, many) => `${n} ${n === 1 ? one : (many || one + 's')}`;
+
+    // ── Header + notices ───────────────────────────────────────────────────
+    function renderHeader(d) {
+      const p = d.period;
+      document.getElementById('period').textContent =
+        `${weekdayDayMonth(p.start)} → next payroll ${weekdayDayMonth(p.nextPayday)} · ${p.days} days`;
+    }
+    function renderNotices(d) {
+      const list = [...(d.warnings || []), ...(d.settingsWarnings || []).filter((w) => /payday|salary|allowance/i.test(w))];
+      document.getElementById('notices').innerHTML = list.length
+        ? `<details class="notice"><summary>${plural(list.length, 'note')} about these numbers</summary><ul>${list.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></details>`
+        : '';
+    }
+
+    // ── Hero: salary, extra income, the stacked bar ───────────────────────
+    function renderHero(d) {
+      const s = d.salary;
+      document.getElementById('hero-label').textContent = s.source === 'transaction' ? 'Salary received' : 'Salary expected';
+      document.getElementById('hero-amount').textContent = s.amount === null ? 'Not set' : formatIDR(s.amount);
+      document.getElementById('hero-src').textContent = s.source === 'transaction' ? [s.payee, s.sof].filter(Boolean).join(' · ') : 'from Settings';
+      document.getElementById('hero-meta').textContent = s.source === 'transaction'
+        ? `Credited ${weekdayDayMonth(s.date)}${d.period.startSource === 'transaction' && d.period.start !== d.period.nominalStart ? ` (payday ${dayMonth(d.period.nominalStart)})` : ''}`
+        : 'Not in transactions yet';
+      const ex = d.extraIncome;
+      document.getElementById('extra-list').innerHTML = ex.items.map((i) => `<li>
+          <span>${esc(i.category && i.category !== 'Salary' ? i.category : 'Extra income')}<div class="meta">${esc([i.payee, dayMonth(i.date)].filter(Boolean).join(' · '))}</div></span>
+          <span class="plus num">+${formatIDR(i.amount)}</span></li>`).join('');
+      const totalIn = document.getElementById('total-in');
+      totalIn.hidden = !ex.count;
+      totalIn.innerHTML = `<span>Total in</span><span>${formatIDR(d.totalIn)}</span>`;
+      renderSplit(d);
+    }
+
+    function renderSplit(d) {
+      const segs = [
+        { key: 'bills', label: 'Bills', v: d.bills.total, p: d.bills.pct },
+        { key: 'cards', label: 'Card statements', v: d.statements.total, p: d.statements.pct },
+        { key: 'steals', label: 'Steals paybacks', v: d.steals.total, p: d.steals.pct },
+        { key: 'allow', label: 'Allowances', v: d.allowances.total, p: d.allowances.pct },
+      ];
+      const inn = d.totalIn || 0;
+      const out = d.committed || 0;
+      const scale = Math.max(inn, out, 1);
+      const w = (v) => `${((v / scale) * 100).toFixed(2)}%`;
+      const inPct = (inn / scale) * 100;
+      const short = out > inn;
+      const label = d.extraIncome.count ? 'Money in ends here' : 'Salary ends here';
+      const bar = segs.filter((s) => s.v > 0).map((s) => `<div class="seg" style="width:${w(s.v)};background:${COLORS[s.key]}" title="${esc(s.label)} ${esc(formatIDR(s.v))}"></div>`).join('')
+        + (!short && inn > out ? `<div class="spare" style="width:${w(inn - out)}"></div>` : '')
+        + (short ? `<div class="over" style="left:${inPct.toFixed(2)}%"></div>` : '');
+      const footW = short ? ((out - inn) / scale) * 100 : ((inn - out) / scale) * 100;
+      document.getElementById('split').innerHTML = `
+        ${short ? `<div class="bar-labels" aria-hidden="true"><span style="left:${inPct.toFixed(2)}%">${label}</span></div>` : ''}
+        <div class="bar" role="img" aria-label="${esc(segs.map((s) => `${s.label} ${pct(s.p)} of salary`).join(', '))}">${bar}</div>
+        ${footW > 0 ? `<div class="bar-foot"><span class="${short ? 'short' : 'left'}" style="width:${Math.max(footW, 12).toFixed(2)}%">${short ? 'Short' : 'Left'}</span></div>` : ''}
+        <div class="legend">${segs.map((s) => `<span><i class="sw" style="background:${COLORS[s.key]}"></i>${esc(s.label)} ${pct(s.p)}</span>`).join('')}</div>`;
+    }
+
+    // ── What's left ────────────────────────────────────────────────────────
+    function weeksWhy(a) {
+      if (!a.unusual || !a.weeks.length) return '';
+      const first = a.weeks[0];
+      const last = a.weeks[a.weeks.length - 1];
+      const more = a.count > a.usual;
+      return `<div class="why"><span aria-hidden="true">${more ? '!' : 'i'}</span><span>${more ? 'Why: t' : 'T'}his pay period has <b>${a.count} allowance weeks</b> (${esc(a.weekStartDay)}s ${esc(dayMonth(first.start))} – ${esc(dayMonth(last.start))}). A usual period has ${a.usual}.</span></div>`;
+    }
+    function renderLeft(d) {
+      const el = document.getElementById('left-card');
+      const neg = d.whatsLeft < 0;
+      el.className = `card left-card ${neg ? 'neg' : 'pos'}`;
+      const h = d.hole;
+      let note;
+      if (neg) {
+        note = h.before === null
+          ? `Re-borrow ${formatIDR(d.reborrow)} to cover the period.`
+          : `Re-borrow this to cover the period. The hole goes from <b>${formatIDR(h.before)}</b> to <b>${formatIDR(h.after)}</b> (${h.after >= h.before ? '+' : '−'}${formatIDR(Math.abs(h.after - h.before))}).`;
+      } else {
+        note = h.before === null
+          ? 'Everything is covered.'
+          : `Everything is covered${d.steals.count ? ', paybacks included' : ''}. The hole goes from <b>${formatIDR(h.before)}</b> to <b>${formatIDR(h.after)}</b>.`;
+      }
+      el.innerHTML = `
+        <div class="left-row"><span class="left-title">${neg ? 'To re-borrow' : "What's left"}</span>
+          <span class="left-amt num">${signedIDR(d.whatsLeft)}</span></div>
+        <p class="left-note">${note}</p>
+        ${weeksWhy(d.allowances)}`;
+    }
+
+    // ── Extra income preview (client-side only, nothing is saved) ──────────
+    function renderPreview(d) {
+      const el = document.getElementById('preview');
+      if (!d.extraIncome.count) { el.hidden = true; el.innerHTML = ''; return; }
+      el.hidden = false;
+      const useIt = allocation === 'hole';
+      const left = useIt ? d.whatsLeft : d.withoutExtra.whatsLeft;
+      const holeAfter = useIt ? d.hole.after : d.withoutExtra.holeAfter;
+      const buffer = useIt ? 0 : d.extraIncome.total;
+      el.innerHTML = `
+        <div class="label">Extra income ${formatIDR(d.extraIncome.total)}: what it does</div>
+        <div class="seg-toggle" role="group" aria-label="Use extra income for">
+          <button type="button" data-alloc="hole" aria-pressed="${useIt}">Pay down the hole</button>
+          <button type="button" data-alloc="buffer" aria-pressed="${!useIt}">Keep as buffer</button>
+        </div>
+        <div class="kv"><span class="k">${left < 0 ? 'To re-borrow' : "What's left"}</span><span class="num" style="color:${left < 0 ? 'var(--bad)' : 'var(--good)'}">${signedIDR(left)}</span></div>
+        ${d.hole.before !== null ? `<div class="kv"><span class="k">Hole after payday</span><span class="num">${formatIDR(holeAfter)}</span></div>` : ''}
+        ${buffer ? `<div class="kv"><span class="k">Buffer kept aside</span><span class="num">${formatIDR(buffer)}</span></div>` : ''}
+        <div class="kv"><span class="k">Without the extra income</span><span class="num">${signedIDR(d.withoutExtra.whatsLeft)}${d.hole.before !== null ? ` · hole ${formatIDR(d.withoutExtra.holeAfter)}` : ''}</span></div>
+        <div class="hint">A preview only: nothing is saved.</div>`;
+      el.querySelectorAll('[data-alloc]').forEach((b) => b.addEventListener('click', () => { allocation = b.dataset.alloc; renderPreview(data); }));
+    }
+
+    // ── Bills + card statements: one summary row each ──────────────────────
+    function sumRow(id, color, title, sub, total, p) {
+      document.getElementById(id).innerHTML = `
+        <span class="stripe" style="background:${color}"></span>
+        <span class="sum-main"><span class="sum-title">${esc(title)}</span><div class="sum-sub">${esc(sub)}</div></span>
+        <span class="sum-right"><div class="sum-amt num">${formatIDR(total)}</div><div class="sum-pct num">${pct(p)} of salary</div></span>
+        <svg class="chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 6l6 6-6 6"/></svg>`;
+      document.getElementById(id).setAttribute('aria-label', `${title}: ${formatIDR(total)}. Open the Bills page`);
+    }
+    function renderSummaries(d) {
+      const b = d.bills;
+      const bSub = [plural(b.count, 'bill'), 'from cash', b.paidCount ? `${b.paidCount} paid` : '', b.lateCount ? `${b.lateCount} late` : ''].filter(Boolean).join(' · ');
+      sumRow('sum-bills', COLORS.bills, 'Bills due before payroll', bSub, b.total, b.pct);
+      const c = d.statements;
+      const cSub = [plural(c.count, 'statement'), c.paidCount ? `${c.paidCount} paid` : '', c.paid && c.remaining ? `${formatIDR(c.remaining)} still to pay` : ''].filter(Boolean).join(' · ');
+      sumRow('sum-cards', COLORS.cards, 'Card statements', cSub, c.total, c.pct);
+    }
+
+    // ── Steals paybacks: itemised ──────────────────────────────────────────
+    function renderSteals(d) {
+      const s = d.steals;
+      const feePct = `${(s.feeRate * 100).toFixed(s.feeRate * 100 % 1 ? 1 : 0)}%`;
+      const head = `<div class="sec-head"><span class="stripe" style="background:${COLORS.steals};height:28px"></span>
+        <span class="sum-main"><span class="sum-title">Steals paybacks</span><div class="sum-sub">${d.hole.before !== null ? `Hole ${esc(formatIDR(d.hole.before))} · fees included` : 'No Steals log'}</div></span>
+        <span class="sum-right"><div class="sum-amt num">${formatIDR(s.total)}</div><div class="sum-pct num">${pct(s.pct)} of salary</div></span></div>`;
+      const rows = s.items.length ? `<ul class="rows">${s.items.map((i) => {
+        const soon = i.rollDate && i.rollDate <= d.period.nextPayday;
+        return `<li><div><div class="name">${esc(i.source)}</div><div class="meta">${esc(i.type)} · fee ${feePct} · ${formatIDR(i.fee)}</div></div>
+          <div class="right"><div class="amt num">${formatIDR(i.owed)}</div>${i.rollDate ? `<span class="pill ${soon ? 'soon' : 'later'}">Roll ${esc(dayMonth(i.rollDate))}</span>` : ''}</div></li>`;
+      }).join('')}</ul>` : '<div class="empty">Nothing owed to the future.</div>';
+      document.getElementById('steals').innerHTML = head + rows;
+    }
+
+    // ── Weekly allowances: itemised ────────────────────────────────────────
+    function renderAllowances(d) {
+      const a = d.allowances;
+      const label = { now: 'Now', next: 'Next', later: 'Later', past: 'Done' };
+      const head = `<div class="sec-head"><span class="stripe" style="background:${COLORS.allow};height:28px"></span>
+        <span class="sum-main"><span class="sum-title">Weekly allowances</span><div class="sum-sub">${a.weekly === null ? 'weekly_allowance_rp not set' : `${a.count} weeks × ${esc(formatIDR(a.weekly))}`}</div></span>
+        <span class="sum-right"><div class="sum-amt num">${formatIDR(a.total)}</div><div class="sum-pct num">${pct(a.pct)} of salary</div></span></div>`;
+      const flag = a.unusual ? `<div class="flag">${a.count} weeks this period, not the usual ${a.usual}.</div>` : '';
+      const rows = `<ul class="rows">${a.weeks.map((w) => {
+        const extra = a.count > a.usual && w.n > a.usual;
+        const pill = extra ? 'extra' : w.status;
+        const text = extra ? 'Extra' : label[w.status];
+        return `<li class="${w.status === 'past' ? 'past' : ''}"><div><div class="name">Week ${w.n}</div><div class="meta">${esc(weekdayDayMonth(w.start))} – ${esc(weekdayDayMonth(w.end))}${w.crossesPayroll ? ' · crosses payroll' : ''}</div></div>
+          <div class="right"><div class="amt num">${formatIDR(w.amount)}</div><span class="pill ${pill}">${text}</span></div></li>`;
+      }).join('')}</ul>`;
+      document.getElementById('allowances').innerHTML = head + flag + rows;
+    }
+
+    function renderTotals(d) {
+      const neg = d.whatsLeft < 0;
+      document.getElementById('totals').innerHTML = `
+        <div class="kv"><span class="k">Salary</span><span class="num">${formatIDR(d.salary.amount)}</span></div>
+        ${d.extraIncome.count ? `<div class="kv"><span class="k">Extra income</span><span class="num">+${formatIDR(d.extraIncome.total)}</span></div>` : ''}
+        <div class="kv"><span class="k">Committed this period</span><span class="num">−${formatIDR(d.committed)}</span></div>
+        <div class="kv final"><span>${neg ? 'To re-borrow' : "What's left"}</span><span class="num ${neg ? 'bad' : 'good'}">${signedIDR(d.whatsLeft)}</span></div>`;
+    }
+
+    function render(d) {
+      renderHeader(d);
+      renderNotices(d);
+      renderHero(d);
+      renderLeft(d);
+      renderPreview(d);
+      renderSummaries(d);
+      renderSteals(d);
+      renderAllowances(d);
+      renderTotals(d);
+    }
+
+    async function load() {
+      try {
+        const d = await fetch('/api/cashflow-summary?action=payday').then((r) => r.json());
+        if (d.error) throw new Error(d.error);
+        data = d;
+        render(d);
+      } catch (err) {
+        document.getElementById('hero-amount').textContent = '—';
+        document.getElementById('hero-meta').innerHTML = `<span class="error">${esc(err.message)}</span>`;
+        document.getElementById('period').textContent = '';
+      }
+    }
+
+    // Shared Add transaction form, add-only. "Add extra income" opens it
+    // and switches its type toggle to Income (the form has no type option,
+    // so this presses its own Income button rather than changing the module).
+    TransactionForm.mount(document.getElementById('txf-root'), {
+      supportEditDelete: false,
+      showFab: false,
+      onSaved: () => load(),
+    });
+    document.getElementById('add-extra').addEventListener('click', () => {
+      TransactionForm.open(null);
+      const income = document.querySelector('#txf-type-toggle [data-type="Income"]');
+      if (income) income.click();
+    });
+
+    BottomNav.mount(document.getElementById('bnv-root'), { active: 'home' });
+    KeyboardNav.mount();
+    load();
+  </script>
+</body>
+</html>

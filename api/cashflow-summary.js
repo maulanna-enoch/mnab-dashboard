@@ -126,6 +126,8 @@ module.exports = async (req, res) => {
     if (req.query && req.query.action === 'settings') return await actionSettings(res);
     if (req.query && req.query.action === 'week') return await actionWeek(req, res);
     if (req.query && req.query.action === 'debt') return await actionDebt(req, res);
+    // WS8 payday screen: rules and fetch live in api/_lib/payday.js.
+    if (req.query && req.query.action === 'payday') return await require('./_lib/payday').handlePayday(req, res);
 
     res.status(400).json({ error: 'Unknown or missing action. Use ?action=week, ?action=debt or ?action=settings.' });
   } catch (err) {
