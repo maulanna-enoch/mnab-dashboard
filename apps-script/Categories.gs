@@ -50,9 +50,21 @@
  *   Payees        Category in column F (next to Kind in E): the payee's
  *                 default category.
  *
- * Nothing writes Category yet except you: imports (C2), the dashboard form
- * (C3) and a backfill (C4) follow. The dashboard already recomputes each
- * row's category from these rules when it reads.
+ *   installmentsbills  Category: the bill's category. Rows copied from that
+ *                 bill (Source ID = its IB-n) get it.
+ *   PayeeRules    Set Category (PayeeRules.gs): the category a matching
+ *                 rule gives a row, stored with Category Rule "rule #n".
+ * Setup also puts a dropdown of your categories on those three columns
+ * (Payees F, installmentsbills Category, PayeeRules Set Category). It only
+ * warns on a name that isn't on the list; it doesn't block it.
+ *
+ * WHO WRITES CATEGORY (C2): email imports (EmailImport.gs), inbox imports
+ * (InboxImport.gs; a Category staged in the inbox counts as set by hand),
+ * the bills copy (InstallmentsBills.gs) and Apply Payee Rules to All Rows
+ * (PayeeRules.gs) all write Category + Category Rule from these rules. The
+ * dashboard form (C3) and a backfill (C4) follow. The dashboard recomputes
+ * each row's category when it reads either way, and only trusts a stored
+ * category set by hand or by a payee rule.
  *
  * Depends on headerIndexMap() and ensureColumn() from Reconcile.gs
  * (apps-script/Reconciliations.gs).
@@ -273,7 +285,10 @@ function categories_classify_(f, ctx) {
 
 var categoriesContextCache_ = null;
 
-/** The rules' context from the Categories and Payees tabs. Cached per run. */
+/**
+ * The rules' context from the Categories, Payees and installmentsbills
+ * tabs. Cached per run; resetCategoriesCache_() at the start of each run.
+ */
 function categories_context_(ss) {
   if (categoriesContextCache_) return categoriesContextCache_;
   ss = ss || SpreadsheetApp.getActiveSpreadsheet();
@@ -300,8 +315,57 @@ function categories_context_(ss) {
       }
     }
   }
-  categoriesContextCache_ = categories_buildContext_(list, payeeRows, {});
+  categoriesContextCache_ = categories_buildContext_(list, payeeRows, categories_billCategories_(ss));
   return categoriesContextCache_;
+}
+
+/** {'IB-3': 'Utilities', …} from installmentsbills' ID and Category columns. */
+function categories_billCategories_(ss) {
+  var out = {};
+  var bills = ss.getSheetByName('installmentsbills');
+  if (!bills || bills.getLastRow() < 2) return out;
+  var values = bills.getRange(1, 1, bills.getLastRow(), bills.getLastColumn()).getValues();
+  var headers = values[0].map(function (h) { return String(h || '').trim().toLowerCase(); });
+  var idCol = headers.indexOf('id');
+  var catCol = headers.indexOf('category');
+  if (idCol === -1 || catCol === -1) return out;
+  for (var i = 1; i < values.length; i++) {
+    var id = String(values[i][idCol] || '').trim().toUpperCase();
+    var cat = categories_tidy_(values[i][catCol]);
+    if (id && cat) out[id] = cat;
+  }
+  return out;
+}
+
+/**
+ * The Category / Category Rule cells to write for a new row, from the
+ * rules above. f is what categories_classify_ takes. A transfer, or an
+ * Income row nothing matched, gets blank cells.
+ */
+function categories_cellsFor_(f, ss) {
+  var c = categories_classify_(f, categories_context_(ss));
+  return { category: c.category || '', rule: c.category ? c.rule : (c.rule === 'transfer' ? 'transfer' : '') };
+}
+
+/**
+ * Dropdown of the Categories tab's names, for columns where you type a
+ * category. Warns on other text rather than rejecting it. null when the
+ * Categories tab doesn't exist yet.
+ */
+function categories_validation_(ss) {
+  var tab = ss.getSheetByName(CATEGORIES_SHEET_NAME);
+  if (!tab) return null;
+  return SpreadsheetApp.newDataValidation()
+    .requireValueInRange(tab.getRange('A2:A'), true)
+    .setAllowInvalid(true)
+    .setHelpText('A category from the Categories tab.')
+    .build();
+}
+
+/** Puts categories_validation_() on rows 2+ of a 0-based column. */
+function categories_applyValidation_(sheet, col0, rule) {
+  if (!sheet || col0 < 0 || !rule) return;
+  sheet.getRange(2, col0 + 1, Math.max(sheet.getMaxRows() - 1, 1), 1).setDataValidation(rule);
 }
 
 function resetCategoriesCache_() {
@@ -400,13 +464,27 @@ function setupCategories() {
     if (!String(payees.getRange(1, 5).getValue() || '').trim()) payees.getRange(1, 5).setValue('Kind');
     if (!String(payees.getRange(1, 6).getValue() || '').trim()) payees.getRange(1, 6).setValue('Category');
   }
+  var bills = ss.getSheetByName('installmentsbills');
+  var billCatCol = bills ? ensureColumn(bills, CATEGORY_COLUMN_NAME) : -1;
+
+  // Dropdowns where you type a category.
+  var dropdown = categories_validation_(ss);
+  if (payees) categories_applyValidation_(payees, 5, dropdown);
+  if (bills) categories_applyValidation_(bills, billCatCol, dropdown);
+  var rulesTab = ss.getSheetByName('PayeeRules');
+  if (rulesTab) {
+    var ruleHeaders = rulesTab.getRange(1, 1, 1, Math.max(rulesTab.getLastColumn(), 1)).getValues()[0]
+      .map(function (h) { return String(h || '').trim().toLowerCase(); });
+    categories_applyValidation_(rulesTab, ruleHeaders.indexOf('set category'), dropdown);
+  }
   resetCategoriesCache_();
 
   ui.alert('Set Up Categories',
     (created ? 'Created the Categories tab with ' + missing.length + ' starter categories. '
       : (missing.length ? 'Added ' + missing.length + ' categories. ' : 'Your Categories tab is unchanged. ')) +
-      'transactions now has Category and Category Rule columns' + (payees ? ', and Payees has Category in column F' : '') +
-      '.\n\nSet a payee\'s default by typing a category name into Payees column F. Check the Bank Labels guesses too.',
+      'transactions now has Category and Category Rule columns' + (payees ? ', Payees has Category in column F' : '') +
+      (bills ? ', and installmentsbills has a Category column' : '') +
+      '.\n\nPick a payee\'s default in Payees column F and each bill\'s in installmentsbills, from the dropdown. Check the Bank Labels guesses too.',
     ui.ButtonSet.OK);
   tab.activate();
 }

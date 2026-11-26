@@ -445,6 +445,7 @@ function runImportPass_(opts) {
   importedThisRun_ = [];
   resetPayeeRulesCache_(); // PayeeRules.gs: re-read the PayeeRules tab once per run
   resetKindsCache_(); // Kinds.gs: re-read the Payees tab's Kind overrides once per run
+  resetCategoriesCache_(); // Categories.gs: re-read Categories / Payees / bills once per run
   var grabThreads = []; // mnab/grab receipts — handled after the bank threads, see GRAB RECEIPTS
   try {
     var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TRANSACTIONS_SHEET_NAME);
@@ -593,7 +594,9 @@ function handleMessage_(message, labelKey, headerMap, dryRun) {
     messageId: messageId,
     transfer: ruled.transfer,
     raw: ruled.raw,
-    payeeRule: ruled.payeeRule
+    payeeRule: ruled.payeeRule,
+    category: ruled.category,
+    categoryRule: ruled.categoryRule
   }, headerMap, dryRun);
 }
 
@@ -816,6 +819,21 @@ function writeRow_(row, headerMap, dryRun) {
   values['Kind'] = kind.kind;
   values['Kind Rule'] = kind.rule;
 
+  // Categories.gs: what the money was for, same rules as the dashboard. A
+  // payee rule's Set Category comes in as row.category with Category Rule
+  // "rule #n"; otherwise the payee's default or a bank label decides.
+  var cat = categories_cellsFor_({
+    type: row.type || 'Expense',
+    isTransfer: Boolean(row.transfer),
+    billId: '',
+    notes: row.notes,
+    payee: row.payee,
+    storedCategory: row.category || '',
+    storedCategoryRule: row.category ? (row.categoryRule || '') : ''
+  });
+  values['Category'] = cat.category;
+  values['Category Rule'] = cat.rule;
+
   if (dryRun) {
     Logger.log('[DRY RUN] Would append row: ' + JSON.stringify(values));
     return true;
@@ -906,8 +924,9 @@ function testPushNotification() {
 // feature (see "THIRD KIND OF DUPLICATE" up top).
 // 'Raw Import'/'Payee Rule' belong to the payee rules (PayeeRules.gs).
 // 'Kind'/'Kind Rule' are the fixed / variable classification (Kinds.gs).
+// 'Category'/'Category Rule' are what the money was for (Categories.gs).
 var IMPORT_COLUMNS = ['Pending', 'Email Message ID', 'Match ID', 'Match Status', 'Raw Import', 'Payee Rule',
-  'Kind', 'Kind Rule'];
+  'Kind', 'Kind Rule', 'Category', 'Category Rule'];
 
 function ensureImportColumns_(sheet) {
   var lastCol = sheet.getLastColumn();

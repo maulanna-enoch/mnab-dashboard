@@ -19,6 +19,11 @@
  *   Kind, Bill ID     optional. Kind = Fixed / Variable is kept as a hand-set
  *                     Kind; Bill ID (an IB-n code) goes into Source ID. With
  *                     neither, Kind comes from the rules in Kinds.gs.
+ *   Category          optional. A category from the Categories tab is kept
+ *                     as set by hand (Category Rule "manual"). Blank, or a
+ *                     name that isn't on the tab: Category comes from the
+ *                     rules in Categories.gs (bill, payee default, bank
+ *                     label).
  *   Expense, Income, Total
  *                     review-only formulas in the inbox; recomputed here
  *                     from Amount and Income/Expense, never copied
@@ -49,7 +54,8 @@
  *     date or amount — e.g. an ID reused after the original row was deleted)
  *     is skipped and kept, so it can't vanish without reaching the ledger.
  *
- * Depends on kinds_classify_() / kinds_payeeKinds_() from Kinds.gs, and on
+ * Depends on kinds_classify_() / kinds_payeeKinds_() from Kinds.gs,
+ * categories_cellsFor_() from Categories.gs, and on
  * headerIndexMap(), ensureColumn(), getAccountRows(),
  * payeeHeaderName() and billingMonthForDate() from Reconcile.gs
  * (apps-script/Reconciliations.gs), so it must live in the same Apps Script
@@ -178,6 +184,8 @@ function inbox_import_(ui) {
   if ('Bill ID' in inCol) ensureColumn(txnSheet, BILL_ID_COLUMN_NAME);
   resetKindsCache_();
   const payeeKinds = kinds_payeeKinds_(ss);
+  ensureCategoryColumns_(txnSheet); // Categories.gs
+  resetCategoriesCache_();
   const txCol = headerIndexMap(txnSheet);
   const txLast = txnSheet.getLastRow();
   const existing = {};  // Inbox ID -> { row, sof, date, amount }
@@ -246,6 +254,7 @@ function inbox_import_(ui) {
         notes: 'Notes' in inCol ? String(r[inCol['Notes']] || '') : '',
         kind: 'Kind' in inCol ? String(r[inCol['Kind']] || '').trim() : '',
         billId: 'Bill ID' in inCol ? String(r[inCol['Bill ID']] || '').trim().toUpperCase() : '',
+        category: 'Category' in inCol ? String(r[inCol['Category']] || '').trim() : '',
       },
     });
   });
@@ -318,6 +327,12 @@ function inbox_import_(ui) {
     set(KIND_COLUMN_NAME, kind.kind);
     set(KIND_RULE_COLUMN_NAME, kind.rule);
     if (kinds_billId_(t.billId)) set(BILL_ID_COLUMN_NAME, kinds_billId_(t.billId));
+    const cat = categories_cellsFor_({
+      type: t.type, isTransfer: t.transfer, billId: t.billId, notes: t.notes, payee: t.payee,
+      storedCategory: t.category, storedCategoryRule: '', // a Category staged in the inbox counts as hand-set
+    }, ss);
+    set(CATEGORY_COLUMN_NAME, cat.category);
+    set(CATEGORY_RULE_COLUMN_NAME, cat.rule);
     row[idCol] = w.id;
     return row;
   });

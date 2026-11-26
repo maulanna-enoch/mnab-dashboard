@@ -39,8 +39,12 @@
  *       "notes": "…",                      optional
  *       "kind": "Variable",                optional: Fixed | Variable
  *       "billId": "IB-12",                 optional
- *       "category": "Eating out",          optional, written only if the tab has
- *                                          a Category column
+ *       "category": "Eating out",          optional: a name from MNAB's Categories
+ *                                          tab. Written only if the tab has a
+ *                                          Category column (setupInbox() adds
+ *                                          it). InboxImport keeps it as set by
+ *                                          hand; a name MNAB doesn't know is
+ *                                          ignored there.
  *       "approve": true,                   optional, see AUTO_APPROVE_SOFS
  *       "deleteAfterImport": true          optional, default true
  *     } ] }
@@ -88,7 +92,7 @@ const INBOX_WEBAPP = {
     'Inbox ID', 'Approve', 'Status', 'Payee', 'Income/Expense', 'SOF', 'Date',
     'Month', 'Cleared', 'Amount', 'Expense', 'Income', 'Total', 'Transfer',
     'Notes', 'Staged At', 'Imported At', 'Transactions Row', 'Kind', 'Bill ID',
-    'Delete After Import',
+    'Delete After Import', 'Category',
   ],
   checkboxHeaders: ['Approve', 'Transfer', 'Delete After Import'],
 };
