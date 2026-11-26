@@ -62,7 +62,8 @@
  * (InboxImport.gs; a Category staged in the inbox counts as set by hand),
  * the bills copy (InstallmentsBills.gs) and Apply Payee Rules to All Rows
  * (PayeeRules.gs) all write Category + Category Rule from these rules. The
- * dashboard form (C3) and a backfill (C4) follow. The dashboard recomputes
+ * dashboard form (C3) writes them too, and Finances > Setup > Categorise
+ * Transactions… (C4, below) backfills every existing row. The dashboard recomputes
  * each row's category when it reads either way, and only trusts a stored
  * category set by hand or by a payee rule.
  *
@@ -74,6 +75,16 @@
  * replaces files that already exist), then paste the updated
  * Reconciliations.gs (menu item). Reload the sheet and run
  * Finances > Setup > Categories… once.
+ *
+ * ── BACKFILL (C4) ───────────────────────────────────────────────────────
+ * Finances > Setup > Categorise Transactions… runs the rules over every
+ * row and writes Category / Category Rule. A category set by hand or by a
+ * payee rule is kept (the rules already put those first). It previews the
+ * changes, then shows coverage: for each billing month, how much of the
+ * Variable spending has a category, and the uncategorised payees that
+ * cost the most. Give those a default in Payees column F and run it again.
+ * The goal is ≥ 90% of a month's Variable rupiah categorised. Safe to
+ * rerun any time.
  */
 
 var CATEGORIES_SHEET_NAME = 'Categories';
@@ -487,4 +498,182 @@ function setupCategories() {
       '.\n\nPick a payee\'s default in Payees column F and each bill\'s in installmentsbills, from the dropdown. Check the Bank Labels guesses too.',
     ui.ButtonSet.OK);
   tab.activate();
+}
+
+// ── Backfill (C4) ───────────────────────────────────────────────────────
+
+var CATEGORIES_PREVIEW_MAX = 15;
+var CATEGORIES_SUMMARY_MONTHS = 6;
+var CATEGORIES_TOP_PAYEES = 10;
+var CATEGORIES_TOP_PAYEE_MONTHS = 3;
+var CATEGORIES_COVERAGE_GOAL = 0.9;
+
+/** Menu entry point: Finances > Setup > Categorise Transactions… */
+function categoriseTransactionHistory() {
+  var ui = SpreadsheetApp.getUi();
+  // Same locks as the Kind backfill: imports append or edit rows under
+  // the script lock (email, payee rules) or the document lock (inbox).
+  var scriptLock = LockService.getScriptLock();
+  var docLock = LockService.getDocumentLock();
+  if (!scriptLock.tryLock(30000)) { ui.alert('Another import or script is running. Try again in a moment.'); return; }
+  if (!docLock.tryLock(30000)) { scriptLock.releaseLock(); ui.alert('Another import or script is running. Try again in a moment.'); return; }
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var sheet = ss.getSheetByName(RECONCILE_CONFIG.transactionsSheet);
+    if (!sheet) throw new Error('transactions tab not found.');
+    if (!ss.getSheetByName(CATEGORIES_SHEET_NAME)) {
+      ui.alert('Categorise transactions', 'Run Finances > Setup > Categories… first: it creates the Categories tab.', ui.ButtonSet.OK);
+      return;
+    }
+    ensureCategoryColumns_(sheet);
+    resetCategoriesCache_();
+
+    var plan = categories_plan_(sheet, ss);
+    var msg = categories_describePlan_(plan);
+    if (!plan.changes.length) {
+      ui.alert('Categorise transactions', 'Every row already has its category.\n\n' + msg, ui.ButtonSet.OK);
+      return;
+    }
+    if (ui.alert('Categorise transactions', msg + '\n\nWrite these changes?', ui.ButtonSet.YES_NO) !== ui.Button.YES) return;
+
+    // Re-plan from a fresh read: the write is by position and rows could
+    // have moved while the dialog was open.
+    resetCategoriesCache_();
+    var fresh = categories_plan_(sheet, ss);
+    if (fresh.rows) {
+      sheet.getRange(2, fresh.catCol + 1, fresh.rows, 1).setValues(fresh.catValues);
+      sheet.getRange(2, fresh.ruleCol + 1, fresh.rows, 1).setValues(fresh.ruleValues);
+    }
+    ui.alert('Categorise transactions', 'Updated ' + fresh.changes.length + ' row(s).\n\n' + categories_describeCoverage_(fresh),
+      ui.ButtonSet.OK);
+  } catch (err) {
+    ui.alert('Categorise transactions failed', String(err && err.message || err), ui.ButtonSet.OK);
+  } finally {
+    docLock.releaseLock();
+    scriptLock.releaseLock();
+  }
+}
+
+/**
+ * Reads `transactions` and works out every row's Category / Category
+ * Rule. Returns the new column values (blank rows keep theirs), the
+ * changes, counts by rule, and coverage: per billing month the Variable
+ * spending in total and with a category, and uncategorised spending by
+ * payee over the last few months.
+ */
+function categories_plan_(sheet, ss) {
+  var col = headerIndexMap(sheet);
+  var payeeHeader = payeeHeaderName(col);
+  var catCol = col[CATEGORY_COLUMN_NAME];
+  var ruleCol = col[CATEGORY_RULE_COLUMN_NAME];
+  var lastRow = sheet.getLastRow();
+  var plan = {
+    catCol: catCol, ruleCol: ruleCol, rows: Math.max(lastRow - 1, 0),
+    catValues: [], ruleValues: [], changes: [], counts: {}, byMonth: {}, uncatByPayee: {}
+  };
+  if (lastRow < 2) return plan;
+  var ctx = categories_context_(ss);
+  var payeeKinds = typeof kinds_payeeKinds_ === 'function' ? kinds_payeeKinds_(ss) : {};
+  var hasKindFn = typeof kinds_classify_ === 'function';
+  var values = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
+  function get(r, h) { return h && h in col ? r[col[h]] : ''; }
+  function truthy(v) { return v === true || /^(true|yes|y|1)$/i.test(String(v || '').trim()); }
+
+  var monthKeys = [];
+  values.forEach(function (r, i) {
+    var storedCat = r[catCol];
+    var storedRule = r[ruleCol];
+    var payee = payeeHeader ? String(r[col[payeeHeader]] || '').trim() : '';
+    var amount = Number(get(r, 'Amount')) || 0;
+    if (!payee && !amount) {
+      plan.catValues.push([storedCat]);
+      plan.ruleValues.push([storedRule]);
+      return;
+    }
+    var type = String(get(r, 'Income/Expense')).trim() === 'Income' ? 'Income' : 'Expense';
+    var isTransfer = truthy(get(r, 'Transfer'));
+    var f = {
+      type: type, isTransfer: isTransfer, billId: get(r, BILL_ID_COLUMN_NAME), notes: get(r, 'Notes'),
+      payee: payee, storedCategory: storedCat, storedCategoryRule: storedRule
+    };
+    var res = categories_classify_(f, ctx);
+    var cat = res.category || '';
+    var rule = res.category ? res.rule : (res.rule === 'transfer' ? 'transfer' : '');
+    plan.catValues.push([cat]);
+    plan.ruleValues.push([rule]);
+    var ruleKey = /^rule\b/.test(rule) ? 'payee rule' : (rule || 'none');
+    plan.counts[ruleKey] = (plan.counts[ruleKey] || 0) + 1;
+    if (String(storedCat || '') !== cat || String(storedRule || '') !== rule) {
+      plan.changes.push({ row: i + 2, payee: payee, from: String(storedCat || '') || '(blank)', to: cat || '(blank)', rule: rule || '—' });
+    }
+
+    // Coverage counts Variable spending only: what the categories are for.
+    if (type !== 'Expense' || isTransfer) return;
+    var kind = hasKindFn ? kinds_classify_({
+      type: type, isTransfer: isTransfer, billId: f.billId, notes: f.notes, payee: payee,
+      storedKind: get(r, 'Kind'), storedRule: get(r, 'Kind Rule')
+    }, payeeKinds).kind : 'Variable';
+    if (kind !== 'Variable') return;
+    var month = get(r, 'Month');
+    if (!(month && typeof month.getFullYear === 'function' && !isNaN(month.getTime()))) return;
+    var key = month.getFullYear() + '-' + ('0' + (month.getMonth() + 1)).slice(-2);
+    var m = plan.byMonth[key];
+    if (!m) { m = plan.byMonth[key] = { total: 0, done: 0 }; monthKeys.push(key); }
+    var spend = Math.abs(amount);
+    m.total += spend;
+    if (cat && cat !== CATEGORY_UNCATEGORISED) m.done += spend;
+    else {
+      var p = plan.uncatByPayee[key] || (plan.uncatByPayee[key] = {});
+      var pk = payee || '(no payee)';
+      p[pk] = (p[pk] || 0) + spend;
+    }
+  });
+  return plan;
+}
+
+function categories_rp_(n) {
+  return 'Rp ' + Math.round(n).toLocaleString('id-ID');
+}
+
+/** Coverage lines: per month % categorised, and the biggest gaps by payee. */
+function categories_describeCoverage_(plan) {
+  var months = Object.keys(plan.byMonth).sort().reverse();
+  if (!months.length) return 'No Variable spending with a billing month to measure yet.';
+  var lines = months.slice(0, CATEGORIES_SUMMARY_MONTHS).map(function (k) {
+    var m = plan.byMonth[k];
+    var pct = m.total ? m.done / m.total : 1;
+    return k + '  ' + Math.floor(pct * 100) + '% of ' + categories_rp_(m.total) +
+      (pct >= CATEGORIES_COVERAGE_GOAL ? '  ✓' : '');
+  });
+  var out = ['Variable spending with a category, by billing month (goal ' +
+    Math.round(CATEGORIES_COVERAGE_GOAL * 100) + '%):\n' + lines.join('\n')];
+
+  var byPayee = {};
+  months.slice(0, CATEGORIES_TOP_PAYEE_MONTHS).forEach(function (k) {
+    var p = plan.uncatByPayee[k] || {};
+    Object.keys(p).forEach(function (name) { byPayee[name] = (byPayee[name] || 0) + p[name]; });
+  });
+  var top = Object.keys(byPayee).sort(function (a, b) { return byPayee[b] - byPayee[a]; }).slice(0, CATEGORIES_TOP_PAYEES);
+  if (top.length) {
+    out.push('Biggest uncategorised payees, last ' + CATEGORIES_TOP_PAYEE_MONTHS + ' months. ' +
+      'Give them a category in Payees column F (or on the dashboard\'s Payees page), then run this again:\n' +
+      top.map(function (name) { return name + '  ' + categories_rp_(byPayee[name]); }).join('\n'));
+  }
+  return out.join('\n\n');
+}
+
+function categories_describePlan_(plan) {
+  var parts = [];
+  var order = ['manual', 'bill', 'payee rule', 'payee', 'bank-label', 'default', 'transfer', 'none'];
+  var counts = order.filter(function (k) { return plan.counts[k]; }).map(function (k) { return k + ' ' + plan.counts[k]; });
+  if (counts.length) parts.push('Rows by how their category was found: ' + counts.join(', ') + '.');
+  if (plan.changes.length) {
+    var lines = plan.changes.slice(0, CATEGORIES_PREVIEW_MAX).map(function (c) {
+      return 'Row ' + c.row + ' ' + c.payee + ': ' + c.from + ' → ' + c.to + ' (' + c.rule + ')';
+    });
+    if (plan.changes.length > CATEGORIES_PREVIEW_MAX) lines.push('…and ' + (plan.changes.length - CATEGORIES_PREVIEW_MAX) + ' more.');
+    parts.push(plan.changes.length + ' row(s) will change:\n' + lines.join('\n'));
+  }
+  parts.push(categories_describeCoverage_(plan));
+  return parts.join('\n\n');
 }

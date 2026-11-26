@@ -89,7 +89,8 @@ function onOpen() {
       .addItem('Payee Rules…', 'setupPayeeRules')
       .addItem('Steals from the Future…', 'setupSteals')
       .addSeparator()
-      .addItem('Classify Transactions (Fixed / Variable)…', 'classifyTransactionHistory'))
+      .addItem('Classify Transactions (Fixed / Variable)…', 'classifyTransactionHistory')
+      .addItem('Categorise Transactions…', 'categoriseTransactionHistory'))
     .addToUi();
 }
 
