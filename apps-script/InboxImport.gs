@@ -55,9 +55,14 @@
  * (apps-script/Reconciliations.gs), so it must live in the same Apps Script
  * project. Wired to the Finances menu in that file's onOpen().
  *
- * One-time setup: the account that runs this must be able to open the inbox
- * spreadsheet (it's shared with it as Editor). The first run asks for
- * permission to open other spreadsheets.
+ * One-time setup: set the inbox spreadsheet's ID in Project Settings ›
+ * Script properties as INBOX_SPREADSHEET_ID (the long ID in its URL). The
+ * account that runs this must be able to open that spreadsheet. The first run
+ * asks for permission to open other spreadsheets.
+ *
+ * The inbox spreadsheet is owned by the personal account and has its own
+ * bound script, apps-script/inbox-webapp/InboxWebApp.gs: a web app that is
+ * the only way rows get staged into it. This file only reads it.
  *
  * Automatic import (Finances > Automations > Inbox Auto-Import (On / Off)…):
  *   Installs a time-driven trigger that runs every
@@ -78,7 +83,7 @@
  */
 
 const INBOX_CONFIG = {
-  spreadsheetId: '14cB1nuTPlqHZwW1kn9OTPnTM0Y3iL9MsoBlwqiQrvFE',
+  spreadsheetIdProp: 'INBOX_SPREADSHEET_ID',  // Script property holding the inbox's ID
   sheetName: 'inbox',
   idColumn: 'Inbox ID',
   stagedStatus: 'Staged',
@@ -144,7 +149,7 @@ function automaticInboxImport() {
  */
 function inbox_import_(ui) {
   const auto = !ui;
-  const inboxSheet = SpreadsheetApp.openById(INBOX_CONFIG.spreadsheetId)
+  const inboxSheet = SpreadsheetApp.openById(inbox_spreadsheetId_())
     .getSheetByName(INBOX_CONFIG.sheetName);
   if (!inboxSheet) throw new Error('Inbox tab "' + INBOX_CONFIG.sheetName + '" not found.');
 
@@ -349,6 +354,16 @@ function inbox_import_(ui) {
       (deleteNotImported ? ' (' + deleteNotImported + ' not imported)' : '') + '.');
   }
   return { text: lines.join('\n\n'), changed: true, skipped: skipped };
+}
+
+/** The inbox spreadsheet's ID, from Script Properties. */
+function inbox_spreadsheetId_() {
+  const id = PropertiesService.getScriptProperties().getProperty(INBOX_CONFIG.spreadsheetIdProp);
+  if (!id || !String(id).trim()) {
+    throw new Error('No inbox set up. Add the inbox spreadsheet\'s ID in Project Settings › ' +
+      'Script properties as ' + INBOX_CONFIG.spreadsheetIdProp + '.');
+  }
+  return String(id).trim();
 }
 
 /** Appends one row to the "Inbox Import Log" tab (created on first use). */
