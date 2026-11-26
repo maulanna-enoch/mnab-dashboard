@@ -15,6 +15,18 @@
 //     &date=YYYY-MM-DD        -> as of that day instead of today (Jakarta)
 //     &weeks=N                -> N weeks of history (default 12, max 104)
 //     &transactions=0         -> leave out this week's transaction list
+//   The response also has `where`: this week's spending by category and top
+//   payees (the Home "Where it went" card), same as ?action=where below.
+//
+// GET ?action=where           -> Where it went (Debt Exit WS8): Variable
+//                                spending by category and payee for a week
+//                                or calendar month, compared with the one
+//                                before. Rules in api/_lib/where.js.
+//     &period=week|month      -> default week
+//     &offset=N               -> 0 = current (default), -1 = the one before…
+//     &category=NAME          -> also that category's last 12 periods,
+//                                payees and transactions
+//     &date=YYYY-MM-DD        -> as of that day instead of today (Jakarta)
 //
 // GET ?action=debt            -> the actual hole and debt projection (Debt
 //                                Exit WS6): the hole from the Steals log, the
@@ -36,6 +48,7 @@ const {
 const { SETTINGS_SCHEMA } = require('./_lib/settings');
 const { computeWeek, jakartaToday, isoFromDay } = require('./_lib/week');
 const { projectDebt } = require('./_lib/debt');
+const { computeWhere } = require('./_lib/where');
 const { KIND_CARD_BILL } = require('./_lib/bills');
 
 async function actionSettings(res) {
@@ -60,12 +73,15 @@ async function actionWeek(req, res) {
     fetchClassifiedTransactionRows(),
   ]);
   let result;
+  let where;
   try {
     result = computeWeek(rows, values, {
       asOf: q.date ? String(q.date) : undefined,
       historyWeeks: q.weeks !== undefined ? parseInt(q.weeks, 10) : undefined,
       includeTransactions: q.transactions !== '0',
     });
+    const w = computeWhere(rows, values, { period: 'week', asOf: q.date ? String(q.date) : undefined, topPayees: 3 });
+    where = { start: w.start, end: w.end, total: w.total, count: w.count, compare: w.compare, categories: w.categories, payees: w.payees };
   } catch (err) {
     res.status(400).json({ error: err.message });
     return;
@@ -74,9 +90,40 @@ async function actionWeek(req, res) {
   res.setHeader('Cache-Control', 'no-store');
   res.status(200).json({
     ...result,
+    where,
     settingsWarnings,
     updatedAt: new Date().toISOString(),
   });
+}
+
+async function actionWhere(req, res) {
+  const q = req.query || {};
+  if (q.date && !/^\d{4}-\d{2}-\d{2}$/.test(String(q.date))) {
+    res.status(400).json({ error: 'Invalid "date" -- expected YYYY-MM-DD' });
+    return;
+  }
+  if (q.period && !['week', 'month'].includes(String(q.period))) {
+    res.status(400).json({ error: 'Invalid "period" -- expected week or month' });
+    return;
+  }
+  const [{ values, warnings: settingsWarnings }, rows] = await Promise.all([
+    fetchSettings(),
+    fetchClassifiedTransactionRows(),
+  ]);
+  let result;
+  try {
+    result = computeWhere(rows, values, {
+      period: q.period ? String(q.period) : 'week',
+      offset: q.offset !== undefined ? Number(q.offset) : 0,
+      asOf: q.date ? String(q.date) : undefined,
+      category: q.category ? String(q.category) : undefined,
+    });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+    return;
+  }
+  res.setHeader('Cache-Control', 'no-store');
+  res.status(200).json({ ...result, settingsWarnings, updatedAt: new Date().toISOString() });
 }
 
 async function actionDebt(req, res) {
@@ -126,8 +173,9 @@ module.exports = async (req, res) => {
     if (req.query && req.query.action === 'settings') return await actionSettings(res);
     if (req.query && req.query.action === 'week') return await actionWeek(req, res);
     if (req.query && req.query.action === 'debt') return await actionDebt(req, res);
+    if (req.query && req.query.action === 'where') return await actionWhere(req, res);
 
-    res.status(400).json({ error: 'Unknown or missing action. Use ?action=week, ?action=debt or ?action=settings.' });
+    res.status(400).json({ error: 'Unknown or missing action. Use ?action=week, ?action=where, ?action=debt or ?action=settings.' });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
