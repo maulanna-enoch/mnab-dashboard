@@ -323,8 +323,9 @@
       let meta = '';
       let shown;
       if (i.type === 'statement') {
-        // "<card> / <month> - dd/mm"; the due part is left off when no due day is set.
-        title = `${i.sof} / ${monthLabel(i.statementMonth)}${i.dueDate ? ` - ${dm(i.dueDate)}` : ''}`;
+        // Title is the card; subtitle is "<month> · due dd/mm", the due part left off when no due day is set.
+        title = i.sof;
+        meta = [monthLabel(i.statementMonth), i.dueDate ? `due ${dm(i.dueDate)}` : ''].filter(Boolean).join(' · ');
         if (i.status !== 'paid' && i.paidAmount) flags.push(`${formatIDR(i.paidAmount)} of ${formatIDR(i.amount)} paid so far`);
         shown = i.status === 'paid' ? i.amount : i.remaining;
       } else {
