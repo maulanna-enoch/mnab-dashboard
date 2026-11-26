@@ -11,7 +11,7 @@
 // Transport…). A row has one category (no split transactions). The list
 // lives on the `Categories` tab; until that tab exists the built-in
 // DEFAULT_CATEGORIES below are used, and apps-script/Categories.gs
-// (Finances > Set Up Categories…) seeds the tab from the same list.
+// (Finances > Setup > Categories…) seeds the tab from the same list.
 //
 // The `Income` group is special: its categories are only for Income rows,
 // and every other group's only for Expense rows.

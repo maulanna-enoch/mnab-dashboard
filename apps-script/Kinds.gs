@@ -40,7 +40,7 @@
  * ── WHO WRITES KIND ─────────────────────────────────────────────────────
  *   - the dashboard, on every save
  *   - EmailImport.gs and InboxImport.gs, as each row is written
- *   - Finances > Classify Transactions (Fixed / Variable)… — the backfill.
+ *   - Finances > Setup > Classify Transactions (Fixed / Variable)… — the backfill.
  *     Rerunnable: it rewrites every row's Kind from the rules above, except
  *     hand-set ones. Run it again after changing a payee override.
  *     It shows what will change, and asks before writing.
@@ -56,7 +56,7 @@
  * Paste this as a NEW script file named `Kinds` (Deployer only replaces
  * files that already exist), then paste the updated EmailImport.gs,
  * InboxImport.gs and Reconciliations.gs (menu item). Reload the sheet and
- * run Finances > Classify Transactions (Fixed / Variable)… once.
+ * run Finances > Setup > Classify Transactions (Fixed / Variable)… once.
  */
 
 var KIND_COLUMN_NAME = 'Kind';
@@ -154,7 +154,7 @@ function ensureKindColumns_(txnSheet) {
 
 // ── Backfill ────────────────────────────────────────────────────────────
 
-/** Menu entry point: Finances > Classify Transactions (Fixed / Variable)… */
+/** Menu entry point: Finances > Setup > Classify Transactions (Fixed / Variable)… */
 function classifyTransactionHistory() {
   var ui = SpreadsheetApp.getUi();
   // EmailImport/PayeeRules hold the script lock, InboxImport the document

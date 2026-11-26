@@ -350,7 +350,7 @@ function projectDebt(inputs, options = {}) {
 
   let hole = null;
   if (inputs.stealsRows === null || inputs.stealsRows === undefined) {
-    warnings.push('No "Steals" tab found -- set it up from Finances › Set Up Steals from the Future….');
+    warnings.push('No "Steals" tab found -- set it up from Finances › Setup › Steals from the Future….');
   } else {
     hole = actualHole(inputs.stealsRows, { today, startDate: s.hole_start_date || null });
     if (!s.hole_start_date) warnings.push('hole_start_date is not set -- the hole counts every Steals row.');

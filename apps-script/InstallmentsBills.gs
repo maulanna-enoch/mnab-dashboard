@@ -3,11 +3,11 @@
  * ----------------------------------------------------------------
  * Two ways to run this:
  *   - Manually: Finances > Copy Installments & Bills to Transactions…
- *   - Automatically: Finances > Set Up Daily Auto-Copy… (one-time setup) --
- *     installs a daily ~6am trigger so you never have to remember to run
- *     it. Safe to run daily because of the duplicate protection below:
- *     each day it just checks whether the next-due row already exists and
- *     is a no-op if so. Finances > Remove Daily Auto-Copy… undoes it.
+ *   - Automatically: Finances > Automations > Daily Bills Auto-Copy
+ *     (On / Off)… -- installs a daily ~6am trigger so you never have to
+ *     remember to run it. Safe to run daily because of the duplicate
+ *     protection below: each day it just checks whether the next-due row
+ *     already exists and is a no-op if so. The same item turns it off.
  * (onOpen() lives in Reconcile.gs -- Apps Script only allows one onOpen()
  * per project, so the menu wiring for all of the above is there, not here.)
  *
@@ -133,7 +133,7 @@
  * KIND (Debt Exit plan WS2): a self-provisioned "Kind" column on
  * installmentsbills says what each row is -- "Cash bill" (paid from a cash
  * account), "Card bill" (charged to a credit card) or "Installment"
- * (cicilan, numbered NN/MM). Finances > Set Up Bill Kinds… adds the column
+ * (cicilan, numbered NN/MM). Finances > Setup > Bill Kinds… adds the column
  * with a dropdown and pre-fills blank cells (see setupBillKinds below).
  * A blank Kind falls back to the old rule: Ends in 2099+ -> bill, anything
  * else -> installment. The same rule lives in api/_lib/bills.js; change
@@ -149,13 +149,13 @@
  * SETUP:
  * 1. Extensions > Apps Script > add a new file (the + next to Files) named
  *    "InstallmentsBills", paste this in.
- * 2. Add to Reconcile.gs's onOpen():
- *      .addItem('Copy Installments & Bills to Transactions…', 'copyInstallmentsBillsToTransactions')
- *      .addItem('Set Up Daily Auto-Copy…', 'setupDailyTrigger')
- *      .addItem('Remove Daily Auto-Copy…', 'removeDailyTrigger')
+ * 2. The menu items are already wired in Reconcile.gs's onOpen():
+ *    Copy Installments & Bills to Transactions… at the top level, and
+ *    Daily Bills Auto-Copy (On / Off)… under Automations.
  * 3. Adjust INSTALLMENTS_CONFIG below if your column layout differs.
  * 4. Save, reload the sheet.
- * 5. Finances > Set Up Daily Auto-Copy… (one-time -- you'll get an
+ * 5. Finances > Automations > Daily Bills Auto-Copy (On / Off)… and
+ *    answer Yes (one-time -- you'll get an
  *    authorization prompt the first time since creating triggers needs
  *    extra permission). From then on it just runs itself.
  */
@@ -477,7 +477,7 @@ function logAutoCopyRun_(ss, triggerType, copiedCount, adoptedCount, skipped) {
   logSheet.appendRow([new Date(), triggerType, copiedCount, adoptedCount, skipped.length, skipped.join(' | ')]);
 }
 
-/** Menu entry point: one-time setup of the daily automatic run. */
+/** Installs the daily trigger. Called from toggleDailyTrigger(). */
 function setupDailyTrigger() {
   const ui = SpreadsheetApp.getUi();
   const already = ScriptApp.getProjectTriggers().some(
@@ -499,7 +499,31 @@ function setupDailyTrigger() {
   );
 }
 
-/** Menu entry point: undo setupDailyTrigger(). */
+/**
+ * Menu entry point: Finances > Automations > Daily Bills Auto-Copy (On / Off)….
+ * Says whether the daily trigger is on and offers to switch it, then hands
+ * off to setupDailyTrigger() / removeDailyTrigger().
+ */
+function toggleDailyTrigger() {
+  const ui = SpreadsheetApp.getUi();
+  const on = ScriptApp.getProjectTriggers().some(
+    (t) => t.getHandlerFunction() === INSTALLMENTS_CONFIG.DAILY_TRIGGER_HANDLER
+  );
+  const answer = ui.alert(
+    'Daily Bills Auto-Copy',
+    on
+      ? 'Daily Bills Auto-Copy is ON: it copies installments & bills to transactions around ' +
+        INSTALLMENTS_CONFIG.DAILY_TRIGGER_HOUR + ':00 every day.\n\nTurn it off?'
+      : 'Daily Bills Auto-Copy is OFF: installments & bills are only copied when you run ' +
+        'Finances > Copy Installments & Bills to Transactions….\n\nTurn it on (around ' +
+        INSTALLMENTS_CONFIG.DAILY_TRIGGER_HOUR + ':00 daily)?',
+    ui.ButtonSet.YES_NO
+  );
+  if (answer !== ui.Button.YES) return;
+  if (on) removeDailyTrigger(); else setupDailyTrigger();
+}
+
+/** Undo setupDailyTrigger(). Called from toggleDailyTrigger(). */
 function removeDailyTrigger() {
   const ui = SpreadsheetApp.getUi();
   const triggers = ScriptApp.getProjectTriggers().filter(
@@ -542,7 +566,7 @@ function resolveBillKind_(raw, endDate) {
 }
 
 /**
- * Menu entry point: Finances > Set Up Bill Kinds… (WS2). Safe to rerun.
+ * Menu entry point: Finances > Setup > Bill Kinds… (WS2). Safe to rerun.
  *   1. Adds the "Kind" column to installmentsbills if it's missing.
  *   2. Puts a Cash bill / Card bill / Installment dropdown on it.
  *   3. Pre-fills BLANK Kind cells only -- a Kind you've set is never

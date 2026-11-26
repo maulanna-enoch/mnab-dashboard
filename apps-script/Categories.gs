@@ -31,7 +31,7 @@
  * both together.
  *
  * ── THE TAB ─────────────────────────────────────────────────────────────
- * Finances > Set Up Categories… creates `Categories` with the starter
+ * Finances > Setup > Categories… creates `Categories` with the starter
  * list (rerunnable: it only adds what's missing and never changes a row
  * you edited). Columns:
  *   Name         the category. Renaming one doesn't rewrite old rows yet.
@@ -61,7 +61,7 @@
  * Paste this as a NEW script file named `Categories` (Deployer only
  * replaces files that already exist), then paste the updated
  * Reconciliations.gs (menu item). Reload the sheet and run
- * Finances > Set Up Categories… once.
+ * Finances > Setup > Categories… once.
  */
 
 var CATEGORIES_SHEET_NAME = 'Categories';
@@ -316,7 +316,7 @@ function ensureCategoryColumns_(txnSheet) {
 
 // ── Setup ───────────────────────────────────────────────────────────────
 
-/** Menu entry point: Finances > Set Up Categories… */
+/** Menu entry point: Finances > Setup > Categories… */
 function setupCategories() {
   var ui = SpreadsheetApp.getUi();
   var ss = SpreadsheetApp.getActive();
