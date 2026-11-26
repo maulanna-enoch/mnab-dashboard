@@ -159,7 +159,7 @@ function setupInbox() {
 
 function inboxwa_ping_() {
   const sheet = inboxwa_sheet_();
-  return { ok: true, inboxRows: Math.max(sheet.getLastRow() - 1, 0) };
+  return { ok: true, inboxRows: Math.max(inboxwa_lastDataRow_(sheet, inboxwa_headerMap_(sheet)) - 1, 0) };
 }
 
 function inboxwa_list_(body) {
@@ -239,10 +239,11 @@ function inboxwa_stage_(body) {
   }
   if (!toWrite.length) return { ok: true, staged: [], duplicates: duplicates, errors: [] };
 
-  // IDs, then one block write.
+  // IDs, then one block write, right after the last row that has data
+  // (pre-filled checkboxes or formulas further down don't count).
   const ids = inboxwa_nextIds_(sheet, col, toWrite.length);
   const width = sheet.getLastColumn();
-  const startRow = Math.max(sheet.getLastRow(), 1) + 1;
+  const startRow = inboxwa_lastDataRow_(sheet, col) + 1;
   const now = new Date();
   const letter = function (h) { return inboxwa_colLetter_(col[h] + 1); };
   const block = toWrite.map(function (w, i) {
@@ -434,6 +435,17 @@ function inboxwa_headerMap_(sheet) {
     if (h && !(h in map)) map[h] = i;
   });
   return map;
+}
+
+/** 1-based number of the last row with an Inbox ID, Payee or Amount (1 = header only). */
+function inboxwa_lastDataRow_(sheet, col) {
+  const last = sheet.getLastRow();
+  if (last < 2) return 1;
+  const rows = sheet.getRange(2, 1, last - 1, sheet.getLastColumn()).getValues();
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (!inboxwa_blankRow_(rows[i], col)) return i + 2;
+  }
+  return 1;
 }
 
 function inboxwa_blankRow_(r, col) {
