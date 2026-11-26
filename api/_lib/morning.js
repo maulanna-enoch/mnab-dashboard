@@ -12,6 +12,7 @@
 // project docs).
 const { formatRupiah } = require('./push');
 const { activeInMonth, monthOf } = require('./bills');
+const { budgetLevel, pctText, stealsLines } = require('./alerts');
 
 const JAKARTA_OFFSET_MS = 7 * 60 * 60 * 1000;
 const MAX_BILL_LINES = 4;
@@ -70,12 +71,23 @@ function shortIso(isoDay) {
 // null when weekly_allowance_rp isn't set in Settings; pass null for `week`
 // when it couldn't be worked out at all. Before the Debt Exit work this
 // came from the Diary tab's monthly left-to-spend.
-function composeMorning({ bills, week }) {
+//
+// WS8 additions:
+//   - On the first day of the budget week (week_start_day, Wednesday by
+//     default) the title becomes "Allowance ready", with the carry-over
+//     from last week spelled out.
+//   - `steals`: Steals rows due today (alerts.stealsDueOn), listed after
+//     the bills.
+//   - `warnPct`: once this week's spending is past it, a "% used" line.
+function composeMorning({ bills, week, steals = [], warnPct }) {
   const left = week && week.left !== null && week.left !== undefined ? week.left : null;
   const perDay = left === null ? null : week.perDay;
+  const weekStartsToday = Boolean(week && week.today && week.today === week.start);
+  const allowanceReady = weekStartsToday && left !== null;
 
   let title;
   if (left === null) title = 'Good morning';
+  else if (allowanceReady) title = `Allowance ready: ${formatRupiah(week.available)} this week`;
   else if (left < 0) title = `Over by ${formatRupiah(left)} this week`;
   else title = `${formatRupiah(perDay)}/day left this week`;
 
@@ -93,12 +105,23 @@ function composeMorning({ bills, week }) {
     if (bills.length > MAX_BILL_LINES) lines.push(`+${bills.length - MAX_BILL_LINES} more`);
   }
 
+  lines.push(...stealsLines(steals, 'today'));
+
   if (!week) {
     lines.push("Couldn't work out this week's budget.");
   } else if (left === null) {
     lines.push('Set weekly_allowance_rp in Settings to get a daily budget.');
+  } else if (allowanceReady) {
+    const carry = week.carryIn || 0;
+    if (carry > 0) lines.push(`${formatRupiah(week.allowance)} + ${formatRupiah(carry)} carried over`);
+    else if (carry < 0) lines.push(`${formatRupiah(week.allowance)} − ${formatRupiah(carry)} overspent last week`);
+    if (left >= 0) lines.push(`${formatRupiah(perDay)}/day for ${week.daysLeft} day(s), to ${shortIso(week.end)}`);
   } else if (left >= 0) {
     lines.push(`${formatRupiah(left)} left for ${week.daysLeft} day(s), to ${shortIso(week.end)}`);
+  }
+  if (!allowanceReady && warnPct !== undefined) {
+    const b = budgetLevel(week, warnPct);
+    if (b && b.level === 'warn') lines.push(`${pctText(b.used)} of this week's budget used.`);
   }
 
   return {
@@ -111,7 +134,9 @@ function composeMorning({ bills, week }) {
       daysLeft: week ? week.daysLeft : null,
       left,
       perDay,
+      allowanceReady,
       bills: bills.map((b) => ({ name: b.name, sof: b.sof, amount: b.amount })),
+      steals: (steals || []).map((r) => ({ source: r.source, type: r.type, amount: r.amount })),
     },
   };
 }

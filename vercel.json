@@ -17,6 +17,7 @@
     }
   ],
   "crons": [
-    { "path": "/api/push?action=morning", "schedule": "0 23 * * *" }
+    { "path": "/api/push?action=morning", "schedule": "0 23 * * *" },
+    { "path": "/api/push?action=evening", "schedule": "0 12 * * *" }
   ]
 }

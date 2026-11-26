@@ -35,6 +35,8 @@ const SETTINGS_SCHEMA = {
   thr_share_pct: { type: 'percent', default: 1, max: 1, optional: true, description: 'Share of the THR put toward the hole, e.g. 100%' },
   raise_pct: { type: 'percent', default: 0.02, max: 0.5, optional: true, description: 'Yearly raise, e.g. 2%' },
   first_raise_date: { type: 'date', default: null, optional: true, description: 'When the first raise takes effect (blank = no raises in the projection)' },
+  // Push notifications (WS8).
+  push_budget_warn_pct: { type: 'percent', default: 0.7, max: 0.99, optional: true, description: "Push a warning once this share of the week's budget is used, e.g. 70%" },
 };
 
 const pad2 = (n) => String(n).padStart(2, '0');
