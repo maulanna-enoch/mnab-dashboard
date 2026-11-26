@@ -70,14 +70,17 @@
  *
  * ── CHANGING RULES LATER ────────────────────────────────────────────────
  * Rules apply as rows are imported. To run your current rules over rows
- * already in the sheet: Finances > Apply Payee Rules to Pending Rows….
- * It only touches rows that are still Pending (you haven't confirmed them
- * in the dashboard), not Cleared and not Reconciled, and came from an
- * email. It works from the Raw Import text, so changing or deleting a
- * rule and re-running puts those rows right. Pending rows imported before
- * this feature have no Raw Import yet; their current payee/notes are
- * taken as the raw text (minus the " (Auto-imported)" suffix) and saved.
- * It shows every change and asks before writing anything.
+ * already in the sheet: Finances > Apply Payee Rules to All Rows….
+ * It goes over EVERY row in transactions: pending, confirmed, cleared and
+ * reconciled, from an email or not (Grab-enriched rows and the warning
+ * rows above are still skipped). Rules only change Payee, Notes and
+ * Transfer, never an amount, so balances and reconciliations don't move.
+ * A row is only touched when a rule matches it, or when a rule changed it
+ * before and no rule matches any more (then it goes back to its Raw
+ * Import text). Rows no rule has ever matched are left as they are, hand
+ * edits included. The first time a rule changes a row that has no Raw
+ * Import yet, its current text is saved there first. It shows every
+ * change and asks before writing anything.
  *
  * A broken rule (bad regex, unknown Match Type, no Pattern) is skipped
  * and named in the log / that dialog. It never stops an import.
@@ -366,47 +369,106 @@ function isTruthyCell_(v) {
   return v === true || String(v).trim().toUpperCase() === 'TRUE';
 }
 
-// Pure: works out every change. rows: [{rowNum, payee, notes, sof,
-// amount, pending, cleared, reconciled, messageId, receiptId, raw,
-// payeeRule, transfer}]. Returns [{rowNum, before:{…}, after:{…},
-// rawToSave (string or null)}] for rows whose values would change.
+// Notes a rule-free row would have: what the import writes (parser notes
+// + the " (Auto-imported)" suffix) for email rows, the text as is for
+// anything else.
+function defaultRuleNotes_(raw, isEmail) {
+  return isEmail ? raw.notes + AUTO_IMPORTED_SUFFIX : raw.notes;
+}
+
+// Notes to fall back on when the matching rule (if any) sets none: the
+// row's current Notes if they're still the raw text (with or without the
+// suffix), otherwise — an earlier rule replaced them — the raw text.
+function restoreRuleNotes_(currentNotes, raw, isEmail) {
+  var stripped = currentNotes.slice(-AUTO_IMPORTED_SUFFIX.length) === AUTO_IMPORTED_SUFFIX
+      ? currentNotes.slice(0, -AUTO_IMPORTED_SUFFIX.length) : currentNotes;
+  if (stripped === raw.notes || currentNotes.trim() === AUTO_IMPORTED_SUFFIX.trim() && raw.notes === '') return currentNotes;
+  return defaultRuleNotes_(raw, isEmail);
+}
+
+// Pure: works out every change, over EVERY row in transactions — pending,
+// confirmed, cleared and reconciled, from email or not. rows: [{rowNum,
+// payee, notes, sof, amount, messageId, receiptId, raw, payeeRule,
+// transfer}]. Returns [{rowNum, before:{…}, after:{…}, rawToSave (string
+// or null), changed: true}] for rows whose values would change.
+//
+// A row is only touched when:
+//   - a rule matches it now (Payee/Notes/Transfer set by the rule; the
+//     pre-rule text is saved to Raw Import the first time, so a later
+//     rule change can put it back), or
+//   - a rule changed it before (Payee Rule filled in) and no rule matches
+//     any more: it goes back to its Raw Import text.
+// A row no rule has ever touched is left exactly as it is, so hand edits
+// on rows the rules don't cover are never overwritten.
 function planPayeeRuleChanges_(rules, rows) {
   var changes = [];
   rows.forEach(function (r) {
-    if (!isTruthyCell_(r.pending) || isTruthyCell_(r.cleared) || isTruthyCell_(r.reconciled)) return;
-    if (!String(r.messageId || '').trim()) return; // not from an email
-    if (String(r.receiptId || '').trim()) return;  // Grab-enriched
+    if (String(r.receiptId || '').trim()) return; // Grab-enriched
+    var isEmail = !!String(r.messageId || '').trim();
+    var currentPayee = String(r.payee || '');
+    if (!currentPayee.trim()) return;
 
     var raw = parseRawImport_(r.raw);
-    var rawToSave = null;
+    var hadRaw = !!raw;
     if (!raw) {
-      // Imported before this feature: today's values are the parser's.
+      // No pre-rule text saved yet: today's values are the raw text.
       var notes = String(r.notes || '');
-      if (notes.slice(-AUTO_IMPORTED_SUFFIX.length) === AUTO_IMPORTED_SUFFIX) {
-        notes = notes.slice(0, -AUTO_IMPORTED_SUFFIX.length);
-      } else if (notes === AUTO_IMPORTED_SUFFIX.trim()) {
-        notes = '';
+      if (isEmail) {
+        if (notes.slice(-AUTO_IMPORTED_SUFFIX.length) === AUTO_IMPORTED_SUFFIX) {
+          notes = notes.slice(0, -AUTO_IMPORTED_SUFFIX.length);
+        } else if (notes === AUTO_IMPORTED_SUFFIX.trim()) {
+          notes = '';
+        }
       }
-      raw = { source: sourceForSof_(r.sof), payee: String(r.payee || ''), notes: notes };
-      rawToSave = buildRawImport_(raw.source, raw.payee, raw.notes);
+      raw = { source: sourceForSof_(r.sof) || 'mnab/other', payee: currentPayee, notes: notes };
     }
-    if (PAYEE_RULES_SKIP_RE.test(raw.payee) || PAYEE_RULES_SKIP_RE.test(String(r.payee || ''))) return;
+    if (PAYEE_RULES_SKIP_RE.test(raw.payee) || PAYEE_RULES_SKIP_RE.test(currentPayee)) return;
 
-    var res = resolvePayeeRuleFields_(rules, {
-      payee: raw.payee, notes: raw.notes, sof: r.sof, amount: r.amount, transfer: isTruthyCell_(r.transfer)
-    }, raw.source);
+    var before = {
+      payee: currentPayee, notes: String(r.notes || ''),
+      transfer: isTruthyCell_(r.transfer), payeeRule: String(r.payeeRule || '')
+    };
+    var ruledBefore = hadRaw && before.payeeRule !== '';
 
-    var before = { payee: String(r.payee || ''), notes: String(r.notes || ''), transfer: isTruthyCell_(r.transfer), payeeRule: String(r.payeeRule || '') };
-    var after = { payee: res.payee, notes: res.notes, transfer: res.transfer, payeeRule: res.payeeRule };
+    var hit = null;
+    try {
+      hit = matchPayeeRule_(rules, {
+        source: raw.source, sof: r.sof, payee: raw.payee, notes: raw.notes, amount: r.amount
+      });
+    } catch (err) {
+      hit = null;
+    }
+
+    var after;
+    if (hit) {
+      // Notes the rule doesn't set: the raw text if an earlier rule had
+      // replaced them, otherwise whatever the row has now.
+      var baseNotes = ruledBefore ? restoreRuleNotes_(before.notes, raw, isEmail) : before.notes;
+      after = {
+        payee: hit.payee,
+        notes: hit.notes !== null ? hit.notes : baseNotes,
+        transfer: hit.transfer !== null ? hit.transfer : before.transfer,
+        payeeRule: hit.rule.label
+      };
+    } else if (ruledBefore) {
+      after = { payee: raw.payee, notes: restoreRuleNotes_(before.notes, raw, isEmail), transfer: before.transfer, payeeRule: '' };
+    } else {
+      return; // no rule now, none before: leave it alone
+    }
+
     var changed = before.payee !== after.payee || before.notes !== after.notes ||
         before.transfer !== after.transfer || before.payeeRule !== after.payeeRule;
-    if (changed || rawToSave) changes.push({ rowNum: r.rowNum, before: before, after: after, rawToSave: rawToSave, changed: changed });
+    if (!changed) return;
+    changes.push({
+      rowNum: r.rowNum, before: before, after: after, changed: true,
+      rawToSave: hadRaw ? null : buildRawImport_(raw.source, raw.payee, raw.notes)
+    });
   });
   return changes;
 }
 
-// Finances > Apply Payee Rules to Pending Rows…
-function applyPayeeRulesToPendingRows() {
+// Finances > Apply Payee Rules to All Rows…
+function applyPayeeRulesToAllRows() {
   var ui = SpreadsheetApp.getUi();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName(TRANSACTIONS_SHEET_NAME);
@@ -422,57 +484,81 @@ function applyPayeeRulesToPendingRows() {
     var headerMap = ensureImportColumns_(sheet);
     var lastRow = sheet.getLastRow();
     if (lastRow < 2) { ui.alert('No transactions yet.'); return; }
-    var values = sheet.getRange(2, 1, lastRow - 1, sheet.getLastColumn()).getValues();
+    var nRows = lastRow - 1;
+    var values = sheet.getRange(2, 1, nRows, sheet.getLastColumn()).getValues();
     function cell(row, name) { return headerMap[name] ? row[headerMap[name] - 1] : ''; }
 
     var rows = values.map(function (v, i) {
       return {
         rowNum: i + 2,
         payee: cell(v, 'Payee'), notes: cell(v, 'Notes'), sof: cell(v, 'SOF'), amount: cell(v, 'Amount'),
-        pending: cell(v, 'Pending'), cleared: cell(v, 'Cleared'), reconciled: cell(v, 'Reconciled'),
         messageId: cell(v, 'Email Message ID'), receiptId: cell(v, GRAB_RECEIPT_COLUMN),
         raw: cell(v, RAW_IMPORT_COLUMN), payeeRule: cell(v, PAYEE_RULE_COLUMN), transfer: cell(v, 'Transfer')
       };
     });
     var changes = planPayeeRuleChanges_(loaded.rules, rows);
-    var visible = changes.filter(function (c) { return c.changed; });
-    var rawOnly = changes.length - visible.length;
 
     var msg = [];
     if (loaded.errors.length) msg.push('Skipped rules:\n' + loaded.errors.join('\n') + '\n');
     if (!changes.length) {
-      msg.push('Nothing to change: every pending email-imported row already matches your current rules.');
+      msg.push('Nothing to change: every row already matches your current rules.');
       ui.alert('Payee rules', msg.join('\n'), ui.ButtonSet.OK);
       return;
     }
-    msg.push(visible.length + ' pending row(s) will change' + (rawOnly ? ', and ' + rawOnly + ' older row(s) just get their Raw Import saved' : '') + ':\n');
-    visible.slice(0, PAYEE_RULES_PREVIEW_MAX).forEach(function (c) {
-      var line = 'Row ' + c.rowNum + ': ' + c.before.payee + ' → ' + c.after.payee + (c.after.payeeRule ? '  [' + c.after.payeeRule + ']' : '  [no rule]');
+    msg.push(changes.length + ' row(s) will change (pending, cleared and reconciled rows included):\n');
+    changes.slice(0, PAYEE_RULES_PREVIEW_MAX).forEach(function (c) {
+      var line = 'Row ' + c.rowNum + ': ' + c.before.payee + ' → ' + c.after.payee + (c.after.payeeRule ? '  [' + c.after.payeeRule + ']' : '  [rule removed]');
       if (c.before.notes !== c.after.notes) line += '\n      Notes: ' + (c.after.notes || '(empty)');
       if (c.before.transfer !== c.after.transfer) line += '\n      Transfer: ' + c.after.transfer;
       msg.push(line);
     });
-    if (visible.length > PAYEE_RULES_PREVIEW_MAX) msg.push('…and ' + (visible.length - PAYEE_RULES_PREVIEW_MAX) + ' more.');
+    if (changes.length > PAYEE_RULES_PREVIEW_MAX) msg.push('…and ' + (changes.length - PAYEE_RULES_PREVIEW_MAX) + ' more.');
     msg.push('\nApply?');
     if (ui.alert('Payee rules', msg.join('\n'), ui.ButtonSet.YES_NO) !== ui.Button.YES) return;
 
-    var needsTransferCol = changes.some(function (c) { return c.after.transfer && !c.before.transfer; });
-    if (needsTransferCol) ensureTransferColumns_(headerMap);
+    if (changes.some(function (c) { return c.after.transfer && !c.before.transfer; })) ensureTransferColumns_(headerMap);
     ensurePayeeRuleColumns_(sheet, headerMap);
 
+    // Re-read the columns we write: the dashboard can edit rows while the
+    // dialog was open. A row whose Payee/Notes moved since is skipped.
+    var names = ['Payee', 'Notes', 'Transfer', PAYEE_RULE_COLUMN, RAW_IMPORT_COLUMN];
+    var cols = {};
+    names.forEach(function (name) {
+      cols[name] = sheet.getRange(2, headerMap[name], nRows, 1).getValues();
+    });
+    var touched = {};
+    var applied = 0, skipped = 0;
     changes.forEach(function (c) {
-      function put(name, value) { if (headerMap[name]) sheet.getRange(c.rowNum, headerMap[name]).setValue(value); }
+      var i = c.rowNum - 2;
+      if (String(cols['Payee'][i][0] || '') !== c.before.payee || String(cols['Notes'][i][0] || '') !== c.before.notes) {
+        skipped++;
+        return;
+      }
+      function put(name, value) { cols[name][i][0] = value; touched[name] = true; }
       if (c.rawToSave !== null) put(RAW_IMPORT_COLUMN, c.rawToSave);
-      if (!c.changed) return;
       if (c.before.payee !== c.after.payee) put('Payee', c.after.payee);
       if (c.before.notes !== c.after.notes) put('Notes', c.after.notes);
       if (c.before.transfer !== c.after.transfer) put('Transfer', c.after.transfer);
       put(PAYEE_RULE_COLUMN, c.after.payeeRule);
+      applied++;
     });
-    ui.alert('Payee rules', 'Updated ' + visible.length + ' row(s).', ui.ButtonSet.OK);
+    // One write per changed column, not one per cell: a catch-all rule over
+    // the whole history can touch hundreds of rows.
+    names.forEach(function (name) {
+      if (touched[name]) sheet.getRange(2, headerMap[name], nRows, 1).setValues(cols[name]);
+    });
+    ui.alert('Payee rules', 'Updated ' + applied + ' row(s).' +
+        (skipped ? '\n' + skipped + ' row(s) were edited while this dialog was open and were left alone — run it again to pick them up.' : ''),
+        ui.ButtonSet.OK);
   } finally {
     lock.releaseLock();
   }
+}
+
+// Old menu name, kept so a sheet whose Reconciliations.gs hasn't been
+// re-pasted yet still works. Same behaviour: every row.
+function applyPayeeRulesToPendingRows() {
+  applyPayeeRulesToAllRows();
 }
 
 function ensurePayeeRuleColumns_(sheet, headerMap) {
@@ -522,6 +608,6 @@ function setupPayeeRules() {
   var msg = 'The ' + PAYEE_RULES_SHEET_NAME + ' tab is ready' + (addedStarters ? ', with ' + PAYEE_RULES_STARTERS.length + ' starter DANA rules' : '') +
       '. ' + loaded.rules.length + ' active rule(s).' +
       (loaded.errors.length ? '\n\nSkipped:\n' + loaded.errors.join('\n') : '') +
-      '\n\nNew imports use these rules automatically. To run them over rows already in transactions, use Finances > Apply Payee Rules to Pending Rows….';
+      '\n\nNew imports use these rules automatically. To run them over rows already in transactions, use Finances > Apply Payee Rules to All Rows….';
   SpreadsheetApp.getUi().alert('Payee rules', msg, SpreadsheetApp.getUi().ButtonSet.OK);
 }
