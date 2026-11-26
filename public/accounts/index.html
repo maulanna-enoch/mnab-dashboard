@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
 <title>Accounts · MNAB</title>
 <link rel="icon" type="image/png" href="/favicon.png" />
 <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />
@@ -42,7 +42,7 @@
     background: var(--bg);
     color: var(--text);
     min-height: 100vh;
-    padding: 24px 16px calc(140px + env(safe-area-inset-bottom));
+    padding: 24px 16px calc(var(--bnv-height, 64px) + 96px + env(safe-area-inset-bottom));
   }
   .wrap { max-width: var(--page-max-width); margin: 0 auto; position: relative; }
 

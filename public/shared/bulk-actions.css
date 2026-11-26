@@ -67,7 +67,7 @@
 .blk-select-all-link:hover { color: var(--text); }
 
 /* -- floating bulk-action bar -- fixed above shared/bottom-nav.js's bar,
- * same "72px + safe-area-inset" clearance shared/transaction-form.css's FAB
+ * same --bnv-height + safe-area-inset clearance shared/transaction-form.css's FAB
  * uses (see its own comment) so the two never overlap -- and in fact never
  * both show at once, since each host page hides its FAB while any row is
  * selected (see bulk-actions.js's onSelectionChange option). Same z-index
@@ -88,7 +88,7 @@
   position: fixed;
   left: 0;
   right: 0;
-  bottom: calc(72px + env(safe-area-inset-bottom));
+  bottom: calc(var(--bnv-height, 64px) + 12px + env(safe-area-inset-bottom));
   z-index: 11;
   display: none;
   /* Side gutter lives here as padding on the flex container, not as a

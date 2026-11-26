@@ -1,5 +1,16 @@
 /* Shared bottom tab bar -- see bottom-nav.js. Every class here is prefixed
-   bnv- so it can't collide with a host page's own styles. */
+   bnv- so it can't collide with a host page's own styles.
+
+   --bnv-height is the bar's height ABOVE the iPhone home-indicator safe
+   area. Everything that has to sit above the bar (the + FAB, its toast, the
+   bulk-action bar) reads it, so resizing the bar moves them too.
+
+   The safe-area inset only reaches us because every page's viewport meta
+   carries viewport-fit=cover. Without it, iOS reports env(safe-area-inset-
+   bottom) as 0 in the installed (Home Screen) app, and the labels end up
+   squashed against the home indicator -- that was the "bar too small in
+   the PWA but fine in Safari" bug. */
+:root { --bnv-height: 64px; }
 .bnv-bar {
   position: fixed;
   bottom: 0;
@@ -8,7 +19,9 @@
   display: flex;
   background: #14161b;
   border-top: 1px solid #2a2e37;
-  padding: 8px 4px calc(8px + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  height: calc(var(--bnv-height) + env(safe-area-inset-bottom));
+  padding: 0 4px env(safe-area-inset-bottom);
   z-index: 10;
 }
 .bnv-tab {
@@ -17,14 +30,14 @@
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
-  min-height: 44px;
+  gap: 5px;
+  height: var(--bnv-height);
   color: var(--muted, #9ca3af);
   text-decoration: none;
 }
 .bnv-label {
-  font-size: 10.5px;
-  font-weight: 500;
+  font-size: 12px;
+  font-weight: 600;
   white-space: nowrap;
 }
 .bnv-tab.bnv-active {

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover" />
 <title>Bills · MNAB</title>
 <link rel="icon" type="image/png" href="/favicon.png" />
 <link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />
@@ -34,7 +34,7 @@
     display: flex;
     flex-direction: column;
     align-items: center;
-    padding: 24px 16px calc(140px + env(safe-area-inset-bottom));
+    padding: 24px 16px calc(var(--bnv-height, 64px) + 96px + env(safe-area-inset-bottom));
   }
   h1 {
     font-size: 1.1rem;

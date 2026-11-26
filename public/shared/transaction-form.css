@@ -5,12 +5,13 @@
    to happen -- both pages just mount it. */
 
 .txf-fab {
-  /* Raised to clear shared/bottom-nav.js's fixed bar (issue #35) -- 72px
-     is the bar's own rest height (8px top padding + 22px icon + 4px gap +
-     ~13px label + 8px bottom padding) plus a ~17px visual gap, so this
-     stays right above the bar regardless of the safe-area inset. */
+  /* Sits a 16px gap above shared/bottom-nav.js's fixed bar (issue #35).
+     Derived from the bar's own --bnv-height (plus the home-indicator safe
+     area) rather than a hard-coded figure, so the two can't drift apart
+     when the bar is resized. */
   position: fixed;
-  bottom: calc(72px + env(safe-area-inset-bottom));
+  bottom: calc(var(--bnv-height, 64px) + 16px + env(safe-area-inset-bottom));
+  /* Never under a landscape notch / rounded corner either. */
   /* Pinned to the right edge of the centered content column (16px inset),
      not the viewport -- half of --page-max-width (shared/responsive.css)
      is how far the column's own right edge sits from center. This used to
@@ -20,7 +21,7 @@
      instead of pinned to its actual right edge. Falls back to 210px if
      --page-max-width isn't defined (host page forgot to link
      responsive.css), matching the old hardcoded behavior. */
-  right: max(16px, calc(50% - (var(--page-max-width, 420px) / 2) + 16px));
+  right: max(calc(16px + env(safe-area-inset-right)), calc(50% - (var(--page-max-width, 420px) / 2) + 16px));
   width: 56px;
   height: 56px;
   border-radius: 50%;
@@ -36,9 +37,9 @@
 }
 
 .txf-toast {
-  /* Kept ~68px above the FAB, same relative gap as before it moved. */
+  /* Just above the FAB: bar + 16px gap + 56px FAB + 16px gap. */
   position: fixed;
-  bottom: calc(140px + env(safe-area-inset-bottom));
+  bottom: calc(var(--bnv-height, 64px) + 88px + env(safe-area-inset-bottom));
   left: 50%;
   transform: translateX(-50%);
   background: #2a2e37;
