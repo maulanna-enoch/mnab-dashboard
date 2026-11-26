@@ -35,6 +35,13 @@ module.exports = async (req, res) => {
         kind: r.kind,
         kindRule: r.kindRule,
         billId: r.billId,
+        // Category system (C1): effective category, its group and the rule
+        // that set it (see api/_lib/categories.js). category is null for
+        // transfers and unmatched Income rows, "Uncategorised" for
+        // unmatched Expense rows.
+        category: r.category,
+        categoryGroup: r.categoryGroup,
+        categoryRule: r.categoryRule,
       })),
       updatedAt: new Date().toISOString(),
     });

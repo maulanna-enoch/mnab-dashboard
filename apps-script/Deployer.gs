@@ -66,6 +66,7 @@ var DEPLOYER_REPO = 'maulanna-enoch/mnab-dashboard';
 
 // repo path → name of the file in the Apps Script editor (no extension).
 var DEPLOYABLE_FILES = {
+  'apps-script/Categories.gs': 'Categories',
   'apps-script/EmailImport.gs': 'EmailImport',
   'apps-script/InboxImport.gs': 'InboxImport',
   'apps-script/InstallmentsBills.gs': 'InstallmentsBills',

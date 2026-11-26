@@ -11,6 +11,11 @@
 // transactions-add.js's upsert on every save (see api/_lib/sheets.js's
 // upsertPayee) plus the one-time/rerunnable backfill below.
 //
+// GET ?action=categories (Category system C1): the category list for
+// pickers and colours -- the Categories tab, or the built-in starter list
+// when that tab doesn't exist yet (fromTab false). Lives here rather than
+// in a new file for the same function-cap reason.
+//
 // POST action=set-coords: manual-override write path for the Payees page --
 // set (or, by omitting lat/lon, clear) one payee's stored coordinates.
 // Also how a payee with no transactions yet gets pre-seeded.
@@ -30,21 +35,41 @@ const {
   getWriteSheetsClient,
   fetchTransactionRows,
   fetchPayeeRows,
+  fetchCategoryRows,
   upsertPayee,
   clearPayeeCoords,
   setPayeeKind,
 } = require('./_lib/sheets');
 const { normalizeSpendingKind } = require('./_lib/kinds');
+const { sortCategories, UNCATEGORISED } = require('./_lib/categories');
 
 async function actionList(res) {
   const sheets = getSheetsClient();
   const rows = await fetchPayeeRows(sheets);
   const payees = rows
-    .map((r) => ({ name: r.name, lat: r.lat, lon: r.lon, kind: r.kind }))
+    .map((r) => ({ name: r.name, lat: r.lat, lon: r.lon, kind: r.kind, category: r.category || null }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
   res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate');
   res.status(200).json({ payees, updatedAt: new Date().toISOString() });
+}
+
+async function actionCategories(res) {
+  const { categories, fromTab } = await fetchCategoryRows(getSheetsClient());
+  res.setHeader('Cache-Control', 's-maxage=60, stale-while-revalidate');
+  res.status(200).json({
+    categories: sortCategories(categories).map((c) => ({
+      name: c.name,
+      group: c.group,
+      colour: c.colour,
+      order: c.order,
+      active: c.active,
+    })),
+    uncategorised: UNCATEGORISED,
+    fromTab,
+    warning: fromTab ? null : 'No Categories tab yet: showing the starter list. Run Finances > Set Up Categories… in the sheet.',
+    updatedAt: new Date().toISOString(),
+  });
 }
 
 async function actionSetCoords(body, res) {
@@ -132,7 +157,8 @@ module.exports = async (req, res) => {
     if (req.method === 'GET') {
       const action = (req.query && req.query.action) || 'list';
       if (action === 'list') return await actionList(res);
-      res.status(400).json({ error: 'Unknown GET action. Use ?action=list (or omit action).' });
+      if (action === 'categories') return await actionCategories(res);
+      res.status(400).json({ error: 'Unknown GET action. Use ?action=list (or omit action) or ?action=categories.' });
       return;
     }
 
