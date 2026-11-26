@@ -83,6 +83,7 @@ function onOpen() {
     .addItem('Set Up Payee Rules…', 'setupPayeeRules')
     .addItem('Apply Payee Rules to Pending Rows…', 'applyPayeeRulesToPendingRows')
     .addItem('Classify Transactions (Fixed / Variable)…', 'classifyTransactionHistory')
+    .addItem('Set Up Categories…', 'setupCategories')
     .addToUi();
 }
 

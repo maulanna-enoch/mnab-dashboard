@@ -9,6 +9,15 @@ const {
   normalizeSpendingKind,
 } = require('./kinds');
 const { BILL_YEAR_THRESHOLD, resolveKind, totalMonths } = require('./bills');
+const {
+  CATEGORY_COLUMN,
+  CATEGORY_RULE_COLUMN,
+  CATEGORIES_RANGE,
+  DEFAULT_CATEGORIES,
+  parseCategoryRows,
+  buildCategoryContext,
+  classifyCategory,
+} = require('./categories');
 
 // BILL_YEAR_THRESHOLD (from ./bills): a far-future Ends (e.g. Dec 2099)
 // means "recurring, doesn't really end". Since WS2 a row's Kind column says
@@ -199,6 +208,10 @@ async function fetchTransactionRows() {
   const kindIdx = headerMap[KIND_COLUMN];
   const kindRuleIdx = headerMap[KIND_RULE_COLUMN];
   const billIdIdx = headerMap[BILL_ID_COLUMN];
+  // Category system (C1): Category / Category Rule, see
+  // api/_lib/categories.js. Same fallback.
+  const categoryIdx = headerMap[CATEGORY_COLUMN];
+  const categoryRuleIdx = headerMap[CATEGORY_RULE_COLUMN];
 
   // Columns: Payee, Income/Expense, SOF, Date, Month, Cleared, Amount,
   // Expense, Income, Total, Notes. rowNumber (1-based sheet row, accounting
@@ -259,6 +272,8 @@ async function fetchTransactionRows() {
       storedKind: cell(kindIdx) || null,
       storedKindRule: cell(kindRuleIdx) || null,
       billId: cell(billIdIdx) || null,
+      storedCategory: cell(categoryIdx) || null,
+      storedCategoryRule: cell(categoryRuleIdx) || null,
     });
   });
 
@@ -279,18 +294,68 @@ function classifyTransactionRow(r, payeeKinds) {
   }, payeeKinds);
 }
 
-// fetchTransactionRows() plus each row's effective Kind -- what every
-// fixed/variable consumer (the weekly budget, WS4 onwards) should read.
-// One extra small read for the Payees tab's Kind overrides.
+// Adds the effective `category` / `categoryGroup` / `categoryRule` to a row
+// from fetchTransactionRows() (see api/_lib/categories.js). `ctx` comes from
+// buildCategoryContext().
+function classifyTransactionCategory(r, ctx) {
+  return classifyCategory({
+    type: r.type,
+    isTransfer: r.isTransfer,
+    billId: r.billId,
+    notes: r.notes,
+    payee: r.payee,
+    storedCategory: r.storedCategory,
+    storedCategoryRule: r.storedCategoryRule,
+  }, ctx);
+}
+
+// fetchTransactionRows() plus each row's effective Kind and Category --
+// what every fixed/variable consumer (the weekly budget, WS4 onwards) and
+// every category consumer (Where it went, WS8) should read. Two extra small
+// reads, in parallel: the Payees tab (Kind and Category defaults) and the
+// Categories tab.
 async function fetchClassifiedTransactionRows() {
-  const [rows, payees] = await Promise.all([fetchTransactionRows(), fetchPayeeRows()]);
+  const [rows, payees, cats] = await Promise.all([
+    fetchTransactionRows(),
+    fetchPayeeRows(),
+    fetchCategoryRows(),
+  ]);
   const payeeKinds = payeeKindMap(payees);
+  // Bill categories (rule 3) arrive with C2, once installmentsbills has a
+  // Category column.
+  const ctx = buildCategoryContext(cats.categories, payees, {});
   rows.forEach((r) => {
     const { kind, rule } = classifyTransactionRow(r, payeeKinds);
     r.kind = kind;
     r.kindRule = rule;
+    const cat = classifyTransactionCategory(r, ctx);
+    r.category = cat.category;
+    r.categoryGroup = cat.group;
+    r.categoryRule = cat.rule;
   });
   return rows;
+}
+
+// The Categories tab (apps-script/Categories.gs), A:F by position like
+// Payees. Missing or empty tab -> the built-in DEFAULT_CATEGORIES, with
+// fromTab false so a page can say so.
+async function fetchCategoryRows(sheetsClient) {
+  const sheets = sheetsClient || getSheetsClient();
+  let values = null;
+  try {
+    const response = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.SHEET_ID,
+      range: CATEGORIES_RANGE,
+      valueRenderOption: 'UNFORMATTED_VALUE',
+    });
+    values = response.data.values || [];
+  } catch (err) {
+    const msg = String((err && err.message) || '');
+    if (!/unable to parse range/i.test(msg)) throw err;
+  }
+  const parsed = values ? parseCategoryRows(values) : [];
+  if (!parsed.length) return { categories: DEFAULT_CATEGORIES, fromTab: false };
+  return { categories: parsed, fromTab: true };
 }
 
 // Makes sure every header in `names` exists on the transactions tab,
@@ -362,10 +427,12 @@ function buildTransactionRow({ payee, type, sof, dateSerial, monthSerial, cleare
 // fact in an unpredictable order (see MNAB-project-state.md).
 //
 // Columns: Payee, Lat, Lon, Updated At (Updated At is an audit trail for
-// coordinate edits only -- it's never read back for logic), and Kind (WS1):
+// coordinate edits only -- it's never read back for logic), Kind (WS1):
 // an optional Fixed / Variable override for every transaction with this
-// payee -- see api/_lib/kinds.js. Blank = no override.
-const PAYEES_RANGE = 'Payees!A2:E';
+// payee -- see api/_lib/kinds.js. Blank = no override -- and Category (F,
+// Category system C1): the payee's default category, see
+// api/_lib/categories.js. Blank = none.
+const PAYEES_RANGE = 'Payees!A2:F';
 const PAYEES_KIND_HEADER_CELL = 'Payees!E1';
 
 function normalizePayeeName(name) {
@@ -397,6 +464,7 @@ async function fetchPayeeRows(sheetsClient) {
       lon: Number.isFinite(lon) ? lon : null,
       updatedAt: row[3] || '',
       kind: normalizeSpendingKind(row[4]),
+      category: row[5] === undefined || row[5] === null ? '' : String(row[5]).trim().replace(/\s+/g, ' '),
     });
   });
   return result;
@@ -569,6 +637,8 @@ module.exports = {
   fetchTransactionRows,
   fetchClassifiedTransactionRows,
   classifyTransactionRow,
+  classifyTransactionCategory,
+  fetchCategoryRows,
   ensureTransactionsColumns,
   writeTransactionKind,
   buildTransactionRow,
