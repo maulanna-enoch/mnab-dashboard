@@ -643,6 +643,7 @@
   <script src="/shared/transaction-form.js"></script>
   <script src="/shared/swipe-actions.js"></script>
   <script src="/shared/bulk-actions.js"></script>
+  <script src="/shared/txn-match.js"></script>
   <script src="/shared/kind-ui.js"></script>
   <script src="/shared/bottom-nav.js"></script>
   <script src="/shared/keyboard-nav.js"></script>
@@ -2246,6 +2247,21 @@
         const note = KindUI.bulkSummary(result);
         if (note) TransactionForm.toast(note, 3500);
         return;
+      } else if (key === 'match') {
+        // Two rows that are the same real transaction (e.g. a bank email
+        // and the bill row InstallmentsBills.gs auto-inserted). The server
+        // keeps one, moves the bill link onto it and marks it reviewed, so
+        // the Bills page counts the bill as paid -- see shared/txn-match.js.
+        const res = await fetch('/api/transactions-update', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'matchRows', rowNumbers: rows.map((t) => t.rowNumber) }),
+        });
+        const data = await res.json();
+        if (data.error) throw new Error(data.error);
+        await loadTransactions();
+        TransactionForm.toast(data.billId ? `Matched · bill ${data.billId} marked paid` : 'Matched', 3500);
+        return;
       }
 
       await loadTransactions();
@@ -2265,6 +2281,7 @@
         { key: 'changeDate', label: 'Change date', input: 'date', hotkey: 'h' },
         { key: 'changeBillingMonth', label: 'Change month', input: 'month', hotkey: 'm' },
         KindUI.bulkAction,
+        TxnMatch.bulkAction(formatIDR),
       ],
       onAction: bulkOnAction,
       // Cheap post-clear redraw (see shared/bulk-actions.js's comment on

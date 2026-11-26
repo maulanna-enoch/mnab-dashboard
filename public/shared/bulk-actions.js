@@ -26,6 +26,12 @@
  *       // closes it. Used by shared/kind-ui.js's "Set kind".
  *       { key: 'setKind', label: 'Set kind', hotkey: 'k',
  *         choices: [{ value: 'Variable', label: 'Variable', hotkey: 'v' }, ...] },
+ *       // Optional per action: `when(txns)` -- only offered (button shown,
+ *       // hotkey live) while it returns true for the selected rows; and
+ *       // `confirm(txns)` -- a message string to confirm first (verb from
+ *       // `confirmVerb`), or null to skip. See the Match action.
+ *       { key: 'match', label: 'Match', hotkey: 'g', hotkeySymbol: 'G',
+ *         when: (txns) => txns.length === 2, confirm: (txns) => '...' },
  *     ],
  *     onAction: async (key, rowNumbers, inputValue) => { ...call the
  *       existing single-row endpoints in a loop, then refetch + re-render... },
@@ -254,11 +260,29 @@
     });
   }
 
+  function selectedTxns() {
+    return selectedRowNumbers().map((n) => state.options.getTxn(n)).filter(Boolean);
+  }
+
+  // An action with a `when(txns)` predicate is only offered while it holds
+  // for the current selection (e.g. Match: exactly two rows, same amount).
+  function isAvailable(action) {
+    if (typeof action.when !== 'function') return true;
+    try { return !!action.when(selectedTxns()); } catch (_) { return false; }
+  }
+
   async function runAction(key, inputValue) {
     const rowNumbers = selectedRowNumbers();
     if (!rowNumbers.length) return;
     const action = state.options.actions.find((a) => a.key === key);
-    if (action && action.danger) {
+    if (action && !isAvailable(action)) return;
+    if (action && typeof action.confirm === 'function') {
+      const message = action.confirm(selectedTxns());
+      if (message) {
+        const confirmed = await confirmDanger(message, action.confirmVerb || action.label);
+        if (!confirmed) return;
+      }
+    } else if (action && action.danger) {
       const label = rowNumbers.length === 1 ? state.options.entityLabel : state.options.entityLabelPlural;
       const confirmed = await confirmDanger(`${action.confirmVerb || 'Delete'} ${rowNumbers.length} ${label}? This can't be undone.`, action.confirmVerb);
       if (!confirmed) return;
@@ -321,6 +345,7 @@
       const btn = document.createElement('button');
       btn.type = 'button';
       btn.className = 'blk-action-btn' + (action.danger ? ' danger' : '');
+      btn.dataset.action = action.key;
       btn.innerHTML = actionButtonLabel(action);
       btn.addEventListener('click', () => {
         if (action.choices) openChoiceRow(action);
@@ -344,6 +369,13 @@
 
     const label = n === 1 ? state.options.entityLabel : state.options.entityLabelPlural;
     state.count.textContent = `${n} ${label} selected`;
+
+    // Show/hide conditional actions (`when`) for the current selection.
+    state.options.actions.forEach((action) => {
+      if (typeof action.when !== 'function') return;
+      const btn = state.actionsRow.querySelector(`[data-action="${action.key}"]`);
+      if (btn) btn.style.display = isAvailable(action) ? '' : 'none';
+    });
 
     // Net total across every selected row -- expenses and income negate
     // each other (issue #78) rather than summing absolute values, so a
@@ -475,7 +507,7 @@
     if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return false;
     const choice = openChoiceAction();
     if (choice && (e.key === 'Escape' || choice.choices.some((c) => hotkeyMatches(c.hotkey, e)))) return true;
-    return state.options.actions.some((a) => hotkeyMatches(a.hotkey, e));
+    return state.options.actions.some((a) => hotkeyMatches(a.hotkey, e) && isAvailable(a));
   }
 
   // Registered once, at module load -- mount() only ever runs once per
@@ -505,7 +537,7 @@
       return;
     }
 
-    const action = state.options.actions.find((a) => hotkeyMatches(a.hotkey, e));
+    const action = state.options.actions.find((a) => hotkeyMatches(a.hotkey, e) && isAvailable(a));
     if (!action) return;
     e.preventDefault();
     if (action.choices) openChoiceRow(action);
