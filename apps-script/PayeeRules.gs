@@ -36,6 +36,12 @@
  *               row as imported.)
  *   Transfer    TRUE / FALSE sets the row's Transfer flag. Blank = keep.
  *   Comment     yours; ignored by the script.
+ *   Set Category  a category from the Categories tab (Categories.gs).
+ *               Blank = the usual rules decide (payee default, bank
+ *               label…). The row's Category Rule becomes "rule #50"; a
+ *               category you set by hand still wins over it. A name
+ *               that isn't on the Categories tab is skipped (the rule
+ *               still renames) and named in the log / dialog.
  *
  * TOKENS you can use in Set Payee / Set Notes:
  *   {payee} {notes}  the parser's original payee / notes
@@ -60,7 +66,9 @@
  *   - Both legs of a card payment ("Payment to … / Payment from …") —
  *     those names are generated, not bank text.
  *   - Amount, date, account, Income/Expense. Rules only change Payee,
- *     Notes and Transfer.
+ *     Notes, Transfer and Category.
+ *   - A Category set by hand (Category Rule "manual", or a Category typed
+ *     in with a blank Category Rule).
  *
  * ── NOTHING IS LOST ─────────────────────────────────────────────────────
  * Every email-imported row gets a `Raw Import` cell holding what the
@@ -76,10 +84,13 @@
  * from an email or not) but ONLY changes a row whose Payee you haven't
  * edited by hand: the Payee is still the bank's original text, or still
  * exactly what a rule wrote. Rename "GOJEK" to "GoRide" yourself and no
- * rule touches that row again. Rules only change Payee, Notes and
- * Transfer, never an amount. Notes and Transfer only change when the
- * rule sets them. When a rule no longer matches a row it renamed, the
- * Payee goes back to the original text. The first time a rule changes a
+ * rule touches that row again. Rules only change Payee, Notes, Transfer
+ * and Category, never an amount. Notes and Transfer only change when the
+ * rule sets them. Category follows Set Category: set when the rule has
+ * one, cleared (back to the automatic rules) when a rule set it before
+ * and no longer does, never touched when you set it by hand. When a rule
+ * no longer matches a row it renamed, the Payee goes back to the
+ * original text. The first time a rule changes a
  * row with no Raw Import yet, its current text is saved there. It shows
  * every change and asks before writing anything.
  *
@@ -94,8 +105,10 @@
  */
 
 var PAYEE_RULES_SHEET_NAME = 'PayeeRules';
+// Set Category (Category system C2) is last so existing tabs gain it as
+// column L without anything moving.
 var PAYEE_RULES_HEADERS = ['Order', 'Active', 'Source', 'SOF', 'Match On', 'Match Type',
-  'Pattern', 'Set Payee', 'Set Notes', 'Transfer', 'Comment'];
+  'Pattern', 'Set Payee', 'Set Notes', 'Transfer', 'Comment', 'Set Category'];
 var PAYEE_RULES_SOURCES = ['any', 'mandiri', 'ocbc', 'jago'];
 var PAYEE_RULES_MATCH_ON = ['payee', 'notes', 'either'];
 var PAYEE_RULES_MATCH_TYPES = ['equals', 'contains', 'starts with', 'regex'];
@@ -108,9 +121,9 @@ var PAYEE_RULE_ARROW = ' → ';
 
 // Starter rules written by setupPayeeRules() into an empty tab.
 var PAYEE_RULES_STARTERS = [
-  [40, true, 'any', '', 'payee', 'regex', '^DANA QR(?:OFF)?\\s*\\*\\s*ESB', 'DANA - ESB Restaurant', '', '', 'ESB is a restaurant POS — the restaurant itself isn\'t in the email'],
-  [41, true, 'any', '', 'payee', 'regex', '^DANA QR(?:OFF)?\\s*\\*\\s*FamilyM', 'DANA - FamilyMart', '', '', ''],
-  [50, true, 'any', '', 'payee', 'regex', '^DANA QR(?:OFF)?\\s*\\*\\s*(.+)$', 'DANA - {1}', '', '', 'Catch-all for DANA QRIS; add specific rules above it']
+  [40, true, 'any', '', 'payee', 'regex', '^DANA QR(?:OFF)?\\s*\\*\\s*ESB', 'DANA - ESB Restaurant', '', '', 'ESB is a restaurant POS — the restaurant itself isn\'t in the email', ''],
+  [41, true, 'any', '', 'payee', 'regex', '^DANA QR(?:OFF)?\\s*\\*\\s*FamilyM', 'DANA - FamilyMart', '', '', '', ''],
+  [50, true, 'any', '', 'payee', 'regex', '^DANA QR(?:OFF)?\\s*\\*\\s*(.+)$', 'DANA - {1}', '', '', 'Catch-all for DANA QRIS; add specific rules above it', '']
 ];
 
 // Rules for the current import run. Loaded once on first use, cleared by
@@ -124,15 +137,21 @@ function resetPayeeRulesCache_() {
 // ── Loading ──────────────────────────────────────────────────────────────
 
 // Returns {rules: [...], errors: ['Row 5: …']}. A missing tab = no rules.
+// Set Category names are checked against the Categories tab (Categories.gs).
 function loadPayeeRules_(ss) {
-  var sheet = (ss || SpreadsheetApp.getActiveSpreadsheet()).getSheetByName(PAYEE_RULES_SHEET_NAME);
+  ss = ss || SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName(PAYEE_RULES_SHEET_NAME);
   if (!sheet || sheet.getLastRow() < 2) return { rules: [], errors: [] };
   var values = sheet.getRange(1, 1, sheet.getLastRow(), sheet.getLastColumn()).getValues();
-  return parsePayeeRules_(values);
+  var known = null;
+  try { known = categories_context_(ss).byKey; } catch (err) { known = null; }
+  return parsePayeeRules_(values, known);
 }
 
 // Pure: header row + data rows (as getValues() returns them) → rules.
-function parsePayeeRules_(values) {
+// knownCategories: {lowercased name: category} from Categories.gs, or null
+// to accept any Set Category as written.
+function parsePayeeRules_(values, knownCategories) {
   var headers = values[0].map(function (h) { return String(h || '').trim().toLowerCase(); });
   function col(name) { return headers.indexOf(name.toLowerCase()); }
   var c = {};
@@ -178,6 +197,17 @@ function parsePayeeRules_(values) {
     var orderRaw = get(row, 'Order');
     var order = orderRaw === '' || orderRaw == null || isNaN(Number(orderRaw)) ? Infinity : Number(orderRaw);
 
+    var setCategory = normalizeRuleText_(get(row, 'Set Category'));
+    if (setCategory && knownCategories) {
+      var known = knownCategories[setCategory.toLowerCase()];
+      if (!known) {
+        errors.push('Row ' + rowNum + ': Set Category "' + setCategory + '" is not on the Categories tab — the rule still runs, without a category.');
+        setCategory = '';
+      } else {
+        setCategory = known.name;
+      }
+    }
+
     rules.push({
       rowNum: rowNum,
       order: order,
@@ -190,7 +220,8 @@ function parsePayeeRules_(values) {
       re: re,
       setPayee: String(get(row, 'Set Payee') == null ? '' : get(row, 'Set Payee')),
       setNotes: String(get(row, 'Set Notes') == null ? '' : get(row, 'Set Notes')),
-      transfer: parseRuleTransfer_(get(row, 'Transfer'))
+      transfer: parseRuleTransfer_(get(row, 'Transfer')),
+      setCategory: setCategory
     });
   }
 
@@ -223,7 +254,8 @@ function parseRuleTransfer_(v) {
 
 // input: {source: 'mnab/ocbc' | 'ocbc', sof, payee, notes, amount}
 // Returns null when no rule fires, else
-//   {rule, payee, notes (null = keep), transfer (null = keep)}.
+//   {rule, payee, notes (null = keep), transfer (null = keep),
+//    category (null = the rule sets none)}.
 function matchPayeeRule_(rules, input) {
   var payee = normalizeRuleText_(input.payee);
   if (PAYEE_RULES_SKIP_RE.test(payee)) return null;
@@ -251,7 +283,8 @@ function matchPayeeRule_(rules, input) {
       rule: r,
       payee: newPayee || payee, // a rule can't blank the payee
       notes: newNotes,
-      transfer: r.transfer
+      transfer: r.transfer,
+      category: r.setCategory || null
     };
   }
   return null;
@@ -308,8 +341,9 @@ function parseRawImport_(cell) {
 
 // parsed: what a LABEL_PARSERS function (or the AI fallback) returned.
 // Returns the fields writeRow_ needs: {payee, notes, transfer, raw,
-// payeeRule}. With no rule, payee/notes/transfer are exactly what
-// handleMessage_ wrote before this file existed.
+// payeeRule, category, categoryRule}. With no rule, payee/notes/transfer
+// are exactly what handleMessage_ wrote before this file existed, and
+// category/categoryRule are blank (writeRow_ then classifies as usual).
 function applyPayeeRulesForImport_(parsed, labelKey) {
   if (!payeeRulesCache_) {
     try {
@@ -331,7 +365,9 @@ function resolvePayeeRuleFields_(rules, parsed, labelKey) {
     notes: parsedNotes + AUTO_IMPORTED_SUFFIX,
     transfer: !!parsed.transfer,
     raw: buildRawImport_(labelKey, parsed.payee, parsedNotes),
-    payeeRule: ''
+    payeeRule: '',
+    category: '',
+    categoryRule: ''
   };
   var hit;
   try {
@@ -347,7 +383,12 @@ function resolvePayeeRuleFields_(rules, parsed, labelKey) {
   if (hit.notes !== null) out.notes = hit.notes;
   if (hit.transfer !== null) out.transfer = hit.transfer;
   out.payeeRule = formatPayeeRuleCell_(hit.rule.label, out.payee);
-  Logger.log('PayeeRules ' + hit.rule.label + ': "' + parsed.payee + '" → "' + out.payee + '"');
+  if (hit.category) {
+    out.category = hit.category;
+    out.categoryRule = payeeRuleCategoryRule_(hit.rule.label);
+  }
+  Logger.log('PayeeRules ' + hit.rule.label + ': "' + parsed.payee + '" → "' + out.payee + '"' +
+      (hit.category ? ' [' + hit.category + ']' : ''));
   return out;
 }
 
@@ -377,6 +418,26 @@ function formatPayeeRuleCell_(label, payee) {
   return label + PAYEE_RULE_ARROW + payee;
 }
 
+// The Category Rule a payee rule's category is stored with: "rule #50".
+// Categories.gs / api/_lib/categories.js keep a stored category whose rule
+// starts with "rule" (unless one was set by hand).
+function payeeRuleCategoryRule_(label) {
+  return 'rule ' + label;
+}
+
+function isPayeeRuleCategoryRule_(v) {
+  return /^rule\b/i.test(String(v || '').trim());
+}
+
+// A Category nobody may overwrite: Category Rule "manual", or a Category
+// typed in with a blank Category Rule (Categories.gs rule 2).
+function isManualCategory_(category, categoryRule) {
+  var cat = String(category || '').trim();
+  var rule = String(categoryRule || '').trim().toLowerCase();
+  if (!cat || cat.toLowerCase() === 'uncategorised') return false;
+  return rule === '' || rule === 'manual';
+}
+
 function parsePayeeRuleCell_(cell) {
   var s = String(cell || '').trim();
   if (!s) return null;
@@ -388,8 +449,9 @@ function parsePayeeRuleCell_(cell) {
 // Pure: works out every change, over every row in transactions — pending,
 // confirmed, cleared and reconciled, from email or not. rows: [{rowNum,
 // payee, notes, sof, amount, pending, messageId, receiptId, raw,
-// payeeRule, transfer}]. Returns [{rowNum, before:{…}, after:{…},
-// rawToSave (string or null), labelOnly}] for rows that would change.
+// payeeRule, transfer, category, categoryRule}]. Returns [{rowNum,
+// before:{…}, after:{…}, rawToSave (string or null), labelOnly}] for rows
+// that would change.
 //
 // Rules only ever touch a row whose Payee nobody has edited by hand. A
 // row's Payee counts as untouched when it is still
@@ -407,6 +469,10 @@ function parsePayeeRuleCell_(cell) {
 //   - no rule matches but one did before → Payee back to the original
 //     text, Notes and Transfer kept;
 //   - neither → nothing.
+// Category, on an untouched row whose Category wasn't set by hand:
+//   - the matching rule has Set Category → that, Category Rule "rule #n";
+//   - otherwise, a rule set it before ("rule …") → cleared, so the
+//     automatic rules (payee default, bank label…) decide again.
 function planPayeeRuleChanges_(rules, rows) {
   var byLabel = {};
   rules.forEach(function (r) { if (!byLabel[r.label]) byLabel[r.label] = r; });
@@ -458,7 +524,8 @@ function planPayeeRuleChanges_(rules, rows) {
 
     var before = {
       payee: String(r.payee || ''), notes: String(r.notes || ''),
-      transfer: isTruthyCell_(r.transfer), payeeRule: String(r.payeeRule || '')
+      transfer: isTruthyCell_(r.transfer), payeeRule: String(r.payeeRule || ''),
+      category: String(r.category || ''), categoryRule: String(r.categoryRule || '')
     };
     var after;
     if (hit) {
@@ -470,16 +537,33 @@ function planPayeeRuleChanges_(rules, rows) {
       };
     } else if (prev) {
       after = { payee: raw.payee, notes: before.notes, transfer: before.transfer, payeeRule: '' };
+    } else if (isPayeeRuleCategoryRule_(before.categoryRule) && !isManualCategory_(before.category, before.categoryRule)) {
+      // No rule now, none before for the Payee, but a rule's category is
+      // left over: just clear that.
+      after = { payee: before.payee, notes: before.notes, transfer: before.transfer, payeeRule: before.payeeRule };
     } else {
       return;
     }
 
-    var visible = normalizeRuleText_(before.payee) !== normalizeRuleText_(after.payee) ||
+    after.category = before.category;
+    after.categoryRule = before.categoryRule;
+    if (!isManualCategory_(before.category, before.categoryRule)) {
+      if (hit && hit.category) {
+        after.category = hit.category;
+        after.categoryRule = payeeRuleCategoryRule_(hit.rule.label);
+      } else if (isPayeeRuleCategoryRule_(before.categoryRule)) {
+        after.category = '';
+        after.categoryRule = '';
+      }
+    }
+
+    var textChanges = normalizeRuleText_(before.payee) !== normalizeRuleText_(after.payee) ||
         before.notes !== after.notes || before.transfer !== after.transfer;
+    var visible = textChanges || before.category !== after.category || before.categoryRule !== after.categoryRule;
     if (!visible && before.payeeRule === after.payeeRule) return;
     changes.push({
       rowNum: r.rowNum, before: before, after: after, labelOnly: !visible,
-      rawToSave: hadRaw || !visible ? null : buildRawImport_(raw.source, raw.payee, raw.notes)
+      rawToSave: hadRaw || !textChanges ? null : buildRawImport_(raw.source, raw.payee, raw.notes)
     });
   });
   return changes;
@@ -512,7 +596,8 @@ function applyPayeeRulesToAllRows() {
         payee: cell(v, 'Payee'), notes: cell(v, 'Notes'), sof: cell(v, 'SOF'), amount: cell(v, 'Amount'),
         pending: cell(v, 'Pending'),
         messageId: cell(v, 'Email Message ID'), receiptId: cell(v, GRAB_RECEIPT_COLUMN),
-        raw: cell(v, RAW_IMPORT_COLUMN), payeeRule: cell(v, PAYEE_RULE_COLUMN), transfer: cell(v, 'Transfer')
+        raw: cell(v, RAW_IMPORT_COLUMN), payeeRule: cell(v, PAYEE_RULE_COLUMN), transfer: cell(v, 'Transfer'),
+        category: cell(v, CATEGORY_COLUMN_NAME), categoryRule: cell(v, CATEGORY_RULE_COLUMN_NAME)
       };
     });
     var changes = planPayeeRuleChanges_(loaded.rules, rows);
@@ -532,6 +617,7 @@ function applyPayeeRulesToAllRows() {
       var line = 'Row ' + c.rowNum + ': ' + c.before.payee + ' → ' + c.after.payee + (c.after.payeeRule ? '  [' + parsePayeeRuleCell_(c.after.payeeRule).label + ']' : '  [rule removed]');
       if (c.before.notes !== c.after.notes) line += '\n      Notes: ' + (c.after.notes || '(empty)');
       if (c.before.transfer !== c.after.transfer) line += '\n      Transfer: ' + c.after.transfer;
+      if (c.before.category !== c.after.category) line += '\n      Category: ' + (c.after.category || '(automatic)');
       msg.push(line);
     });
     if (shown.length > PAYEE_RULES_PREVIEW_MAX) msg.push('…and ' + (shown.length - PAYEE_RULES_PREVIEW_MAX) + ' more.');
@@ -540,10 +626,21 @@ function applyPayeeRulesToAllRows() {
 
     if (changes.some(function (c) { return c.after.transfer && !c.before.transfer; })) ensureTransferColumns_(headerMap);
     ensurePayeeRuleColumns_(sheet, headerMap);
+    var writesCategory = changes.some(function (c) {
+      return c.before.category !== c.after.category || c.before.categoryRule !== c.after.categoryRule;
+    });
+    if (writesCategory) {
+      ensureCategoryColumns_(sheet); // Categories.gs
+      var fresh = headerIndexMap(sheet); // 0-based, from Reconcile.gs
+      headerMap[CATEGORY_COLUMN_NAME] = fresh[CATEGORY_COLUMN_NAME] + 1;
+      headerMap[CATEGORY_RULE_COLUMN_NAME] = fresh[CATEGORY_RULE_COLUMN_NAME] + 1;
+    }
 
     // Re-read the columns we write: the dashboard can edit rows while the
-    // dialog was open. A row whose Payee/Notes moved since is skipped.
+    // dialog was open. A row whose Payee/Notes moved since is skipped, and
+    // so is one whose Category was set by hand meanwhile.
     var names = ['Payee', 'Notes', 'Transfer', PAYEE_RULE_COLUMN, RAW_IMPORT_COLUMN];
+    if (writesCategory) names.push(CATEGORY_COLUMN_NAME, CATEGORY_RULE_COLUMN_NAME);
     var cols = {};
     names.forEach(function (name) {
       cols[name] = sheet.getRange(2, headerMap[name], nRows, 1).getValues();
@@ -556,12 +653,22 @@ function applyPayeeRulesToAllRows() {
         skipped++;
         return;
       }
+      var catChanges = c.before.category !== c.after.category || c.before.categoryRule !== c.after.categoryRule;
+      if (catChanges && (String(cols[CATEGORY_COLUMN_NAME][i][0] || '') !== c.before.category ||
+          String(cols[CATEGORY_RULE_COLUMN_NAME][i][0] || '') !== c.before.categoryRule)) {
+        skipped++;
+        return;
+      }
       function put(name, value) { cols[name][i][0] = value; touched[name] = true; }
       if (c.rawToSave !== null) put(RAW_IMPORT_COLUMN, c.rawToSave);
       if (c.before.payee !== c.after.payee && !c.labelOnly) put('Payee', c.after.payee);
       if (c.before.notes !== c.after.notes) put('Notes', c.after.notes);
       if (c.before.transfer !== c.after.transfer) put('Transfer', c.after.transfer);
       put(PAYEE_RULE_COLUMN, c.after.payeeRule);
+      if (catChanges) {
+        put(CATEGORY_COLUMN_NAME, c.after.category);
+        put(CATEGORY_RULE_COLUMN_NAME, c.after.categoryRule);
+      }
       if (!c.labelOnly) applied++;
     });
     // One write per changed column, not one per cell: a catch-all rule over
@@ -634,6 +741,8 @@ function setupPayeeRules() {
   ['Pattern', 'Set Payee', 'Set Notes', 'SOF'].forEach(function (h) {
     sheet.getRange(2, PAYEE_RULES_HEADERS.indexOf(h) + 1, n, 1).setNumberFormat('@');
   });
+  // Set Category: a dropdown of the Categories tab, once it exists.
+  categories_applyValidation_(sheet, PAYEE_RULES_HEADERS.indexOf('Set Category'), categories_validation_(ss));
 
   var loaded = loadPayeeRules_(ss);
   var msg = 'The ' + PAYEE_RULES_SHEET_NAME + ' tab is ready' + (addedStarters ? ', with ' + PAYEE_RULES_STARTERS.length + ' starter DANA rules' : '') +

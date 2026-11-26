@@ -136,6 +136,9 @@ async function fetchInstallmentRows() {
   // WS2: Cash bill / Card bill / Installment, self-provisioned by
   // InstallmentsBills.gs (Finances > Setup > Bill Kinds…). Blank -> fallback.
   const kindIdx = headers.indexOf('Kind');
+  // Category system (C2): the bill's category, added by Categories.gs
+  // (Finances > Setup > Categories…). Blank -> none.
+  const categoryIdx = headers.indexOf('Category');
   const rows = all.slice(1);
 
   return rows.map((row) => {
@@ -152,8 +155,9 @@ async function fetchInstallmentRows() {
     const startDate = typeof startsSerial === 'number' ? serialToDate(startsSerial) : null;
     const dayOfMonth = Number(row[8]) || null;
     const id = idIdx >= 0 && row[idIdx] ? String(row[idIdx]).trim() : null;
+    const category = categoryIdx >= 0 && row[categoryIdx] ? String(row[categoryIdx]).trim().replace(/\s+/g, ' ') : null;
 
-    const out = { id, name, sof, amount, isActive, hasEndDate, endDate, startDate, dayOfMonth, isBill, kind, kindSet };
+    const out = { id, name, sof, amount, isActive, hasEndDate, endDate, startDate, dayOfMonth, isBill, kind, kindSet, category };
     out.totalMonths = totalMonths(out);
     return out;
   });
@@ -330,21 +334,31 @@ function classifyTransactionCategory(r, ctx) {
   }, ctx);
 }
 
+// { 'IB-3': 'Utilities', … } from fetchInstallmentRows() rows: each bill's
+// category, for category rule 3 (a row copied from a bill gets its
+// category).
+function billCategoryMap(billRows) {
+  const out = {};
+  (billRows || []).forEach((b) => {
+    if (b.id && b.category) out[String(b.id).trim().toUpperCase()] = b.category;
+  });
+  return out;
+}
+
 // fetchTransactionRows() plus each row's effective Kind and Category --
 // what every fixed/variable consumer (the weekly budget, WS4 onwards) and
-// every category consumer (Where it went, WS8) should read. Two extra small
-// reads, in parallel: the Payees tab (Kind and Category defaults) and the
-// Categories tab.
+// every category consumer (Where it went, WS8) should read. Three extra
+// small reads, in parallel: the Payees tab (Kind and Category defaults),
+// the Categories tab and installmentsbills (bill categories).
 async function fetchClassifiedTransactionRows() {
-  const [rows, payees, cats] = await Promise.all([
+  const [rows, payees, cats, bills] = await Promise.all([
     fetchTransactionRows(),
     fetchPayeeRows(),
     fetchCategoryRows(),
+    fetchInstallmentRows(),
   ]);
   const payeeKinds = payeeKindMap(payees);
-  // Bill categories (rule 3) arrive with C2, once installmentsbills has a
-  // Category column.
-  const ctx = buildCategoryContext(cats.categories, payees, {});
+  const ctx = buildCategoryContext(cats.categories, payees, billCategoryMap(bills));
   rows.forEach((r) => {
     const { kind, rule } = classifyTransactionRow(r, payeeKinds);
     r.kind = kind;
@@ -659,6 +673,7 @@ module.exports = {
   fetchClassifiedTransactionRows,
   classifyTransactionRow,
   classifyTransactionCategory,
+  billCategoryMap,
   fetchCategoryRows,
   ensureTransactionsColumns,
   writeTransactionKind,

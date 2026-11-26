@@ -9,7 +9,8 @@ const MAX_COMMITTED_MONTHS = 72;
 // GET ?action=registry (WS1) -- every installmentsbills row that has its
 // permanent IB-n ID, for the transaction form's "is this a bill?"
 // suggestion (see suggestBills in api/_lib/kinds.js). Lives here because
-// the 12-function cap is full. WS2 adds kind / starts / ends / totalMonths.
+// the 12-function cap is full. WS2 adds kind / starts / ends / totalMonths;
+// the Category system (C2) adds category.
 async function actionRegistry(res) {
   const rows = await fetchInstallmentRows();
   const bills = rows
@@ -27,6 +28,7 @@ async function actionRegistry(res) {
       startsMonth: r.startDate ? monthOf(r.startDate) : null,
       endsMonth: isOpenEndDate(r.endDate) ? null : monthOf(r.endDate),
       totalMonths: r.totalMonths,
+      category: r.category, // Category system C2: the bill's category, or null
     }));
   res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
   res.status(200).json({ bills, updatedAt: new Date().toISOString() });

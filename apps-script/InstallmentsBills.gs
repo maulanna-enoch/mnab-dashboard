@@ -130,6 +130,12 @@
  * one there to show it to (this is the bug that would otherwise silently
  * kill the daily trigger).
  *
+ * CATEGORY (Category system C2): installmentsbills may have a "Category"
+ * column (added by Finances > Setup > Categories…). Once transactions has
+ * the Category / Category Rule columns, each copied row gets its bill's
+ * category (Category Rule "bill"), or whatever Categories.gs's rules give
+ * when the bill has none. Rows already in transactions are never changed.
+ *
  * KIND (Debt Exit plan WS2): a self-provisioned "Kind" column on
  * installmentsbills says what each row is -- "Cash bill" (paid from a cash
  * account), "Card bill" (charged to a credit card) or "Installment"
@@ -257,6 +263,11 @@ function runInstallmentsBillsCopy_(triggerType) {
     if (!(h in colIndex)) throw new Error(`transactions tab is missing a "${h}" column.`);
   });
   const payeeHeader = payeeHeaderName(colIndex); // from Reconcile.gs
+  // Category system (Categories.gs): once Setup > Categories… has added the
+  // Category columns, each copied row gets its bill's category (the
+  // installmentsbills Category column), or whatever the category rules say.
+  const writesCategory = CATEGORY_COLUMN_NAME in colIndex && CATEGORY_RULE_COLUMN_NAME in colIndex;
+  if (writesCategory) resetCategoriesCache_();
 
   const { bySourceId, legacyByPayeeSof } = indexExistingTransactions_(txnSheet, colIndex, payeeHeader);
 
@@ -376,6 +387,11 @@ function runInstallmentsBillsCopy_(triggerType) {
     if ('Total' in colIndex) txnRow[colIndex['Total']] = amount;
     if ('Notes' in colIndex) txnRow[colIndex['Notes']] = notes;
     txnRow[colIndex[INSTALLMENTS_CONFIG.SOURCE_ID_COLUMN_NAME]] = sourceId;
+    if (writesCategory) {
+      const cat = categories_cellsFor_({ type: 'Expense', billId: sourceId, payee: name, notes: notes }, ss);
+      txnRow[colIndex[CATEGORY_COLUMN_NAME]] = cat.category;
+      txnRow[colIndex[CATEGORY_RULE_COLUMN_NAME]] = cat.rule;
+    }
 
     newRows.push(txnRow);
     // guard against duplicate active rows within the same run
