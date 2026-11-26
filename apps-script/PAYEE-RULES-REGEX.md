@@ -143,6 +143,6 @@ The last column shows the Payee exactly as written. Upper or lower case in the b
 1. Open [regex101.com](https://regex101.com), choose the **ECMAScript (JavaScript)** flavor and turn on the `i` (case-insensitive) flag. That's exactly how rules run.
 2. Paste the pattern at the top and a few real payees from your `transactions` sheet below it, one per line. Turn on the `m` flag too, so `^` and `$` work per line while you test.
 3. The right-hand panel shows what each group caught. That's your `{1}`, `{2}`, ….
-4. Put the rule in `PayeeRules` and run **Finances > Apply Payee Rules to Pending Rows…**. It shows every row that would change, and the rule that fired, before anything is written. Answer **No** if it looks wrong.
+4. Put the rule in `PayeeRules` and run **Finances > Apply Payee Rules to All Rows…**. It shows every row that would change, and the rule that fired, before anything is written. Answer **No** if it looks wrong.
 
 If a real bank text doesn't match the way you expect, check its `Raw Import` cell. That's the exact text the rule sees, before any earlier rule changed it.
