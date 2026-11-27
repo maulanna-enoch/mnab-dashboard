@@ -270,6 +270,7 @@
       // accounts are cards yet -- re-check now that it can.
       if (state.overlay.classList.contains('open')) {
         if (state.editingTxn) state.sofEl.value = state.editingTxn.sof;
+        else if (state.prefillSof) state.sofEl.value = state.prefillSof;
         if (isTransferMode()) applyTypeMode();
       }
     } catch (err) {
@@ -1261,6 +1262,16 @@
   // digit string/number and focuses Payee instead of Amount once open -- used
   // by the home page's ?amount= quick-add deep link (see issue #30) so a Siri
   // Shortcut only has to prompt for the amount before handing off here.
+  //
+  // opts.payNow (edit-mode only): the Bills page's Pay button on a bill
+  // whose auto-insert row is still Pending. Opens that row dated today, with
+  // the billing month re-guessed from today, so saving it records the
+  // payment (and clears Pending) instead of adding a second row.
+  //
+  // opts.prefill (add-mode only): { payee, sof, amount, notes, billId } --
+  // the Bills page's Pay button on a bill with no auto-insert row yet. The
+  // new row is linked to the bill (Source ID), so it counts as Paid and
+  // InstallmentsBills.gs's duplicate protection skips that cycle.
   function open(txn, opts) {
     opts = opts || {};
     state.formError.style.display = 'none';
@@ -1282,6 +1293,7 @@
     state.pairDeclined = new Set();
     state.statementMonthApplied = false;
     state.billDismissed = new Set();
+    state.prefillSof = null;
     state.kindTouched = false;
     state.billId = isEditOpen && txn.billId ? txn.billId : '';
     state.billIdOriginal = state.billId;
@@ -1329,9 +1341,16 @@
       state.sofEl.value = txn.sof;
       state.amountInput.value = formatAmountDisplay(digitsOnly(String(Math.round(txn.amount))));
       state.notesEl.value = txn.notes || '';
-      state.dateInput.value = txn.date || todayStr;
-      state.monthInput.value = txn.month || guessBillingMonth(state.dateInput.value, currentSofIsCash());
-      state.monthTouched = true; // editing an existing row -- don't override its saved month on open
+      if (opts.payNow) {
+        state.sheetTitle.textContent = 'Pay bill';
+        state.dateInput.value = todayStr;
+        state.monthInput.value = guessBillingMonth(todayStr, currentSofIsCash());
+        state.monthTouched = false; // follow the date if they change it
+      } else {
+        state.dateInput.value = txn.date || todayStr;
+        state.monthInput.value = txn.month || guessBillingMonth(state.dateInput.value, currentSofIsCash());
+        state.monthTouched = true; // editing an existing row -- don't override its saved month on open
+      }
       setToggle('txf-type-toggle', 'type', txn.type);
       setToggle('txf-status-toggle', 'status', txn.cleared === 'Cleared' ? 'Cleared' : 'Uncleared');
       state.deleteLink.style.display = 'block';
@@ -1351,10 +1370,18 @@
         ? state.options.getDefaultSof()
         : null;
       if (defaultSof) state.sofEl.value = defaultSof;
+      const prefill = opts.prefill || null;
+      state.prefillSof = prefill && prefill.sof ? prefill.sof : null;
+      if (state.prefillSof) state.sofEl.value = state.prefillSof;
       state.amountInput.value = opts.prefillAmount != null
         ? formatAmountDisplay(digitsOnly(String(opts.prefillAmount)))
-        : '';
-      state.notesEl.value = '';
+        : (prefill && prefill.amount != null ? formatAmountDisplay(digitsOnly(String(Math.round(prefill.amount)))) : '');
+      state.notesEl.value = prefill && prefill.notes ? prefill.notes : '';
+      if (prefill) {
+        state.sheetTitle.textContent = 'Pay bill';
+        state.payeeEl.value = prefill.payee || '';
+        if (prefill.billId) state.billId = prefill.billId; // billIdOriginal stays '' so the save sends it
+      }
       state.dateInput.value = todayStr;
       state.monthInput.value = guessBillingMonth(todayStr, currentSofIsCash());
       setToggle('txf-type-toggle', 'type', 'Expense');
@@ -1378,7 +1405,7 @@
     // already done. ModalA11y.open() applies this focus target, then keeps
     // Tab cycling within the sheet and wires Escape to close() -- see that
     // file's header comment.
-    const focusTarget = isEditOpen
+    const focusTarget = isEditOpen || opts.prefill
       ? state.payeeEl
       : (opts.prefillAmount != null ? state.payeeEl : state.amountInput);
     ModalA11y.open(state.overlay, { focus: focusTarget, onClose: close });
