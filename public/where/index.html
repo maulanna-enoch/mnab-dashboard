@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0" />
+<title>Where it went · MNAB</title>
+<link rel="icon" type="image/png" href="/favicon.png" />
+<link rel="manifest" href="/manifest.webmanifest" crossorigin="use-credentials" />
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=2" />
+<meta name="theme-color" content="#0f1115" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="MNAB" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black" />
+<script src="/shared/pwa.js"></script>
+<link rel="stylesheet" href="/shared/responsive.css" />
+<link rel="stylesheet" href="/shared/bottom-nav.css" />
+<link rel="stylesheet" href="/shared/category-ui.css" />
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0f1115;
+    --card: #1a1d24;
+    --line: #2a2e37;
+    --text: #f4f4f5;
+    --muted: #9ca3af;
+    --dim: #6b7280;
+    --accent: #22c55e;
+    --up: #fb923c;
+    --down: #4ade80;
+    --negative: #e24b4a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 20px 16px calc(100px + env(safe-area-inset-bottom));
+  }
+  a { color: inherit; text-decoration: none; }
+  button { font-family: inherit; }
+  .wrap { max-width: var(--page-max-width); margin: 0 auto; display: flex; flex-direction: column; gap: 12px; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  .top { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+  .icon-btn {
+    width: 44px; height: 44px; flex: none; display: flex; align-items: center; justify-content: center;
+    background: none; border: none; color: var(--muted); cursor: pointer; border-radius: 10px;
+  }
+  .icon-btn:disabled { color: #374151; cursor: default; }
+  .icon-btn svg { width: 22px; height: 22px; }
+  .top .icon-btn { margin-left: -10px; }
+  .top h1 { margin: 0; font-size: 1.3rem; font-weight: 600; flex: 1; min-width: 0; }
+  .pill { font-size: 0.75rem; color: var(--muted); border: 1px solid #374151; border-radius: 999px; padding: 4px 10px; white-space: nowrap; }
+
+  .seg { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; background: var(--card); border-radius: 12px; padding: 4px; }
+  .seg button {
+    min-height: 40px; border: none; border-radius: 9px; font-size: 0.9rem; font-weight: 500;
+    background: transparent; color: var(--muted); cursor: pointer;
+  }
+  .seg button[aria-selected="true"] { background: var(--line); color: var(--text); font-weight: 600; }
+
+  .period { display: flex; align-items: center; justify-content: space-between; }
+  .period-mid { text-align: center; }
+  .period-title { font-size: 0.95rem; font-weight: 600; }
+  .period-range { font-size: 0.75rem; color: var(--muted); margin-top: 2px; }
+
+  .panel { background: var(--card); border-radius: 16px; padding: 20px; }
+  .panel.list { padding: 4px 16px; }
+  .eyebrow { font-size: 0.8rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .big-row { display: flex; align-items: baseline; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+  .big { font-size: 2.1rem; font-weight: 700; }
+  .delta { font-size: 0.85rem; font-weight: 600; color: var(--muted); }
+  .delta.up { color: var(--up); }
+  .delta.down { color: var(--down); }
+  .line2 { font-size: 0.85rem; color: var(--muted); margin-top: 4px; }
+
+  .stack { display: flex; height: 12px; border-radius: 6px; overflow: hidden; gap: 2px; margin-top: 16px; background: var(--line); }
+  .stack span { display: block; min-width: 3px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 12px; margin-top: 10px; }
+  .legend span { display: flex; align-items: center; gap: 5px; font-size: 0.72rem; color: #d1d5db; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .dot.none { background: transparent; border: 1px dashed var(--dim); }
+
+  .row {
+    display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line);
+    min-height: 44px; width: 100%; background: none; border-left: 0; border-right: 0; border-top: 0;
+    color: inherit; text-align: left; font: inherit; cursor: pointer;
+  }
+  .row:last-child { border-bottom: none; }
+  .row.static { cursor: default; }
+  .tile {
+    width: 36px; height: 36px; border-radius: 10px; flex: none; display: flex; align-items: center; justify-content: center;
+    font-weight: 700; font-size: 0.9rem; color: #0f1115;
+  }
+  .tile.none { background: transparent; border: 1.5px dashed var(--dim); color: var(--muted); }
+  .row-main { flex: 1; min-width: 0; }
+  .row-head { display: flex; justify-content: space-between; gap: 8px; }
+  .row-name { font-size: 0.92rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .row-amt { font-size: 0.92rem; font-weight: 600; white-space: nowrap; }
+  .bar { height: 4px; background: var(--line); border-radius: 2px; margin-top: 7px; overflow: hidden; }
+  .bar span { display: block; height: 100%; border-radius: 2px; }
+  .row-meta { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 5px; font-size: 0.75rem; color: var(--muted); }
+  .row-meta .lhs { display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .chev { width: 16px; height: 16px; flex: none; color: var(--dim); }
+  .rank { width: 22px; text-align: right; font-size: 0.85rem; color: var(--muted); flex: none; }
+  .more { padding: 12px 0; font-size: 0.8rem; color: var(--muted); text-align: center; }
+  .more a { color: var(--accent); }
+  .note { margin: 4px 4px 0; font-size: 0.75rem; color: var(--muted); line-height: 1.5; }
+  .empty { padding: 28px 8px; text-align: center; color: var(--muted); font-size: 0.9rem; }
+  .error { color: #f87171; font-size: 0.9rem; padding: 12px 4px; }
+  .loading { color: var(--muted); font-size: 0.85rem; text-align: center; padding: 32px 0; }
+  .h2 { margin: 8px 4px 0; font-size: 0.8rem; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+
+  /* Category detail */
+  .detail-head { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+  .detail-head .icon-btn { margin-left: -10px; }
+  .detail-head .tile { width: 32px; height: 32px; border-radius: 9px; font-size: 0.85rem; }
+  .detail-title { flex: 1; min-width: 0; }
+  .detail-title h1 { margin: 0; font-size: 1.15rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .detail-title div { font-size: 0.75rem; color: var(--muted); }
+  .hist-head { display: flex; justify-content: space-between; align-items: baseline; margin-top: 18px; font-size: 0.75rem; color: var(--muted); }
+  .hist { position: relative; display: flex; align-items: flex-end; gap: 5px; height: 84px; margin-top: 10px; }
+  .hist .avg { position: absolute; left: 0; right: 0; border-top: 1px dashed #4b5563; pointer-events: none; }
+  .hist span { flex: 1; border-radius: 3px 3px 0 0; min-height: 2px; opacity: 0.4; }
+  .hist span.cur { opacity: 1; }
+  .hist-axis { display: flex; justify-content: space-between; margin-top: 6px; font-size: 0.7rem; color: var(--muted); }
+  .txn-day { width: 40px; text-align: center; flex: none; }
+  .txn-day div:first-child { font-size: 0.7rem; color: var(--muted); }
+  .txn-day div:last-child { font-size: 1rem; font-weight: 600; }
+  .tag-pending { border: 1px solid var(--up); color: var(--up); border-radius: 999px; padding: 0 6px; font-size: 0.68rem; }
+  .set-btn {
+    flex: none; background: none; border: 1px solid #374151; border-radius: 999px; color: var(--accent);
+    font-size: 0.78rem; padding: 6px 12px; cursor: pointer; min-height: 32px;
+  }
+  .toast { font-size: 0.8rem; color: var(--muted); text-align: center; min-height: 1em; }
+
+  .two-col { display: flex; flex-direction: column; gap: 12px; }
+  @media (min-width: 900px) {
+    .two-col { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap" id="app">
+  <div class="loading">Loading…</div>
+</div>
+<div id="bnv-root"></div>
+
+<script src="/shared/modal-a11y.js"></script>
+<script src="/shared/category-ui.js"></script>
+<script src="/shared/bottom-nav.js"></script>
+<script src="/shared/keyboard-nav.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  // ---- state: everything lives in the URL so Back and links work --------
+  // ?period=week|month  &offset=0,-1,…  &view=cat|payee  &category=Name
+  function readState() {
+    const p = new URLSearchParams(location.search);
+    const off = parseInt(p.get('offset') || '0', 10);
+    return {
+      period: p.get('period') === 'month' ? 'month' : 'week',
+      offset: Number.isInteger(off) && off <= 0 ? off : 0,
+      view: p.get('view') === 'payee' ? 'payee' : 'cat',
+      category: p.get('category') || '',
+    };
+  }
+  function urlFor(s) {
+    const p = new URLSearchParams();
+    if (s.period !== 'week') p.set('period', s.period);
+    if (s.offset) p.set('offset', String(s.offset));
+    if (s.view !== 'cat') p.set('view', s.view);
+    if (s.category) p.set('category', s.category);
+    const q = p.toString();
+    return location.pathname + (q ? '?' + q : '');
+  }
+  let state = readState();
+  function go(patch, replace) {
+    state = Object.assign({}, state, patch);
+    history[replace ? 'replaceState' : 'pushState'](null, '', urlFor(state));
+    load();
+  }
+  window.addEventListener('popstate', () => { state = readState(); load(); });
+
+  // ---- formatting -------------------------------------------------------
+  const app = document.getElementById('app');
+  const UNCAT = 'Uncategorised';
+  const rp = (n) => 'Rp ' + Math.round(n || 0).toLocaleString('id-ID');
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+  // 'YYYY-MM-DD' -> local Date from its parts (never new Date(iso): UTC).
+  function day(iso) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''));
+    return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null;
+  }
+  const fmt = (iso, o) => { const d = day(iso); return d ? d.toLocaleDateString('en-GB', o) : ''; };
+  const txns = (n) => n + (n === 1 ? ' txn' : ' txns');
+  function colour(name) {
+    return name === UNCAT ? null : CategoryUI.colourFor(name);
+  }
+  function initial(name) {
+    const m = /[A-Za-z0-9]/.exec(name || '');
+    return m ? m[0].toUpperCase() : '?';
+  }
+  function tile(name) {
+    const c = colour(name);
+    return c ? `<span class="tile" style="background:${esc(c)}">${esc(initial(name))}</span>` : '<span class="tile none">?</span>';
+  }
+  function dot(name) {
+    const c = colour(name);
+    return c ? `<span class="dot" style="background:${esc(c)}"></span>` : '<span class="dot none"></span>';
+  }
+  function fill(name) {
+    return colour(name) || '#4b5563';
+  }
+
+  function periodWord(d) {
+    return d.period === 'month' ? 'month' : 'week';
+  }
+  function titleFor(d) {
+    if (d.period === 'month') {
+      if (d.offset === 0) return 'This month';
+      return fmt(d.start, { month: 'long', year: 'numeric' });
+    }
+    if (d.offset === 0) return 'This week';
+    if (d.offset === -1) return 'Last week';
+    return 'Week of ' + fmt(d.start, { day: 'numeric', month: 'short' });
+  }
+  function rangeFor(d) {
+    const a = fmt(d.start, { weekday: 'short', day: 'numeric', month: 'short' });
+    const b = fmt(d.end, { weekday: 'short', day: 'numeric', month: 'short' });
+    if (d.period === 'month') {
+      const r = fmt(d.start, { day: 'numeric' }) + ' – ' + fmt(d.end, { day: 'numeric', month: 'short', year: 'numeric' });
+      return d.inProgress ? `${r} · day ${d.daysElapsed} of ${d.daysTotal}` : r;
+    }
+    return `${a} – ${b}`;
+  }
+  // "▲ 12% vs same point last week" etc. Spending more is the warning colour.
+  function deltaHtml(cur, prev, d, short) {
+    const what = d.period === 'month' ? 'month' : 'week';
+    const vs = short ? '' : (d.compare.partial ? ` vs same point last ${what}` : ` vs last ${what}`);
+    if (!prev && !cur) return '';
+    if (!prev) return `<span class="delta up">New${vs ? ' this ' + what : ''}</span>`;
+    const pct = Math.round(((cur - prev) / prev) * 100);
+    if (pct === 0) return `<span class="delta">Same${vs}</span>`;
+    return `<span class="delta ${pct > 0 ? 'up' : 'down'}">${pct > 0 ? '▲' : '▼'} ${Math.abs(pct)}%${vs}</span>`;
+  }
+
+  const ICON = {
+    back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>',
+    next: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>',
+    chev: '<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>',
+  };
+
+  // ---- data -------------------------------------------------------------
+  let seq = 0;
+  async function load() {
+    const my = ++seq;
+    const q = new URLSearchParams({ action: 'where', period: state.period, offset: String(state.offset) });
+    if (state.category) q.set('category', state.category);
+    if (!app.querySelector('.panel')) app.innerHTML = '<div class="loading">Loading…</div>';
+    else app.style.opacity = '0.6';
+    try {
+      const [res] = await Promise.all([fetch('/api/cashflow-summary?' + q, { cache: 'no-store' }), CategoryUI.load().catch(() => null)]);
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
+      if (my !== seq) return;
+      app.style.opacity = '';
+      if (state.category) renderDetail(data); else renderMain(data);
+    } catch (err) {
+      if (my !== seq) return;
+      app.style.opacity = '';
+      app.innerHTML = `${state.category ? detailHeadHtml(state.category, '') : mainHeadHtml()}<div class="error">Couldn't load: ${esc(err.message)}</div>`;
+      bindCommon();
+    }
+  }
+
+  // ---- main screen ------------------------------------------------------
+  function mainHeadHtml() {
+    return `
+      <div class="top">
+        <a class="icon-btn" href="/" aria-label="Back to Home">${ICON.back}</a>
+        <h1>Where it went</h1>
+        <span class="pill">Variable only</span>
+      </div>`;
+  }
+
+  function renderMain(d) {
+    const word = periodWord(d);
+    const cats = d.categories || [];
+    const total = d.total || 0;
+    const maxCat = cats.reduce((m, c) => Math.max(m, c.amount), 0) || 1;
+    const used = d.allowance ? Math.round((total / d.allowance) * 100) : null;
+    const allowanceLine = d.allowance
+      ? `${used}% of the ${rp(d.allowance)} allowance${d.period === 'month' ? ' for the month' : ''}`
+      : `${txns(d.count)}`;
+    const uncat = cats.find((c) => c.name === UNCAT);
+
+    const stack = total
+      ? cats.map((c) => `<span style="flex:${c.amount} 1 0;background:${esc(fill(c.name))}" title="${esc(c.name)} ${esc(rp(c.amount))}"></span>`).join('')
+      : '';
+    const legend = cats.slice(0, 8).map((c) => `<span>${dot(c.name)}${esc(c.name)}</span>`).join('');
+
+    const catRows = cats.map((c) => {
+      const pct = total ? Math.round((c.amount / total) * 100) : 0;
+      const delta = c.name === UNCAT
+        ? '<span>Needs a category</span>'
+        : deltaHtml(c.amount, c.compareAmount, d, true);
+      return `
+        <a class="row" href="${esc(urlFor(Object.assign({}, state, { category: c.name })))}" data-cat="${esc(c.name)}">
+          ${tile(c.name)}
+          <div class="row-main">
+            <div class="row-head"><span class="row-name">${esc(c.name)}</span><span class="row-amt num">${esc(rp(c.amount))}</span></div>
+            <div class="bar"><span style="width:${Math.max(2, Math.round((c.amount / maxCat) * 100))}%;background:${esc(fill(c.name))}"></span></div>
+            <div class="row-meta"><span>${txns(c.count)} · ${pct}%</span>${delta}</div>
+          </div>
+          ${ICON.chev}
+        </a>`;
+    }).join('');
+
+    const payees = d.payees || [];
+    const maxP = payees.reduce((m, p) => Math.max(m, p.amount), 0) || 1;
+    const payeeRows = payees.map((p, i) => `
+      <div class="row static">
+        <span class="rank num">${i + 1}</span>
+        <div class="row-main">
+          <div class="row-head"><span class="row-name">${esc(p.name)}</span><span class="row-amt num">${esc(rp(p.amount))}</span></div>
+          <div class="bar"><span style="width:${Math.max(2, Math.round((p.amount / maxP) * 100))}%;background:${esc(fill(p.category))}"></span></div>
+          <div class="row-meta"><span class="lhs">${dot(p.category)}<span>${esc(p.category || UNCAT)} · ${txns(p.count)}</span></span></div>
+        </div>
+      </div>`).join('');
+    const more = d.morePayees && d.morePayees.count
+      ? `<div class="more">+ ${d.morePayees.count} more payee${d.morePayees.count === 1 ? '' : 's'} · ${esc(rp(d.morePayees.amount))}</div>`
+      : '';
+
+    const emptyMsg = d.inProgress ? `Nothing spent this ${word} yet.` : `No Variable spending this ${word}.`;
+    const list = !cats.length
+      ? `<div class="panel"><div class="empty">${emptyMsg}</div></div>`
+      : (state.view === 'payee'
+        ? `<section class="panel list" aria-label="Top payees">${payeeRows}${more}</section>`
+        : `<section class="panel list" aria-label="By category">${catRows}</section>`);
+
+    const uncatNote = uncat && uncat.amount
+      ? ` ${esc(rp(uncat.amount))} has no category yet: open <a href="${esc(urlFor(Object.assign({}, state, { category: UNCAT })))}" style="color:var(--accent)">Uncategorised</a> to give those payees one.`
+      : '';
+
+    app.innerHTML = `
+      ${mainHeadHtml()}
+      <div class="seg" role="tablist" aria-label="Period">
+        <button role="tab" data-period="week" aria-selected="${state.period === 'week'}">Week</button>
+        <button role="tab" data-period="month" aria-selected="${state.period === 'month'}">Month</button>
+      </div>
+      <div class="period">
+        <button class="icon-btn" id="prev" aria-label="Previous ${word}">${ICON.back}</button>
+        <div class="period-mid">
+          <div class="period-title">${esc(titleFor(d))}</div>
+          <div class="period-range">${esc(rangeFor(d))}</div>
+        </div>
+        <button class="icon-btn" id="next" aria-label="Next ${word}" ${state.offset >= 0 ? 'disabled' : ''}>${ICON.next}</button>
+      </div>
+      <div class="two-col">
+        <section class="panel" aria-label="Summary" style="position:sticky;top:12px">
+          <div class="eyebrow">Variable spent</div>
+          <div class="big-row"><span class="big num">${esc(rp(total))}</span>${deltaHtml(total, d.compare.total, d)}</div>
+          <div class="line2">${allowanceLine}</div>
+          ${total ? `<div class="stack" role="img" aria-label="Share of spending by category">${stack}</div><div class="legend">${legend}</div>` : ''}
+        </section>
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <div class="seg" role="tablist" aria-label="Group by">
+            <button role="tab" data-view="cat" aria-selected="${state.view === 'cat'}">By category</button>
+            <button role="tab" data-view="payee" aria-selected="${state.view === 'payee'}">Top payees</button>
+          </div>
+          ${list}
+        </div>
+      </div>
+      <p class="note">Counts Variable spending only: fixed bills, installments and card statement payments are left out. Card swipes count on the swipe date; pending and uncleared rows are included.${uncatNote}</p>`;
+    bindCommon();
+  }
+
+  // ---- category detail --------------------------------------------------
+  function detailHeadHtml(name, sub) {
+    return `
+      <div class="detail-head">
+        <a class="icon-btn" href="${esc(urlFor(Object.assign({}, state, { category: '' })))}" data-back aria-label="Back to Where it went">${ICON.back}</a>
+        ${tile(name)}
+        <div class="detail-title"><h1>${esc(name)}</h1><div>${esc(sub)}</div></div>
+      </div>`;
+  }
+
+  function renderDetail(d) {
+    const x = d.detail;
+    const word = periodWord(d);
+    const isUncat = x.name === UNCAT;
+    const col = fill(x.name);
+    const share = d.total ? Math.round((x.amount / d.total) * 100) : 0;
+    const hist = x.history || [];
+    const maxH = hist.reduce((m, h) => Math.max(m, h.amount), 0) || 1;
+    const avg = hist.length > 1 ? hist.slice(0, -1).reduce((s, h) => s + h.amount, 0) / (hist.length - 1) : 0;
+    const bars = hist.map((h) => {
+      const label = (d.period === 'month' ? fmt(h.start, { month: 'short', year: 'numeric' }) : 'Week of ' + fmt(h.start, { day: 'numeric', month: 'short' })) + ': ' + rp(h.amount);
+      return `<span class="${h.current ? 'cur' : ''}" style="height:${Math.max(2, Math.round((h.amount / maxH) * 84))}px;background:${esc(col)}" title="${esc(label)}"></span>`;
+    }).join('');
+    const firstLabel = hist.length ? (d.period === 'month' ? fmt(hist[0].start, { month: 'short' }) : fmt(hist[0].start, { day: 'numeric', month: 'short' })) : '';
+
+    const pays = x.payees || [];
+    const maxP = pays.reduce((m, p) => Math.max(m, p.amount), 0) || 1;
+    const payRows = pays.map((p) => `
+      <div class="row static">
+        <div class="row-main">
+          <div class="row-head"><span class="row-name">${esc(p.name)}</span><span class="row-amt num">${esc(rp(p.amount))}</span></div>
+          <div class="bar"><span style="width:${Math.max(2, Math.round((p.amount / maxP) * 100))}%;background:${esc(col)}"></span></div>
+          <div class="row-meta"><span>${txns(p.count)} · ${x.amount ? Math.round((p.amount / x.amount) * 100) : 0}% of category</span></div>
+        </div>
+        ${isUncat && p.name !== '(no payee)' ? `<button class="set-btn" data-payee="${esc(p.name)}">Set category</button>` : ''}
+      </div>`).join('');
+
+    const SHOW = 8;
+    const list = x.transactions || [];
+    const txRows = list.slice(0, SHOW).map((t) => `
+      <button class="row" data-row="${t.rowNumber}" data-payee-name="${esc(t.payee || '')}" aria-label="Move ${esc(t.payee || 'transaction')} to another category">
+        <div class="txn-day"><div>${esc(fmt(t.date, { weekday: 'short' }))}</div><div>${esc(fmt(t.date, { day: 'numeric' }))}</div></div>
+        <div class="row-main">
+          <div class="row-name">${esc(t.payee || '(no payee)')}</div>
+          <div class="row-meta"><span class="lhs"><span>${esc(t.sof || '')}</span>${t.isPending ? '<span class="tag-pending">Pending</span>' : ''}</span></div>
+        </div>
+        <span class="row-amt num" style="font-weight:500">${esc(rp(t.amount))}</span>
+      </button>`).join('');
+    const txLink = `/transactions/?category=${encodeURIComponent(isUncat ? '__uncat' : x.name)}`;
+    const txMore = list.length > SHOW
+      ? `<div class="more">Showing ${SHOW} of ${list.length} · <a href="${esc(txLink)}">Open all in Transactions</a></div>`
+      : (list.length ? `<div class="more"><a href="${esc(txLink)}">Open in Transactions</a></div>` : '');
+
+    const sub = `${titleFor(d)} · ${rangeFor(d)}`;
+    app.innerHTML = `
+      ${detailHeadHtml(x.name, sub)}
+      <div class="two-col">
+        <section class="panel" aria-label="Summary">
+          <div class="big-row" style="margin-top:0"><span class="big num" style="font-size:2rem">${esc(rp(x.amount))}</span>${deltaHtml(x.amount, x.compareAmount, d)}</div>
+          <div class="line2">${share}% of this ${word}'s Variable spending · ${txns(x.count)}</div>
+          <div class="hist-head"><span class="eyebrow" style="font-size:0.75rem">Last ${hist.length} ${word}s</span><span>avg ${esc(rp(avg))}</span></div>
+          <div class="hist" role="img" aria-label="${esc(x.name)} spending over the last ${hist.length} ${word}s">
+            ${avg ? `<div class="avg" style="bottom:${Math.round((avg / maxH) * 84)}px"></div>` : ''}
+            ${bars}
+          </div>
+          <div class="hist-axis"><span>${esc(firstLabel)}</span><span>${d.offset === 0 ? 'This ' + word : esc(fmt(d.start, d.period === 'month' ? { month: 'short' } : { day: 'numeric', month: 'short' }))}</span></div>
+        </section>
+        <div style="display:flex;flex-direction:column;gap:12px">
+          ${pays.length ? `<h2 class="h2">${isUncat ? 'Payees without a category' : 'Payees in this category'}</h2><section class="panel list">${payRows}</section>` : ''}
+          <h2 class="h2">Transactions</h2>
+          <section class="panel list">${txRows || `<div class="empty">None this ${word}.</div>`}${txMore}</section>
+          <div class="toast" id="toast" role="status"></div>
+        </div>
+      </div>
+      <p class="note">${isUncat
+        ? 'Give a payee a category and all its rows follow, past and future (unless you set one by hand). Tap a transaction to set just that one.'
+        : 'Tap a transaction to move it to another category. A category set on a payee applies to all of that payee\'s rows.'}</p>`;
+    bindCommon();
+    bindDetail(d);
+  }
+
+  function toast(msg) {
+    const el = document.getElementById('toast');
+    if (el) el.textContent = msg;
+  }
+
+  function bindDetail(d) {
+    app.querySelectorAll('[data-row]').forEach((b) => b.addEventListener('click', async () => {
+      const choice = await CategoryUI.pick({
+        title: `Category for ${b.dataset.payeeName || 'this transaction'}`,
+        current: d.detail.name === UNCAT ? '' : d.detail.name,
+        type: 'Expense',
+        allowAuto: true,
+        autoLabel: 'Automatic (drop what you set)',
+      });
+      if (!choice) return;
+      try {
+        toast('Saving…');
+        await CategoryUI.applyBulk([Number(b.dataset.row)], choice);
+        load();
+      } catch (err) { toast(`Couldn't save: ${err.message}`); }
+    }));
+    app.querySelectorAll('[data-payee]').forEach((b) => b.addEventListener('click', async () => {
+      const name = b.dataset.payee;
+      const choice = await CategoryUI.pick({ title: `Default category for ${name}`, type: 'Expense' });
+      if (!choice || choice === 'auto') return;
+      try {
+        toast('Saving…');
+        await CategoryUI.setPayeeDefault(name, choice);
+        load();
+      } catch (err) { toast(`Couldn't save: ${err.message}`); }
+    }));
+  }
+
+  function bindCommon() {
+    app.querySelectorAll('[data-period]').forEach((b) => b.addEventListener('click', () => {
+      if (b.dataset.period !== state.period) go({ period: b.dataset.period, offset: 0 });
+    }));
+    app.querySelectorAll('[data-view]').forEach((b) => b.addEventListener('click', () => {
+      if (b.dataset.view !== state.view) go({ view: b.dataset.view }, true);
+    }));
+    const prev = document.getElementById('prev');
+    const next = document.getElementById('next');
+    if (prev) prev.addEventListener('click', () => go({ offset: state.offset - 1 }, true));
+    if (next) next.addEventListener('click', () => { if (state.offset < 0) go({ offset: state.offset + 1 }, true); });
+    app.querySelectorAll('a[data-cat], a[data-back]').forEach((a) => a.addEventListener('click', (e) => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey) return;
+      e.preventDefault();
+      go({ category: a.dataset.cat || '' });
+      window.scrollTo(0, 0);
+    }));
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.target.closest('input, textarea, select, .ctg-overlay')) return;
+    if (e.key === 'ArrowLeft') { e.preventDefault(); go({ offset: state.offset - 1 }, true); }
+    if (e.key === 'ArrowRight' && state.offset < 0) { e.preventDefault(); go({ offset: state.offset + 1 }, true); }
+  });
+
+  // Not one of BottomNav's four tabs: it's reached from Home's card.
+  BottomNav.mount(document.getElementById('bnv-root'), { active: 'home' });
+  KeyboardNav.mount();
+  load();
+})();
+</script>
+</body>
+</html>

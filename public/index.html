@@ -171,6 +171,33 @@
   .hm-big { font-size: 1.8rem; font-weight: 700; }
   .hm-sub-pct { font-size: 0.85rem; color: var(--muted); margin-top: 2px; }
 
+  /* ---- WS8: Where it went card (links to /where) ---- */
+  a.card { display: block; color: inherit; text-decoration: none; text-align: left; }
+  a.card[hidden] { display: none; }
+  a.card:hover { background: #1f232b; }
+  a.card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .hw-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+  .hw-head .label { margin-bottom: 0; }
+  .hw-open { font-size: 0.8rem; color: var(--muted); display: flex; align-items: center; gap: 2px; white-space: nowrap; }
+  .hw-open svg { width: 14px; height: 14px; }
+  .hw-total { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .hw-total strong { font-size: 1.35rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .hw-delta { font-size: 0.8rem; font-weight: 600; color: var(--muted); }
+  .hw-delta.up { color: #fb923c; }
+  .hw-delta.down { color: #4ade80; }
+  .hw-stack { display: flex; height: 10px; border-radius: 5px; overflow: hidden; gap: 2px; margin-top: 12px; background: #2a2e37; }
+  .hw-stack span { display: block; min-width: 3px; }
+  .hw-rows { list-style: none; margin: 12px 0 0; padding: 0; }
+  .hw-rows li { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 0.88rem; }
+  .hw-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .hw-dot.none { border: 1px dashed #6b7280; }
+  .hw-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .hw-pct { color: var(--muted); font-size: 0.78rem; width: 36px; text-align: right; font-variant-numeric: tabular-nums; }
+  .hw-amt { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; min-width: 92px; text-align: right; }
+  .hw-foot + .hw-foot { margin-top: 2px; }
+  .hw-foot { margin-top: 8px; font-size: 0.78rem; color: var(--muted); }
+  .hw-foot .hw-uncat { color: #fb923c; }
+
 </style>
 </head>
 <body>
@@ -193,6 +220,16 @@
       <ul class="hm-txns" id="hm-week-txns"></ul>
     </details>
   </div>
+
+  <!-- WS8: Where it went -- this week's spending by category, from the
+       week response's `where`. The whole card opens /where. -->
+  <a class="card" id="hm-where-card" href="/where" hidden aria-label="Where it went: open the full breakdown">
+    <div class="hw-head">
+      <div class="label">Where it went</div>
+      <span class="hw-open">This week<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg></span>
+    </div>
+    <div id="hw-body"></div>
+  </a>
 
   <!-- Adherence: the last completed weeks against what was available. -->
   <div class="card" id="hm-strip-card" hidden>
@@ -305,6 +342,9 @@
         <span class="hm-txn-amt">${formatIDR(t.amount)}</span></li>`).join('');
 
       renderStrip(data);
+      // Colours come from the Categories tab; draw once they're in (the
+      // card still draws with fallback colours if that request fails).
+      CategoryUI.load().catch(() => null).then(() => renderWhere(data.where));
     }
 
     // Last completed weeks (oldest first) plus the current one, as bars of
@@ -335,6 +375,60 @@
       streakEl.textContent = data.streak > 0 ? `${data.streak}-week streak` : 'No streak yet';
       streakEl.classList.toggle('zero', !(data.streak > 0));
       document.getElementById('hm-strip-meta').textContent = `${keptCount} of the last ${weeks.length} week${weeks.length === 1 ? '' : 's'} on budget`;
+    }
+
+
+    // ---- WS8: Where it went card ----
+    // Top categories this week (biggest first, Uncategorised folded into
+    // the footer), a stacked bar of all of them, and the change against the
+    // same point last week.
+    const HW_TOP = 3;
+    function renderWhere(where) {
+      const card = document.getElementById('hm-where-card');
+      const body = document.getElementById('hw-body');
+      if (!where) { card.hidden = true; return; }
+      card.hidden = false;
+      const cats = where.categories || [];
+      const total = where.total || 0;
+      if (!total) {
+        body.innerHTML = '<div class="hw-foot" style="margin-top:10px">Nothing spent yet this week. Tap to see past weeks and months.</div>';
+        return;
+      }
+      const colourOf = (name) => (name === CategoryUI.UNCATEGORISED ? null : CategoryUI.colourFor(name));
+      const fillOf = (name) => colourOf(name) || '#4b5563';
+      const named = cats.filter((c) => c.name !== CategoryUI.UNCATEGORISED);
+      const uncat = cats.find((c) => c.name === CategoryUI.UNCATEGORISED);
+      const top = named.slice(0, HW_TOP);
+      const restAmt = named.slice(HW_TOP).reduce((s, c) => s + c.amount, 0);
+      const restN = named.length - top.length;
+
+      const prev = where.compare ? where.compare.total : 0;
+      let delta = '';
+      if (prev) {
+        const pct = Math.round(((total - prev) / prev) * 100);
+        delta = pct === 0
+          ? '<span class="hw-delta">same as last week so far</span>'
+          : `<span class="hw-delta ${pct > 0 ? 'up' : 'down'}">${pct > 0 ? '▲' : '▼'} ${Math.abs(pct)}% vs same point last week</span>`;
+      }
+
+      const row = (name, amt, dotStyle) => `<li><span class="hw-dot${dotStyle ? '' : ' none'}"${dotStyle ? ` style="background:${escapeHtml(dotStyle)}"` : ''}></span>` +
+        `<span class="hw-name">${escapeHtml(name)}</span><span class="hw-pct">${Math.round((amt / total) * 100)}%</span>` +
+        `<span class="hw-amt">${formatIDR(amt)}</span></li>`;
+      const rows = top.map((c) => row(c.name, c.amount, colourOf(c.name)));
+      if (restN > 0) rows.push(row(`${restN} other categor${restN === 1 ? 'y' : 'ies'}`, restAmt, '#4b5563'));
+
+      const biggest = (where.payees || [])[0];
+      const foot = [];
+      if (biggest) foot.push(`Biggest payee: ${escapeHtml(biggest.name)} ${formatIDR(biggest.amount)}`);
+      if (uncat && uncat.amount) foot.push(`<span class="hw-uncat">${formatIDR(uncat.amount)} has no category yet</span>`);
+
+      body.innerHTML = `
+        <div class="hw-total"><strong>${formatIDR(total)}</strong>${delta}</div>
+        <div class="hw-stack" role="img" aria-label="Share of this week's spending by category">${
+          cats.map((c) => `<span style="flex:${c.amount} 1 0;background:${escapeHtml(fillOf(c.name))}"></span>`).join('')}</div>
+        <ul class="hw-rows">${rows.join('')}</ul>
+        ${foot.map((f) => `<div class="hw-foot">${f}</div>`).join('')}`;
+      card.setAttribute('aria-label', `Where it went this week: ${formatIDR(total)}${top[0] ? `, most on ${top[0].name}` : ''}. Open the full breakdown.`);
     }
 
     function renderDebt(data) {
