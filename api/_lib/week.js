@@ -107,6 +107,8 @@ function variableLines(rows) {
       isPending: !!r.isPending,
       isCleared: !!r.isCleared,
       kindRule: r.kindRule || null,
+      category: r.category || null,
+      categoryGroup: r.categoryGroup || null,
     };
     if (isProposedImportDuplicate(r)) {
       excluded.push({ ...line, reason: 'proposed-duplicate', matchId: r.matchId });

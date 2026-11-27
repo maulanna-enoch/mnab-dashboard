@@ -9,6 +9,10 @@ Answers "can I spend this?" and "am I getting out of debt?" (Debt Exit WS5):
 - **Left this week** (hero) from `?action=week`: what's left of this week's
   allowance plus rollover, with a per-day hint, the week's dates, spent vs.
   available, and this week's Variable transactions. Red when over.
+- **Where it went** from the same response's `where`: this week's Variable
+  spending by category as a stacked bar, the top three categories, the change
+  against the same point last week, the biggest payee and how much has no
+  category yet. The whole card opens `/where`.
 - **Weeks on budget**: one bar per completed budget week (oldest first) plus
   this week, height = spent / available, the dashed line = 100%, green when
   kept, red when not, with the streak of weeks kept.
@@ -16,6 +20,19 @@ Answers "can I spend this?" and "am I getting out of debt?" (Debt Exit WS5):
   reserves only) and % of salary, the projected debt-free date, how many
   days last week's over/under-spend moved it, and the date at your recent
   pace.
+### Where it went (`/where`)
+
+Debt Exit WS8, from `GET /api/cashflow-summary?action=where`. Variable
+spending for a week or a calendar month (Week / Month toggle, ‹ › or the
+arrow keys for earlier periods): the total against the same point of the
+period before and the allowance, a stacked bar by category, then **By
+category** (amount, share, change; Uncategorised last) or **Top payees**.
+Tapping a category opens its detail: the last 12 periods, its payees and its
+transactions; tap a transaction to move it to another category. On
+**Uncategorised**, each payee has **Set category** to give it a default.
+State lives in the URL (`?period=month&offset=-1&category=Groceries`), so
+Back and links work.
+
 The old Diary-based monthly Cash Flow view was removed when the Diary tab
 was retired; `/cashflow` still redirects to Home.
 
@@ -144,8 +161,10 @@ mnab-dashboard/
   api/_lib/settings.js                Settings tab keys, defaults and value parsing (see "Settings tab" below)
   api/_lib/kinds.js                   Fixed / Variable / Transfer / Income rules (see "Fixed / variable" below)
   api/_lib/week.js                    Weekly budget engine (see "Weekly budget" below)
+  api/_lib/where.js                   Where it went: spending by category / payee per week or month
   api/cashflow-summary.js             Home's data: ?action=settings returns the Settings tab (typed, with defaults)
                                       ?action=week returns the weekly budget (allowance, left, history)
+                                      ?action=where returns spending by category and payee (Where it went)
                                       ?action=debt returns the actual hole and debt projection
   api/push.js                         Web Push: device subscriptions + the notify call EmailImport.gs makes
   api/installments-summary.js         Sum of active Installment amounts (excludes Bills);
@@ -266,7 +285,27 @@ default 12), `&transactions=0` (leave out this week's list).
 Response: `week` (`start`, `end`, `allowance`, `carryIn`, `available`,
 `spent`, `left`, `daysLeft`, `perDay`, `transactions`), `history` (completed
 weeks, oldest first, each with `kept`), `streak` (weeks kept in a row),
-`excluded`, `warnings`. All amounts are whole rupiah.
+`excluded`, `warnings`, and `where` (this week's categories and top three
+payees, as below). All amounts are whole rupiah.
+
+## Where it went (`?action=where`)
+
+`GET /api/cashflow-summary?action=where&period=week|month&offset=0&category=NAME`
+(rules in `api/_lib/where.js`). The same lines as the weekly budget: Kind =
+Variable only, on the swipe date, pending and uncleared included, proposed
+import duplicates left out. A week runs from `week_start_day`; a month is the
+calendar month. `offset` 0 is the current period, -1 the one before. A
+finished period is compared with the whole period before it; the current one
+with the same number of days at the start of the last one. The allowance is
+`weekly_allowance_rp` for a week and that × days ÷ 7 for a month.
+
+Response: `start`, `end`, `inProgress`, `daysElapsed`, `daysTotal`, `total`,
+`count`, `compare` (`start`, `end`, `total`, `partial`), `allowance`,
+`categories` (`name`, `group`, `amount`, `count`, `compareAmount`; biggest
+first, Uncategorised last), `payees` (top 10: `name`, `amount`, `count`, main
+`category`), `morePayees` (`count`, `amount`), `excludedCount`. With
+`category`, also `detail`: `amount`, `count`, `compareAmount`, `history` (the
+last 12 periods), `payees`, `transactions`.
 
 ## Actual hole and debt projection (`?action=debt`)
 
