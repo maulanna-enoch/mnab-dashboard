@@ -18,6 +18,7 @@
 <link rel="stylesheet" href="/shared/swipe-actions.css" />
 <link rel="stylesheet" href="/shared/bulk-actions.css" />
 <link rel="stylesheet" href="/shared/kind-ui.css" />
+<link rel="stylesheet" href="/shared/list-filters.css" />
 <link rel="stylesheet" href="/shared/responsive.css" />
 <link rel="stylesheet" href="/shared/bottom-nav.css" />
 <style>
@@ -738,6 +739,12 @@
       <button type="button" class="pending-review-btn" id="detail-pending-toggle" style="display:none;">
         <span class="prb-dot"></span><span id="detail-pending-label">Review Pending</span>
       </button>
+
+      <!-- "Uncategorised only" + statement-month filter
+           (shared/list-filters.js), same row as on the Transactions page.
+           Filters the same `visible` list the card list and the wide table
+           share. Reset when a different account is opened. -->
+      <div id="detail-list-filters"></div>
     </div>
   </div>
 
@@ -964,6 +971,7 @@
 <script src="/shared/bulk-actions.js"></script>
 <script src="/shared/txn-match.js"></script>
 <script src="/shared/kind-ui.js"></script>
+<script src="/shared/list-filters.js"></script>
 <script src="/shared/bottom-nav.js"></script>
 <script src="/shared/keyboard-nav.js"></script>
 <script>
@@ -1209,6 +1217,9 @@
   let currentAccountTxns = [];
   let showUpcomingDetail = false;
   let showPendingOnlyDetail = false; // issue #49
+  // Statement month / Uncategorised only (shared/list-filters.js).
+  let detailListFilterState = { uncat: false, month: '' };
+  let detailListFiltersAccount = null;
 
   // Hardware-keyboard row highlight indexes (issue #63) -- -1 means nothing
   // highlighted yet. Reset to -1 wherever the underlying row list is
@@ -2238,6 +2249,17 @@
     renderDetailTxnList(currentAccountTxns);
   });
 
+  const detailListFilters = ListFilters.mount(document.getElementById('detail-list-filters'), {
+    onChange(state) {
+      detailListFilterState = state;
+      renderDetailTxnList(currentAccountTxns);
+    },
+  });
+  // Category chips on the rows: colours arrive with the category list.
+  CategoryUI.load().then(() => {
+    if (currentAccountTxns && currentAccountTxns.length) renderDetailTxnList(currentAccountTxns);
+  }).catch(() => {});
+
   const detailPendingToggleEl = document.getElementById('detail-pending-toggle');
   const detailPendingLabelEl = document.getElementById('detail-pending-label');
   detailPendingToggleEl.addEventListener('click', () => {
@@ -2282,6 +2304,12 @@
 
   async function openAccountDetail(name) {
     currentAccount = name;
+    if (detailListFiltersAccount !== name) {
+      // Months and categories belong to one account: start each one clean.
+      detailListFiltersAccount = name;
+      detailListFilterState = { uncat: false, month: '' };
+      detailListFilters.set(detailListFilterState);
+    }
     goto('detail');
     document.getElementById('detail-title').textContent = name;
 
@@ -2345,6 +2373,9 @@
 
     let visible = showUpcomingDetail ? rows : rows.filter((t) => !t.date || t.date <= todayStr);
     if (showPendingOnlyDetail) visible = visible.filter((t) => t.pending);
+    detailListFilters.update(visible);
+    visible = visible.filter((t) => ListFilters.matches(t, detailListFilterState));
+    detailListFilters.summary(visible);
 
     // Wide-viewport table (issue #86) renders from the same
     // upcoming/pending-filtered list as the mobile cards, then applies its
@@ -2372,7 +2403,9 @@
     }
 
     if (!visible.length) {
-      listEl.innerHTML = '<div class="sub">No transactions for this account yet.</div>';
+      listEl.innerHTML = (detailListFilterState.uncat || detailListFilterState.month)
+        ? '<div class="sub">No transactions match these filters.</div>'
+        : '<div class="sub">No transactions for this account yet.</div>';
       return;
     }
     let html = '';
@@ -2410,7 +2443,7 @@
           <div class="txn-row-main">
             <div>
               <div class="txn-name">${t.payee}</div>
-              <div class="txn-meta">${kindHtml} ${metaBits.join(' &middot; ') || (kindHtml ? '' : '&nbsp;')}</div>
+              <div class="txn-meta">${kindHtml} ${CategoryUI.chip(t)} ${metaBits.join(' &middot; ') || (kindHtml ? '' : '&nbsp;')}</div>
             </div>
             <div class="txn-amount-block">
               <div class="txn-amount ${isIncome ? 'income' : ''}">${amountText}</div>

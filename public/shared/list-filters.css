@@ -1,0 +1,39 @@
+/* "Uncategorised only" chip + statement-month select (see
+   shared/list-filters.js). Prefix lfl-. Same pill look as the Kind chips
+   and the category select, so the filter rows read as one set. */
+.lfl-row-wrap { margin: 0 0 12px; }
+.lfl-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.lfl-chip,
+.lfl-month {
+  background: var(--card, #1a1d24);
+  color: var(--muted, #9ca3af);
+  border: 1px solid #2a2e37;
+  border-radius: 999px;
+  padding: 6px 11px;
+  font-size: 0.75rem;
+  font-family: inherit;
+  cursor: pointer;
+}
+.lfl-chip { flex-shrink: 0; }
+.lfl-chip:hover, .lfl-month:hover { color: var(--text, #e5e7eb); }
+.lfl-chip[aria-pressed="true"] {
+  color: var(--text, #e5e7eb);
+  border-color: var(--text, #e5e7eb);
+  border-style: dashed;
+  background: rgba(255, 255, 255, 0.07);
+}
+.lfl-count { opacity: 0.6; margin-left: 2px; font-variant-numeric: tabular-nums; }
+.lfl-month { max-width: 100%; }
+.lfl-month.lfl-on { color: var(--text, #e5e7eb); border-color: var(--text, #e5e7eb); }
+.lfl-summary {
+  margin-top: 8px;
+  font-size: 0.75rem;
+  color: var(--muted, #9ca3af);
+  font-variant-numeric: tabular-nums;
+}
+.lfl-summary[hidden] { display: none; }
