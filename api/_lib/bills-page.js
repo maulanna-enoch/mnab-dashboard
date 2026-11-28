@@ -204,6 +204,26 @@ function withPayment(item, r, match) {
   return item;
 }
 
+// Does registry row `r` count in `month`? An active row: when the month is
+// inside its Starts..Ends. A switched-off row (is_active FALSE) is usually
+// one switched off after its last payment was charged, so it still counts
+// in a month inside its Starts..Ends when either
+//   - it's the Ends month and that month's charge date has passed (the
+//     final payment), or
+//   - a transaction with its Bill ID is dated around that month's charge.
+// A row switched off early (paid off, cancelled) has neither, so it drops
+// out of every month it no longer charges, past and future.
+function countsInMonth(r, month, ctx) {
+  if (r.isActive) return activeInMonth(r, month);
+  if (!inDateRange(r, month)) return false;
+  const [y, m] = month.split('-').map(Number);
+  const charge = clampedDay(y, m - 1, r.dayOfMonth || 1);
+  if (!isOpenEndDate(r.endDate) && monthOf(r.endDate) === month && charge <= ctx.today) return true;
+  if (!r.dayOfMonth) return false;
+  const match = matchAround(ctx.txnsByBill, r, charge);
+  return match.done.length > 0 || match.pending;
+}
+
 // Rows from fetchTransactionRows(), shaped the way statementFor() reads
 // them (amount signed like Total: Income negative).
 function statementRows(txns) {
@@ -217,29 +237,16 @@ function statementRows(txns) {
 }
 
 // The card items that land on one card's statement for `month`.
-//
-// `cardRows` includes switched-off rows (is_active FALSE). An installment's
-// row is usually switched off once its last payment is charged, but that
-// last payment is still on the statement, so a switched-off row stays in
-// when the statement's charge falls inside its Starts..Ends and either it
-// is the Ends month (the final payment) or a transaction with its Bill ID
-// was charged around that date. Otherwise it's left out, so a row switched
-// off early (paid off, cancelled) doesn't keep showing as expected.
+// `cardRows` includes switched-off rows; countsInMonth() keeps the ones
+// still charged to this statement (e.g. an installment's last payment).
 function statementContents(cardRows, month, ctx) {
   const items = [];
   cardRows.forEach((r) => {
     if (!r.dayOfMonth) return;
     const charge = chargeDateForStatement(r.dayOfMonth, month);
     const chargeMonth = monthOf(charge);
-    const match = matchAround(ctx.txnsByBill, r, charge);
-    if (!r.isActive) {
-      if (!inDateRange(r, chargeMonth)) return;
-      const finalPayment = !isOpenEndDate(r.endDate) && monthOf(r.endDate) === chargeMonth;
-      if (!finalPayment && !match.done.length && !match.pending) return;
-    } else if (!activeInMonth(r, chargeMonth)) {
-      return;
-    }
-    const item = withPayment(baseItem(r, chargeMonth), r, match);
+    if (!countsInMonth(r, chargeMonth, ctx)) return;
+    const item = withPayment(baseItem(r, chargeMonth), r, matchAround(ctx.txnsByBill, r, charge));
     delete item.payTxn; // charged to the card -- nothing to pay from here
     item.chargeDate = iso(charge);
     item.status = item.paidAmount !== undefined ? STATUS_CHARGED : STATUS_EXPECTED;
@@ -272,7 +279,7 @@ function needsAttention(active) {
 function buildBillsPage({ registry, txns, accounts, salary, today }) {
   const cycle = payCycle(today);
   const thisMonth = monthOf(today);
-  const ctx = { txnsByBill: indexTxnsByBill(txns) };
+  const ctx = { txnsByBill: indexTxnsByBill(txns), today };
   const cards = accounts.filter((a) => isCreditCardType(a.type));
   const cardOf = (sof) => cards.find((c) => sameName(c.name, sof)) || null;
   const active = registry.filter((r) => r.isActive);
@@ -347,9 +354,12 @@ function buildBillsPage({ registry, txns, accounts, salary, today }) {
   }).filter((c) => c.items.length || c.statements.length);
 
   // ---- outlook: committed as % of salary + what ends when ----
+  // Switched-off rows count in the months they were still charged, the
+  // same rule as statement contents (countsInMonth).
+  const counts = (r, month) => countsInMonth(r, month, ctx);
   const committed = [];
   for (let i = 0; i < COMMITTED_MONTHS; i += 1) {
-    const c = committedInMonth(registry, addMonths(thisMonth, i));
+    const c = committedInMonth(registry, addMonths(thisMonth, i), counts);
     committed.push({
       month: c.month,
       total: c.total,
@@ -358,11 +368,11 @@ function buildBillsPage({ registry, txns, accounts, salary, today }) {
   }
   const horizon = addMonths(thisMonth, DROP_OFF_MONTHS);
   const groups = new Map();
-  active.forEach((r) => {
+  registry.forEach((r) => {
     if (isOpenEndDate(r.endDate)) return;
     const ends = monthOf(r.endDate);
     if (ends < thisMonth || ends > horizon) return;
-    if (!activeInMonth(r, ends)) return; // e.g. an installment missing Starts
+    if (!counts(r, ends)) return; // e.g. an installment missing Starts, or switched off early
     if (!groups.has(ends)) groups.set(ends, { endsMonth: ends, freedFrom: addMonths(ends, 1), amount: 0, items: [] });
     const g = groups.get(ends);
     g.amount += r.amount;
