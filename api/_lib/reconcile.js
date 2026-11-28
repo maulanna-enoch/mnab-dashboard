@@ -274,6 +274,11 @@ async function fetchTransactionsForReconcile(sheets) {
       storedKind: cellText(row, map['Kind']),
       storedKindRule: cellText(row, map['Kind Rule']),
       billId: cellText(row, map['Source ID']),
+      // Category system inputs, same columns fetchTransactionRows reads --
+      // lets the Account detail endpoint return each row's effective
+      // category (its list filters to Uncategorised).
+      storedCategory: cellText(row, map['Category']),
+      storedCategoryRule: cellText(row, map['Category Rule']),
     };
   });
 

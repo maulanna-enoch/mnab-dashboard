@@ -41,7 +41,10 @@ const {
   RECONCILE_SHEETS,
 } = require('./_lib/reconcile');
 const { statementsFor, STATUS_PAID, STATUS_BILLED, shiftMonthKey } = require('./_lib/statements');
-const { monthKey, fetchPayeeRows } = require('./_lib/sheets');
+const {
+  monthKey, fetchPayeeRows, fetchCategoryRows, fetchInstallmentRows, billCategoryMap, classifyTransactionCategory,
+} = require('./_lib/sheets');
+const { buildCategoryContext, DEFAULT_CATEGORIES } = require('./_lib/categories');
 const { classifyKind, payeeKindMap } = require('./_lib/kinds');
 
 // After a card payment is written or undone: the statement it belongs to,
@@ -771,6 +774,11 @@ function kindFields(r, payeeKinds) {
   return { kind, kindRule: rule, billId: r.billId || null };
 }
 
+function categoryFields(r, ctx) {
+  const cat = classifyTransactionCategory(r, ctx);
+  return { category: cat.category, categoryGroup: cat.group, categoryRule: cat.rule };
+}
+
 async function actionDetail(query, res) {
   const accountName = query && query.name;
   if (!accountName) {
@@ -786,13 +794,18 @@ async function actionDetail(query, res) {
     return;
   }
 
-  const [{ rows: txnRows }, payeeRows] = await Promise.all([
+  const [{ rows: txnRows }, payeeRows, catRows, billRows] = await Promise.all([
     fetchTransactionsForReconcile(sheets),
     // Kind is best-effort here: a Payees read failure just drops payee
     // overrides from the classification instead of failing the page.
     fetchPayeeRows(sheets).catch(() => []),
+    // Category, same best-effort footing: a failed read falls back to the
+    // built-in categories / no bill categories rather than failing the page.
+    fetchCategoryRows(sheets).catch(() => ({ categories: DEFAULT_CATEGORIES })),
+    fetchInstallmentRows().catch(() => []),
   ]);
   const payeeKinds = payeeKindMap(payeeRows);
+  const categoryCtx = buildCategoryContext(catRows.categories, payeeRows, billCategoryMap(billRows));
   const rows = txnRows
     .filter((r) => r.sof && r.sof.toLowerCase() === account.name.toLowerCase())
     .sort((a, b) => {
@@ -849,6 +862,8 @@ async function actionDetail(query, res) {
       matchStatus: r.matchStatus,
       // Same effective Kind as /api/transactions-list (see api/_lib/kinds.js).
       ...kindFields(r, payeeKinds),
+      // Same effective Category as /api/transactions-list.
+      ...categoryFields(r, categoryCtx),
     })),
     stats: {
       clearedTotal: Math.round(clearedTotal * 100) / 100,

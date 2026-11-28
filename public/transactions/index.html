@@ -18,6 +18,7 @@
 <link rel="stylesheet" href="/shared/swipe-actions.css" />
 <link rel="stylesheet" href="/shared/bulk-actions.css" />
 <link rel="stylesheet" href="/shared/kind-ui.css" />
+<link rel="stylesheet" href="/shared/list-filters.css" />
 <link rel="stylesheet" href="/shared/responsive.css" />
 <link rel="stylesheet" href="/shared/bottom-nav.css" />
 <style>
@@ -550,6 +551,12 @@
       <option value="">All categories</option>
     </select>
 
+    <!-- One-tap "Uncategorised only" + statement-month filter
+         (shared/list-filters.js). Same scope as the Kind chips. The chip is
+         a shortcut for the category select's Uncategorised option -- the
+         two stay in step. ?month=2026-11 opens the page already filtered. -->
+    <div id="list-filters"></div>
+
     <div class="txt-filters" id="txt-filters">
       <input type="search" id="txt-f-search" placeholder="Search payee or notes" />
       <select id="txt-f-sof"><option value="">All accounts</option></select>
@@ -657,6 +664,7 @@
   <script src="/shared/bulk-actions.js"></script>
   <script src="/shared/txn-match.js"></script>
   <script src="/shared/kind-ui.js"></script>
+  <script src="/shared/list-filters.js"></script>
   <script src="/shared/bottom-nav.js"></script>
   <script src="/shared/keyboard-nav.js"></script>
   <script>
@@ -701,15 +709,41 @@
       syncCategoryFilterLook();
       if (transactions.length) renderList(); // chip colours just arrived
     }).catch(() => { catFilterEl.style.display = 'none'; });
+    function setUrlParam(key, value) {
+      const params = new URLSearchParams(location.search);
+      if (value) params.set(key, value); else params.delete(key);
+      const qs = params.toString();
+      history.replaceState(null, '', location.pathname + (qs ? '?' + qs : ''));
+    }
     catFilterEl.addEventListener('change', () => {
       categoryFilter = catFilterEl.value;
       syncCategoryFilterLook();
-      const params = new URLSearchParams(location.search);
-      if (categoryFilter) params.set('category', categoryFilter); else params.delete('category');
-      const qs = params.toString();
-      history.replaceState(null, '', location.pathname + (qs ? '?' + qs : ''));
+      listFilters.set({ uncat: categoryFilter === '__uncat', month: monthFilter });
+      setUrlParam('category', categoryFilter);
       renderList();
     });
+
+    // Statement-month filter + "Uncategorised only" chip
+    // (shared/list-filters.js). The chip drives categoryFilter ('__uncat'),
+    // so the category select and the chip can never disagree.
+    let monthFilter = new URLSearchParams(location.search).get('month') || '';
+    const listFilters = ListFilters.mount(document.getElementById('list-filters'), {
+      onChange(state) {
+        if (state.month !== monthFilter) {
+          monthFilter = state.month;
+          setUrlParam('month', monthFilter);
+        }
+        const wantUncat = state.uncat;
+        if (wantUncat !== (categoryFilter === '__uncat')) {
+          categoryFilter = wantUncat ? '__uncat' : '';
+          if (Array.from(catFilterEl.options).some((x) => x.value === categoryFilter)) catFilterEl.value = categoryFilter;
+          syncCategoryFilterLook();
+          setUrlParam('category', categoryFilter);
+        }
+        renderList();
+      },
+    });
+    listFilters.set({ uncat: categoryFilter === '__uncat', month: monthFilter });
 
     // Picks a category for these rows and saves it in one request (the
     // table cell, and the bulk bar's Set category). Returns after reloading.
@@ -2460,7 +2494,12 @@
       // number is what that chip would show.
       KindUI.updateCounts(document.getElementById('kind-filter'), visible);
       visible = visible.filter((t) => KindUI.matches(t, kindFilter));
+      // Uncategorised count + month options come from what Kind let
+      // through, before the category / month filters narrow it further.
+      listFilters.update(visible);
       visible = visible.filter((t) => CategoryUI.matches(t, categoryFilter));
+      visible = visible.filter((t) => ListFilters.matches(t, { month: monthFilter }));
+      listFilters.summary(visible);
 
       // Wide-viewport table (issue #65) renders from the same
       // upcoming-filtered list as the mobile cards, then applies its own
@@ -2488,8 +2527,9 @@
       }
 
       if (!visible.length) {
-        listEl.innerHTML = kindFilter.length
-          ? `<div class="sub">No ${kindFilter.join(' / ')} transactions here.</div>`
+        const filtered = kindFilter.length || categoryFilter || monthFilter;
+        listEl.innerHTML = filtered
+          ? `<div class="sub">No ${kindFilter.length ? kindFilter.join(' / ') + ' ' : ''}transactions match these filters.</div>`
           : '<div class="sub">No transactions yet. Tap + to add one.</div>';
         return;
       }
