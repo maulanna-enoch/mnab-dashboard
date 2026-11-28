@@ -120,13 +120,15 @@ function kindBucket(kind) {
 }
 
 // What's committed in `month`: every active row, totals overall and per
-// Kind, and the rows themselves.
-function committedInMonth(rows, month) {
+// Kind, and the rows themselves. `counts(row, month)` decides which rows
+// count; the Bills page passes its own to keep switched-off rows in the
+// months they were still charged (api/_lib/bills-page.js).
+function committedInMonth(rows, month, counts = activeInMonth) {
   const byKind = { cashBill: 0, cardBill: 0, bill: 0, installment: 0 };
   const items = [];
   let total = 0;
   rows.forEach((r) => {
-    if (!activeInMonth(r, month)) return;
+    if (!counts(r, month)) return;
     total += r.amount;
     byKind[kindBucket(r.kind)] += r.amount;
     const item = { id: r.id, name: r.name, kind: r.kind, sof: r.sof, amount: r.amount, dayOfMonth: r.dayOfMonth };
