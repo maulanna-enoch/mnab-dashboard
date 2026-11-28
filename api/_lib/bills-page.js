@@ -42,7 +42,7 @@
 //
 // Every date out of here is 'YYYY-MM-DD'; every month is 'YYYY-MM'.
 
-const { activeInMonth, committedInMonth, isOpenEndDate, monthOf, addMonths, totalMonths, installmentNumber,
+const { activeInMonth, inDateRange, committedInMonth, isOpenEndDate, monthOf, addMonths, totalMonths, installmentNumber,
   KIND_INSTALLMENT } = require('./bills');
 const { statementsFor, isCreditCardType, STATEMENT_CLOSE_DAY, STATUS_BILLED, STATUS_PAID } = require('./statements');
 
@@ -217,13 +217,29 @@ function statementRows(txns) {
 }
 
 // The card items that land on one card's statement for `month`.
+//
+// `cardRows` includes switched-off rows (is_active FALSE). An installment's
+// row is usually switched off once its last payment is charged, but that
+// last payment is still on the statement, so a switched-off row stays in
+// when the statement's charge falls inside its Starts..Ends and either it
+// is the Ends month (the final payment) or a transaction with its Bill ID
+// was charged around that date. Otherwise it's left out, so a row switched
+// off early (paid off, cancelled) doesn't keep showing as expected.
 function statementContents(cardRows, month, ctx) {
   const items = [];
   cardRows.forEach((r) => {
     if (!r.dayOfMonth) return;
     const charge = chargeDateForStatement(r.dayOfMonth, month);
-    if (!activeInMonth(r, monthOf(charge))) return;
-    const item = withPayment(baseItem(r, monthOf(charge)), r, matchAround(ctx.txnsByBill, r, charge));
+    const chargeMonth = monthOf(charge);
+    const match = matchAround(ctx.txnsByBill, r, charge);
+    if (!r.isActive) {
+      if (!inDateRange(r, chargeMonth)) return;
+      const finalPayment = !isOpenEndDate(r.endDate) && monthOf(r.endDate) === chargeMonth;
+      if (!finalPayment && !match.done.length && !match.pending) return;
+    } else if (!activeInMonth(r, chargeMonth)) {
+      return;
+    }
+    const item = withPayment(baseItem(r, chargeMonth), r, match);
     delete item.payTxn; // charged to the card -- nothing to pay from here
     item.chargeDate = iso(charge);
     item.status = item.paidAmount !== undefined ? STATUS_CHARGED : STATUS_EXPECTED;
@@ -303,7 +319,9 @@ function buildBillsPage({ registry, txns, accounts, salary, today }) {
         remaining: s.remaining,
         dueDate: s.dueDate,
         status: s.status === STATUS_PAID ? STATUS_PAID_ITEM : (due ? dueStatus(due, today, false) : STATUS_UPCOMING),
-        contents: statementContents(rowsOnCard(card), s.month, ctx),
+        // All rows on the card, switched-off ones included: statementContents
+      // decides which of those were still charged to this statement.
+      contents: statementContents(registry.filter((r) => sameName(r.sof, card.name)), s.month, ctx),
       });
     });
   });

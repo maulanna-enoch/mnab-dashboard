@@ -96,14 +96,20 @@ function installmentNumber(row, month) {
   return n > 0 ? n : null;
 }
 
-// Does this row commit money in `month` ('YYYY-MM')? is_active FALSE means
-// the row is switched off for every month, past or future.
-function activeInMonth(row, month) {
-  if (!row.isActive) return false;
+// Is `month` ('YYYY-MM') inside this row's Starts..Ends, whatever is_active
+// says? Used to keep a switched-off row on the statements it was actually
+// charged to (api/_lib/bills-page.js).
+function inDateRange(row, month) {
   if (!row.isBill && (!row.startDate || !row.endDate)) return false;
   if (row.startDate && month < monthOf(row.startDate)) return false;
   if (!isOpenEndDate(row.endDate) && month > monthOf(row.endDate)) return false;
   return true;
+}
+
+// Does this row commit money in `month` ('YYYY-MM')? is_active FALSE means
+// the row is switched off for every month, past or future.
+function activeInMonth(row, month) {
+  return !!row.isActive && inDateRange(row, month);
 }
 
 function kindBucket(kind) {
@@ -150,6 +156,7 @@ module.exports = {
   addMonths,
   totalMonths,
   installmentNumber,
+  inDateRange,
   activeInMonth,
   committedInMonth,
 };
