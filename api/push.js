@@ -23,7 +23,9 @@
 //      (its own Vercel cron). See api/_lib/alerts.js.
 // POST action=budget-check   { dryRun }               -> the weekly budget
 //      warning (push_budget_warn_pct, 70% by default) or the over-budget
-//      push, at most once per week each (PushLog tab). Called by
+//      push, at most once per week each (PushLog tab); an alert whose level
+//      no longer holds (spending went back down) is cleared so it can fire
+//      again. Called by
 //      shared/transaction-form.js after every save; action=notify runs the
 //      same check after an email import. Not authenticated, like the other
 //      dashboard writes: it can only ever send these two deduped messages.
@@ -158,8 +160,23 @@ async function runBudgetCheck(sheets, rows, dryRun) {
   const week = currentWeek(txns, settings);
   const level = alerts.budgetLevel(week, alerts.warnPctFrom(settings));
   const sentKeys = await pushLog.fetchSentKeys(sheets);
+  // Re-arm alerts that fired on spending that has since gone back down
+  // (e.g. a bill payment matched to its bill). Best effort: a failure here
+  // just means the old once-a-week behaviour for this check.
+  const stale = alerts.budgetKeysToClear(week, settings, sentKeys);
+  let cleared = [];
+  if (stale.length > 0) {
+    try {
+      if (!dryRun) await pushLog.clearKeys(sheets, stale);
+      stale.forEach((k) => sentKeys.delete(k));
+      cleared = stale;
+    } catch (err) {
+      console.error('Clearing stale budget alerts failed (non-fatal):', err);
+    }
+  }
   const note = alerts.budgetNotification(week, settings, sentKeys);
   const status = { level: level ? level.level : 'no-allowance', weekStart: week.start };
+  if (cleared.length > 0) status[dryRun ? 'wouldClear' : 'cleared'] = cleared;
   if (!note) return { ...status, sent: false };
   if (dryRun) return { ...status, sent: false, dryRun: true, payload: note.payload, markKeys: note.markKeys.map((k) => k.key) };
   if (!push.vapidConfigured()) return { ...status, sent: false, reason: 'vapid-not-configured' };

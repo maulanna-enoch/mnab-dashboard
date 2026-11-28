@@ -5,7 +5,10 @@
 //     once it goes over. Checked whenever spending can change -- after an
 //     email import (api/push.js action=notify) and after a save in the
 //     dashboard (action=budget-check) -- and sent at most once per week each,
-//     tracked in the PushLog tab (./push-log.js).
+//     tracked in the PushLog tab (./push-log.js). If spending drops back
+//     below a level that already fired (a bill payment matched to its bill,
+//     a row re-kinded as Fixed), that level's log entry is cleared so it can
+//     fire again this week -- see budgetKeysToClear().
 //   - Evening reminder: bills and installments due tomorrow, plus Steals
 //     rows whose Due Date is tomorrow (a loan to roll over or repay). Sent
 //     by the evening cron only when there's something to say.
@@ -113,6 +116,26 @@ function budgetNotification(week, settings, sentKeys) {
   return { payload: { title, body: lines.join('\n'), url: '/' }, markKeys: [{ key: keys.warn, title }] };
 }
 
+// Logged keys for this week whose level no longer holds, so they should be
+// cleared to let that alert fire again. Spending only goes back down when
+// something is corrected -- a bill payment imported as Variable and then
+// matched to its bill, a row re-kinded, a delete -- so an alert that fired
+// on a wrong number is re-armed for the real one.
+//   over logged, now warn or ok  -> clear over
+//   warn logged, now ok          -> clear warn (also the "skipped" warn
+//                                   entry an over push writes)
+// Returns an array of keys (possibly empty).
+function budgetKeysToClear(week, settings, sentKeys) {
+  const b = budgetLevel(week, warnPctFrom(settings));
+  if (!b) return [];
+  const keys = budgetKeys(week);
+  const sent = sentKeys || new Set();
+  const clear = [];
+  if (b.level !== 'over' && sent.has(keys.over)) clear.push(keys.over);
+  if (b.level === 'ok' && sent.has(keys.warn)) clear.push(keys.warn);
+  return clear;
+}
+
 // ── Steals due dates ──────────────────────────────────────────────────
 
 // Steal rows (fetchStealsRows(), with the optional Due Date column read
@@ -190,6 +213,7 @@ module.exports = {
   budgetLevel,
   budgetKeys,
   budgetNotification,
+  budgetKeysToClear,
   stealsDueOn,
   stealsLines,
   composeEvening,
