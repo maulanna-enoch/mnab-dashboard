@@ -2356,6 +2356,7 @@
         // change). Income / Transfer rows are skipped server-side.
         const result = await KindUI.applyBulk(rows.map((t) => t.rowNumber), inputValue);
         await loadTransactions();
+        TransactionForm.requestBudgetCheck();
         const note = KindUI.bulkSummary(result);
         if (note) TransactionForm.toast(note, 3500);
         return;
@@ -2372,6 +2373,7 @@
         const data = await res.json();
         if (data.error) throw new Error(data.error);
         await loadTransactions();
+        TransactionForm.requestBudgetCheck();
         TransactionForm.toast(data.billId ? `Matched · bill ${data.billId} marked paid` : 'Matched', 3500);
         return;
       }

@@ -6,8 +6,10 @@
 //   A Key | B Sent At | C Title
 // Append-only. Keys are made by the caller and include the period they
 // cover, e.g. "budget-warn:2026-11-25" (the week's start day) -- so a new
-// week gets a new key and nothing ever needs clearing. Old rows can be
-// deleted by hand at any time; the worst case is one repeated reminder.
+// week gets a new key. Mostly append-only: clearKeys() deletes a key's rows
+// when the budget check finds that alert no longer applies (spending went
+// back down), so it can fire again. Old rows can be deleted by hand at any
+// time; the worst case is one repeated reminder.
 //
 // Rupiah amounts stay out of this tab: the Title column holds the
 // notification's title only for a human scanning the log.
@@ -56,9 +58,43 @@ async function markSent(sheets, entries, now = new Date()) {
   });
 }
 
+// Deletes every row whose Key is in `keys`. Returns how many rows went.
+async function clearKeys(sheets, keys) {
+  const wanted = new Set((keys || []).map((k) => String(k).trim()).filter(Boolean));
+  if (wanted.size === 0) return 0;
+  const meta = await sheets.spreadsheets.get({
+    spreadsheetId: process.env.SHEET_ID,
+    fields: 'sheets.properties',
+  });
+  const sheet = (meta.data.sheets || []).find((s) => s.properties.title === PUSH_LOG_SHEET);
+  if (!sheet) return 0;
+  const response = await sheets.spreadsheets.values.get({
+    spreadsheetId: process.env.SHEET_ID,
+    range: `${PUSH_LOG_SHEET}!A2:A`,
+  });
+  // values[i] is sheet row i + 2, i.e. 0-based grid index i + 1.
+  const indexes = [];
+  (response.data.values || []).forEach((r, i) => {
+    if (wanted.has(String(r[0] || '').trim())) indexes.push(i + 1);
+  });
+  if (indexes.length === 0) return 0;
+  // Bottom-up, so earlier deletes don't shift the later indexes.
+  indexes.sort((a, b) => b - a);
+  await sheets.spreadsheets.batchUpdate({
+    spreadsheetId: process.env.SHEET_ID,
+    requestBody: {
+      requests: indexes.map((i) => ({
+        deleteDimension: { range: { sheetId: sheet.properties.sheetId, dimension: 'ROWS', startIndex: i, endIndex: i + 1 } },
+      })),
+    },
+  });
+  return indexes.length;
+}
+
 module.exports = {
   PUSH_LOG_SHEET,
   ensurePushLogSheet,
   fetchSentKeys,
   markSent,
+  clearKeys,
 };

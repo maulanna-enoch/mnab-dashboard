@@ -1508,7 +1508,9 @@
   }
 
   // Debt Exit WS8: a save can push this week's Variable spending past the
-  // warning threshold (70% by default) or over budget. The server decides
+  // warning threshold (70% by default) or over budget -- or, after a fix
+  // (match, re-kind, delete), back under, which re-arms an alert that
+  // already fired. Exported for the pages' bulk Match / Set Kind actions. The server decides
   // and sends the push at most once per week (PushLog tab), so this just
   // asks. Fire-and-forget: keepalive lets it finish if the page navigates,
   // and a failure only means the warning waits for the next check.
@@ -1541,6 +1543,7 @@
       if (data.error) throw new Error(data.error);
       close();
       showToast('Match confirmed');
+      requestBudgetCheck();
       if (typeof state.options.onMatchResolved === 'function') state.options.onMatchResolved();
     } catch (err) {
       state.formError.textContent = err.message;
@@ -1585,6 +1588,7 @@
       const deletedRow = state.editingRow;
       close();
       showToast('Deleted');
+      requestBudgetCheck();
       if (typeof state.options.onDeleted === 'function') state.options.onDeleted(deletedRow);
     } catch (err) {
       state.formError.textContent = err.message;
@@ -1808,5 +1812,5 @@
     loadBillRegistry();
   }
 
-  global.TransactionForm = { mount, open, close, todayISO, guessBillingMonth, isCashAccountType, toast: showToast };
+  global.TransactionForm = { mount, open, close, todayISO, guessBillingMonth, isCashAccountType, toast: showToast, requestBudgetCheck };
 })(window);
